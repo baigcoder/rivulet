@@ -124,8 +124,12 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           bun scripts/build/linux/appimage.ts
+          # An unversioned copy beside the versioned one: public/landing.html
+          # links `releases/latest/download/Rivulet.AppImage`, which only ever
+          # resolves if the asset name never changes between releases.
+          cp src-tauri/target/release/bundle/appimage/*.AppImage Rivulet.AppImage
           gh release upload "${{ github.ref_name }}" \
-            src-tauri/target/release/bundle/appimage/*.AppImage --clobber
+            src-tauri/target/release/bundle/appimage/*.AppImage Rivulet.AppImage --clobber
           if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
             echo "::warning::No TAURI_SIGNING_PRIVATE_KEY secret — this release ships without in-app updates. The app will point people at the release page instead."
           fi
@@ -141,10 +145,30 @@ jobs:
           path: src-tauri/target/release/bundle/appimage/*.AppImage.sig
           if-no-files-found: ignore
 
+      # The NSIS installer is what the updater installs and what the landing
+      # page offers; the .msi stays versioned on the release page only. Same
+      # unversioned-alias reasoning as the AppImage above.
+      - if: runner.os == 'Windows'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          cp src-tauri/target/release/bundle/nsis/*_x64-setup.exe Rivulet_Setup.exe
+          gh release upload "${{ github.ref_name }}" Rivulet_Setup.exe --clobber
+
       # The runner has Homebrew, so a .dmg that still depends on it looks fine
       # here and fails on every other Mac. Fail the release instead.
       - if: runner.os == 'macOS'
         run: bun scripts/build/macos/bundle-dylib.ts src-tauri/target/release/bundle/macos/Rivulet.app
+
+      # Landing page alias for the Apple Silicon build; see the AppImage note.
+      - if: runner.os == 'macOS'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          cp src-tauri/target/release/bundle/dmg/*.dmg Rivulet.dmg
+          gh release upload "${{ github.ref_name }}" Rivulet.dmg --clobber
 
   # `latest.json` is written by all three desktop runners at once, each merging
   # its platforms into the copy already on the release — so the Linux signature
