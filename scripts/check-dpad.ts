@@ -5,6 +5,8 @@ import type { Box } from '../app/utils/dpad'
 // half of the remote — BACK, which is Kotlin's to catch and the page's to answer.
 import assert from 'node:assert'
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
 import { pickDirection } from '../app/utils/dpad'
 
 function box(left: number, top: number, width: number, height: number): Box {
@@ -125,8 +127,6 @@ assert.strictEqual(pickDirection(actions[0]!, actions.slice(1), 'right'), 0, 'wh
 function code(kotlin: string) {
   return kotlin.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
 }
-
-import { fileURLToPath } from 'node:url'
 
 const activity = code(readFileSync(
   fileURLToPath(new URL('../src-tauri/gen/android/app/src/main/java/io/github/rivulet/rivulet/MainActivity.kt', import.meta.url)),

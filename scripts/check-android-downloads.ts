@@ -9,9 +9,9 @@
 // awake — the failure looks like "Android killed us again", not like a typo.
 import assert from 'node:assert'
 import { readFileSync } from 'node:fs'
-import { ENGINE } from '../app/utils/torrents'
-
 import { fileURLToPath } from 'node:url'
+
+import { ENGINE } from '../app/utils/torrents'
 
 const kotlin = readFileSync(
   fileURLToPath(new URL('../src-tauri/gen/android/app/src/main/java/io/github/rivulet/rivulet/Downloads.kt', import.meta.url)),
