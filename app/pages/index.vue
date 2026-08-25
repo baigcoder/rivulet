@@ -229,6 +229,10 @@ const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
       </div>
     </section>
 
+    <!-- Streaming providers: straight under the hero, since "what service is
+         this on" is the first question after what's new. -->
+    <provider-strip />
+
     <!-- Media Rows -->
     <div class="flex flex-col gap-7 pt-7">
       <scroll-row v-if="library.resumeRow.length" class="motion-reveal" :title="$t('Continue watching')">

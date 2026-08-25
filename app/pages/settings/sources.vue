@@ -153,6 +153,22 @@ async function toggleStremio(on: boolean | null) {
     </settings-section>
 
     <settings-section
+      :title="$t('Torrent streaming')"
+      :hint="$t('Whether playing a title may download while it streams. Off, only servers that hand back a direct link are used — nothing touches the engine or the disk.')"
+    >
+      <v-switch
+        v-model="settings.allowTorrents"
+        color="primary"
+        density="comfortable"
+        hide-details
+        :label="$t('Allow torrent streaming')"
+      />
+      <p class="text-body-small opacity-70">
+        {{ $t('On, the best release wins whether it is a torrent or a direct link. Off, a title your sources can\'t serve directly shows an explanation instead of downloading — and the player\'s Server menu lists every source that answered.') }}
+      </p>
+    </settings-section>
+
+    <settings-section
       :title="$t('Adding by link')"
       :hint="$t('A page can offer a rivulet:// link that opens the app with a source ready to add. The app always asks first — a link can never change what Rivulet searches on its own.')"
     >

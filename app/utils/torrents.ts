@@ -139,6 +139,13 @@ export interface Release {
   /** "1080p", "720p", "4k DV | HDR", … as labelled by the source. */
   quality: string
   magnet: string
+  /**
+   * Which configured source answered with this release, as the base URL the
+   * fan-out asked. Set by `findReleases`, and it is the addon's identity in
+   * the player's server menu — the "origin" on the stats line above is only
+   * whatever label that addon printed.
+   */
+  via?: string
 }
 
 interface RawStream {
@@ -274,6 +281,25 @@ export function isAwkward(t: Release) {
 }
 
 /**
+ * The list, best first. `pickBest` is this plus `[0]`, and the player's server
+ * and quality menus are the whole of it — so both places order candidates
+ * identically by construction.
+ */
+export function ranked(list: Release[], maxBytes = MAX_BYTES, compatible = false): Release[] {
+  const limit = Math.min(MAX_BYTES, maxBytes)
+  return [...list]
+    // Neither test applies to a link: there is no swarm to have seeders, and
+    // nothing is written to the disk the budget is protecting.
+    .filter(t => !!t.url || (t.seeders > 0 && (!t.bytes || t.bytes <= limit)))
+    .sort((a, b) =>
+      rank(a) - rank(b)
+      || (compatible ? Number(isAwkward(a)) - Number(isAwkward(b)) : 0)
+      || Number(isBloated(a)) - Number(isBloated(b))
+      || Number(!a.url) - Number(!b.url)
+      || b.seeders - a.seeders)
+}
+
+/**
  * Best quality tier we'd actually stream, then the copies of it that aren't
  * bloated, and within those the most seeders. `maxBytes` is the device's storage
  * budget: a release that can't fit on the disk is no use however good it is.
@@ -290,17 +316,23 @@ export function isAwkward(t: Release) {
  * bitrate, but it starts at once and nothing has to be kept on the disk.
  */
 export function pickBest(list: Release[], maxBytes = MAX_BYTES, compatible = false): Release | null {
-  const limit = Math.min(MAX_BYTES, maxBytes)
-  return [...list]
-    // Neither test applies to a link: there is no swarm to have seeders, and
-    // nothing is written to the disk the budget is protecting.
-    .filter(t => !!t.url || (t.seeders > 0 && (!t.bytes || t.bytes <= limit)))
-    .sort((a, b) =>
-      rank(a) - rank(b)
-      || (compatible ? Number(isAwkward(a)) - Number(isAwkward(b)) : 0)
-      || Number(isBloated(a)) - Number(isBloated(b))
-      || Number(!a.url) - Number(!b.url)
-      || b.seeders - a.seeders)[0] ?? null
+  return ranked(list, maxBytes, compatible)[0] ?? null
+}
+
+/**
+ * Stream-only mode's answer when there is nothing to stream. Distinct from a
+ * plain error because the watch page offers "turn torrents back on" beside it —
+ * which is the one fix, and the toggle lives one setting away.
+ */
+export class NoServerStream extends Error {}
+
+/**
+ * Just the direct links, best first: what playback resolves through when
+ * torrent downloads are switched off, and the pool the player's server and
+ * quality menus draw from either way.
+ */
+export function serverCandidates(releases: Release[], maxBytes = MAX_BYTES, compatible = false): Release[] {
+  return ranked(releases.filter(t => !!t.url), maxBytes, compatible)
 }
 
 async function searchOne(base: string, path: string): Promise<Release[]> {
@@ -335,10 +367,16 @@ export async function findReleases(imdbId: string, season = 0, episode = 0): Pro
   // Two sources drawing on the same origins hand back the same release twice;
   // first one wins, so the order sources were added in is the preference order.
   const seen = new Map<string, Release>()
-  for (const t of results.flatMap(r => r.status === 'fulfilled' ? r.value : [])) {
-    if (!seen.has(releaseKey(t)))
-      seen.set(releaseKey(t), t)
-  }
+  results.forEach((settled, i) => {
+    if (settled.status !== 'fulfilled')
+      return
+    for (const t of settled.value) {
+      if (!seen.has(releaseKey(t))) {
+        seen.set(releaseKey(t), t)
+        t.via = sources[i]
+      }
+    }
+  })
 
   return [...seen.values()]
 }
@@ -747,6 +785,14 @@ export interface Started {
   url: string
   /** The release we picked, or null when the caller named one itself. */
   torrent: Release | null
+  /**
+   * The other direct links the sources answered with, best first, current one
+   * included at [0]. The player's server and quality menus are built from it,
+   * and a server that dies mid-film is failed over to the next entry. Present
+   * only when playback resolved through a search; absent for magnets and
+   * already-held copies.
+   */
+  alternatives?: Release[]
 }
 
 /**
@@ -877,9 +923,18 @@ export async function startTorrent(options: {
    * device plays with, so every caller gets it right without knowing about it.
    */
   compatible?: boolean
+  /**
+   * Whether the search may resolve to a torrent at all. Off, only direct links
+   * are considered — nothing is added to the engine and nothing lands on the
+   * disk — and a title no added server can serve throws `NoServerStream`.
+   * A magnet handed in by name bypasses this: that copy was chosen by hand,
+   * and it plays from wherever it already sits.
+   */
+  allowTorrents?: boolean
   onStep?: (step: string) => void
 }): Promise<Started> {
   const step = options.onStep ?? (() => {})
+  const allowTorrents = options.allowTorrents ?? true
   let magnet = options.magnet ?? ''
   let picked: Release | null = null
   let hint: number | null = null
@@ -891,8 +946,9 @@ export async function startTorrent(options: {
   // A magnet the caller named is a release someone chose by hand, so it beats
   // whatever is already on the disk. Asked before the id lookup below, because
   // skipping that round trip is the point: a film on the disk plays with TMDB
-  // unreachable.
-  if (!magnet && options.cached) {
+  // unreachable. (Torrent-only by nature — stream-only mode never gets here,
+  // because a hand-named magnet is exactly the "download it for me" ask.)
+  if (!magnet && allowTorrents && options.cached) {
     const { hash, file } = options.cached
     const held = await heldCopy(hash, file)
     // Every byte is here: nothing to search, nobody to ask, nothing to wait for.
@@ -912,9 +968,11 @@ export async function startTorrent(options: {
     // Nothing was filed under this title, but the engine may still be holding it
     // from a pasted magnet or a download the app didn't start. Read after the
     // lookup above, because that is what fills the title in. Adopting beats a
-    // search, and is the only thing that works with no sources configured.
+    // search, and is the only thing that works with no sources configured —
+    // and, like the cached copy above, it is torrent-only: stream-only mode is
+    // about not pulling bytes, so nothing already on the disk counts either.
     const named = options.named?.()
-    const adopted = named?.title
+    const adopted = allowTorrents && named?.title
       ? await heldByName(named.title, named.year, options.season, options.episode)
       : null
 
@@ -927,15 +985,32 @@ export async function startTorrent(options: {
 
       step($t('Searching your sources…'))
       const found = await findReleases(imdbId, options.season, options.episode)
-      picked = pickBest(found, options.maxBytes, options.compatible ?? !hasNativePlayer())
+
+      // Stream-only mode narrows before ranking: a torrent release is not a
+      // worse pick, it is no pick at all.
+      const pool = allowTorrents ? found : found.filter(t => !!t.url)
+      picked = pickBest(pool, options.maxBytes, options.compatible ?? !hasNativePlayer())
       if (!picked) {
-        throw new Error(found.length
-          ? $t('All {count} releases found were cams, dead, or too big for this device.', { count: found.length })
-          : $t('Your sources have nothing for this title.'))
+        throw pool.length && !allowTorrents
+          ? new NoServerStream($t('None of your added sources streams this title directly. Turn torrent streaming on, or add a server that carries it.'))
+          : new Error(found.length
+              ? $t('All {count} releases found were cams, dead, or too big for this device.', { count: found.length })
+              : $t('Your sources have nothing for this title.'))
       }
+
       // The source resolved this one itself — there is no torrent to add.
-      if (picked.url)
-        return { id: -1, index: -1, hash: '', url: picked.url, torrent: picked }
+      if (picked.url) {
+        return {
+          id: -1,
+          index: -1,
+          hash: '',
+          url: picked.url,
+          torrent: picked,
+          // The rest of what the servers answered, for the player's failover,
+          // its server menu and its quality menu.
+          alternatives: serverCandidates(found, options.maxBytes, options.compatible ?? !hasNativePlayer()),
+        }
+      }
       magnet = picked.magnet
       hint = picked.fileIdx
     }

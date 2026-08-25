@@ -146,6 +146,22 @@ export const useSettingsStore = defineStore('settings', () => {
    */
   const sources = useLocalStorage<string[]>(key('sources'), [])
 
+  /**
+   * Whether playing a title may start a torrent download at all.
+   *
+   * Off is stream-only mode: the sources are still asked, but only answers
+   * carrying a direct link are considered — nothing touches the engine, the
+   * swarm or the disk. A title no added server can serve then shows an
+   * explanation instead of starting to download.
+   */
+  const allowTorrents = useLocalStorage(key('allowTorrents'), true)
+
+  /**
+   * The TMDB watch region the Streaming pages browse — provider catalogs are
+   * per-country. '' means "take it from the app language" at the point of use.
+   */
+  const watchRegion = useLocalStorage(key('watchRegion'), '')
+
   // --- Film data ---
   /**
    * A TMDB read token of the user's own, used instead of the one the build
@@ -177,5 +193,5 @@ export const useSettingsStore = defineStore('settings', () => {
     subs.value = { ...SUBTITLE_DEFAULTS }
   }
 
-  return { locale, theme, source, themeFromArt, colourFromPicture, customCss, uiScale, reduceEffects, motion, effectiveMotion, sources, tmdbKey, downLimit, upLimit, wifiOnly, downloadDir, subs, resetSubs }
+  return { locale, theme, source, themeFromArt, colourFromPicture, customCss, uiScale, reduceEffects, motion, effectiveMotion, sources, allowTorrents, watchRegion, tmdbKey, downLimit, upLimit, wifiOnly, downloadDir, subs, resetSubs }
 })

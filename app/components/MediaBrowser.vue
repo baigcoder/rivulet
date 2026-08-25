@@ -6,13 +6,24 @@ import type { MediaType } from '~/utils/tmdb'
  * the genre + original language pair is what it gives you, and it covers far
  * more than the "anime" keyword (210024), which most titles aren't tagged with.
  */
-const props = defineProps<{ type: MediaType, anime?: boolean }>()
+const props = defineProps<{
+  type: MediaType
+  anime?: boolean
+  /**
+   * Extra `/discover` params merged into every request — how the Streaming
+   * pages narrow a feed to one watch provider without this file knowing what
+   * a provider is.
+   */
+  extraParams?: Record<string, unknown>
+  /** Replaces the standard category row when a page has its own vocabulary. */
+  categoriesOverride?: { value: string, title: string }[]
+}>()
 
 const { lgAndUp } = useDisplay()
 
 const isMovie = props.type === 'movie'
 
-const categories = computed(() => [
+const categories = computed(() => props.categoriesOverride ?? [
   { value: 'popular', title: $t('Popular') },
   // /trending takes no filters at all, so it can't be narrowed to anime.
   ...props.anime ? [] : [{ value: 'trending', title: $t('Trending') }],
@@ -57,6 +68,9 @@ const request = computed(() => {
     now_playing: { sort_by: 'popularity.desc', [`${onDate}.gte`]: day(-45), [`${onDate}.lte`]: day() },
     on_the_air: { sort_by: 'popularity.desc', [`${onDate}.gte`]: day(), [`${onDate}.lte`]: day(7) },
     airing_today: { sort_by: 'popularity.desc', [`${onDate}.gte`]: day(), [`${onDate}.lte`]: day() },
+    // A provider's "new": recently released, newest first — popularity is what
+    // the first tab is already for.
+    new: { sort_by: `${sortDate}.desc`, [`${onDate}.lte`]: day(), [`${onDate}.gte`]: day(-365) },
   }
 
   // Comma-joined ids are an AND, so a sub-genre stacks on top of Animation.
@@ -70,6 +84,7 @@ const request = computed(() => {
       with_genres: genres.join(',') || undefined,
       with_original_language: props.anime ? 'ja' : undefined,
       ...sorting[category.value],
+      ...props.extraParams,
     },
   }
 })

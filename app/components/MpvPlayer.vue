@@ -14,6 +14,7 @@ import {
   mdiFastForward10,
   mdiFullscreen,
   mdiFullscreenExit,
+  mdiHighDefinition,
   mdiMinus,
   mdiPause,
   mdiPlay,
@@ -21,6 +22,7 @@ import {
   mdiPlus,
   mdiReload,
   mdiRewind10,
+  mdiServer,
   mdiSkipNext,
   mdiSubtitles,
   mdiSubtitlesOutline,
@@ -75,6 +77,25 @@ const props = defineProps<{
   year?: string
   season?: number
   episode?: number
+  /**
+   * The other server streams the sources answered with, offered as two menus:
+   * `servers` names every candidate (and is the failover list), `qualities`
+   * points at one candidate per resolution. Both entries carry the candidate
+   * index to hand back on `use-candidate`. Absent for torrent playback, where
+   * there is no other server to be had.
+   */
+  candidates?: {
+    servers: { index: number, label: string, detail?: string }[]
+    qualities: { index: number, label: string, detail?: string }[]
+  } | null
+  /** Which candidate is playing — the check mark in both menus. */
+  activeCandidate?: number
+}>()
+
+const emit = defineEmits<{
+  /** The stream died and another candidate exists to try — the parent swaps URLs. */
+  failed: []
+  useCandidate: [index: number]
 }>()
 
 /**
@@ -748,18 +769,23 @@ async function autoSync() {
 }
 
 // ---------------------------------------------------------------------------
-// Menus. One panel, three lists — a popup would need its own cutout and a
+// Menus. One panel, five lists — a popup would need its own cutout and a
 // Vuetify overlay renders outside this root, where the tracker can't see it.
 // ---------------------------------------------------------------------------
-type Menu = '' | 'subs' | 'audio' | 'speed'
+type Menu = '' | 'subs' | 'audio' | 'speed' | 'server' | 'quality'
 const menu = ref<Menu>('')
 const MENU_TITLES: Record<Exclude<Menu, ''>, () => string> = {
   subs: () => $t('Subtitles'),
   audio: () => $t('Audio'),
   speed: () => $t('Playback speed'),
+  server: () => $t('Server'),
+  quality: () => $t('Quality'),
 }
 const menuTitle = computed(() => menu.value ? MENU_TITLES[menu.value]() : '')
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
+
+/** Server playback only — the failover list and the resolution shortcuts. */
+const hasCandidates = computed(() => !!props.candidates?.servers?.length)
 
 function openMenu(name: Exclude<Menu, ''>) {
   menu.value = menu.value === name ? '' : name
@@ -1058,7 +1084,11 @@ async function startPlayer() {
       }
       else {
         // Debrid links are minted per request and go stale; searching again is
-        // what mints a fresh one, so that's what the message has to ask for.
+        // what mints a fresh one, so that's what the message has to ask for —
+        // unless another server is queued, in which case the message never
+        // shows: the player moves to the next one instead.
+        if (streamDied())
+          return
         errorMsg.value = probe.status
           ? $t('The link this source gave answered HTTP {status}. It may have expired — search the sources again for a fresh one.', { status: probe.status })
           : $t('The link this source gave could not be reached.')
@@ -1120,10 +1150,25 @@ async function startPlayer() {
   catch (e) {
     started.value = false
     errorMsg.value = String(e)
+    // A URL the backend refused outright is a dead server, same as a probe
+    // miss — hand the failure to whoever holds the candidate list.
+    if (streamDied())
+      errorMsg.value = ''
   }
   finally {
     busy.value = false
   }
+}
+
+/**
+ * The current stream just proved unusable. With other servers queued, say so
+ * and let the parent advance; its return answers whether anyone is left.
+ */
+function streamDied() {
+  if (!hasCandidates.value)
+    return false
+  emit('failed')
+  return true
 }
 
 async function stopPlayer() {
@@ -1176,6 +1221,10 @@ async function poll() {
       }
       else {
         errorMsg.value = st.log_tail?.trim() || (native ? $t('mpv exited unexpectedly.') : $t('Playback stopped unexpectedly.'))
+        // A server stream that stops mid-film is the server dying, not the
+        // film ending — same failover as a link that never opened.
+        if (!fromEngine.value)
+          streamDied()
       }
       return
     }
@@ -2116,6 +2165,44 @@ defineExpose({ osd })
             </p>
           </template>
 
+          <!-- The servers this title was found on, best first. Picking one is
+               also how a dead stream is recovered by hand; a dying one is left
+               for on its own (see `streamDied`). -->
+          <template v-else-if="menu === 'server'">
+            <button
+              v-for="(s, i) in props.candidates?.servers ?? []"
+              :key="s.index"
+              :class="[MENU_ROW, i === activeCandidate && 'text-primary']"
+              @click="emit('useCandidate', s.index); menu = ''"
+            >
+              <span class="min-w-0 flex-1">
+                <span class="block truncate">{{ s.label }}</span>
+                <span v-if="s.detail" class="block truncate text-label-small opacity-45">{{ s.detail }}</span>
+              </span>
+              <v-icon v-if="i === activeCandidate" :icon="mdiCheck" size="16" />
+            </button>
+          </template>
+
+          <!-- One entry per resolution the servers carry: switching quality is
+               switching to that server's copy, which every backend can do. -->
+          <template v-else-if="menu === 'quality'">
+            <button
+              v-for="q in props.candidates?.qualities ?? []"
+              :key="q.index"
+              :class="[MENU_ROW, q.index === activeCandidate && 'text-primary']"
+              @click="emit('useCandidate', q.index); menu = ''"
+            >
+              <span class="min-w-0 flex-1">
+                <span class="block truncate">{{ q.label }}</span>
+                <span v-if="q.detail" class="block truncate text-label-small opacity-45">{{ q.detail }}</span>
+              </span>
+              <v-icon v-if="q.index === activeCandidate" :icon="mdiCheck" size="16" />
+            </button>
+            <p v-if="(props.candidates?.qualities?.length ?? 0) < 2" :class="NOTE">
+              {{ $t('Your sources offer one quality for this title.') }}
+            </p>
+          </template>
+
           <template v-else>
             <button :class="[MENU_ROW, !subsOn && 'text-primary']" @click="subsOff">
               <span>{{ $t('Off') }}</span>
@@ -2361,6 +2448,22 @@ defineExpose({ osd })
 
           <span v-if="remaining" class="opacity-55" :class="TIME">{{ remaining }}</span>
 
+          <button
+            v-if="hasCandidates"
+            v-tooltip:top="$t('Quality')"
+            :class="[ICO, menu === 'quality' && '!text-primary !opacity-100']"
+            @click="openMenu('quality')"
+          >
+            <v-icon :icon="mdiHighDefinition" size="20" />
+          </button>
+          <button
+            v-if="hasCandidates"
+            v-tooltip:top="$t('Server')"
+            :class="[ICO, menu === 'server' && '!text-primary !opacity-100']"
+            @click="openMenu('server')"
+          >
+            <v-icon :icon="mdiServer" size="20" />
+          </button>
           <button
             v-tooltip:top="$t('Playback speed ([ / ])')"
             class="px-2" :class="[ICO, menu === 'speed' && '!text-primary !opacity-100']"

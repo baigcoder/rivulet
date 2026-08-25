@@ -49,6 +49,20 @@ const torrent = ref<Release | null>(null)
 const torrentId = ref<number | null>(null)
 const src = ref('')
 
+/**
+ * The server streams the sources answered with, best first, and which one is
+ * playing. Only direct-link playback has them: a torrent has no "other server"
+ * to fail over to. The player lists them (server menu, quality menu) and asks
+ * for a different index when one dies or you pick another copy.
+ */
+const candidates = ref<Release[]>([])
+const activeCandidate = ref(0)
+
+/** Stream-only mode found nothing to stream — a different message, and fix, than a plain failure. */
+const noServerStream = ref(false)
+
+const settings = useSettingsStore()
+
 // The downloads store already polls every torrent's stats for the whole app, so
 // a second poll of this one would only ask the engine the same question twice.
 const stats = computed(() => downloads.torrents.find(t => t.id === torrentId.value)?.stats ?? null)
@@ -61,8 +75,11 @@ let generation = 0
 async function start() {
   const mine = ++generation
   errorMsg.value = ''
+  noServerStream.value = false
   src.value = ''
   torrent.value = null
+  candidates.value = []
+  activeCandidate.value = 0
 
   try {
     // ?magnet=… hand-picks the release and skips the lookup — that's how the
@@ -85,6 +102,7 @@ async function start() {
       season: season.value,
       episode: episode.value,
       fileIndex: fileIndex.value,
+      allowTorrents: settings.allowTorrents,
       onStep: value => (step.value = value),
     })
 
@@ -101,12 +119,88 @@ async function start() {
 
     step.value = $t('Buffering…')
     src.value = started.url || streamUrl(started.id, started.index)
+
+    // Server playback carries the other answers with it; the player's menus and
+    // the failover below walk this list.
+    candidates.value = started.alternatives ?? []
+    activeCandidate.value = 0
   }
   catch (e) {
-    if (mine === generation)
-      errorMsg.value = e instanceof Error ? e.message : String(e)
+    if (mine !== generation)
+      return
+    noServerStream.value = e instanceof NoServerStream
+    errorMsg.value = e instanceof Error ? e.message : String(e)
   }
 }
+
+/**
+ * The playing server died (or you picked another one from the menu): move down
+ * the candidate list and remount the player on that URL. The `:key="src"` on
+ * `<mpv-player>` makes the swap a fresh start, and progress already recorded by
+ * the old mount is what the new one resumes from — so a film continues where it
+ * stopped, on a different server.
+ */
+function useCandidate(index: number) {
+  const next = candidates.value[index]
+  if (!next || !next.url || index === activeCandidate.value)
+    return
+  activeCandidate.value = index
+  torrent.value = next
+  torrentId.value = null
+  errorMsg.value = ''
+  src.value = next.url
+}
+
+/** Playback of the current server failed — silently move to the next one, if any. */
+function onPlaybackFailed() {
+  if (!candidates.value.length)
+    return
+  const following = activeCandidate.value + 1
+  if (following < candidates.value.length)
+    useCandidate(following)
+}
+
+/** Host of a source base URL — "https://addon.example/manifest…" → "addon.example". */
+function hostOf(via: string) {
+  try {
+    return new URL(via).host
+  }
+  catch {
+    return via
+  }
+}
+
+const RESOLUTION = /\b(2160p|4k|1080p|720p|480p)\b/i
+
+/** What to call a candidate in the quality menu — its resolution where one is named. */
+function qualityLabel(r: Release) {
+  const q = r.quality.match(RESOLUTION) ?? r.name.match(RESOLUTION)
+  return ((q?.[1] ?? r.quality) || '').toUpperCase() || $t('Unknown')
+}
+
+/**
+ * What the player's two menus show. Servers list everything; qualities list the
+ * first candidate per resolution, since five copies of 1080p are one choice.
+ */
+const candidateMenus = computed(() => {
+  if (!candidates.value.length)
+    return null
+  const servers = candidates.value.map((r, index) => ({
+    index,
+    label: hostOf(r.via ?? '') || r.source,
+    detail: [r.quality || qualityLabel(r), r.size].filter(Boolean).join(' · '),
+  }))
+  const seen = new Map<string, number>()
+  const qualities: { index: number, label: string, detail?: string }[] = []
+  for (const [index, r] of candidates.value.entries()) {
+    const label = qualityLabel(r)
+    if (!seen.has(label)) {
+      seen.set(label, index)
+      qualities.push({ index, label, detail: r.size })
+    }
+  }
+  return { servers, qualities }
+})
 
 // Driven by the route alone — the title resolving is `start`'s business now, so
 // that a downloaded film never waits on TMDB. Fires again if you jump straight
@@ -206,7 +300,21 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
             <p class="text-body-medium opacity-70">
               {{ failure }}
             </p>
-            <div class="mt-2 flex gap-2">
+            <!-- Stream-only mode's fix is one toggle away — right here, so a
+                 title that only torrents can serve doesn't dead-end. -->
+            <div v-if="noServerStream" class="mt-2 flex gap-2">
+              <v-btn
+                variant="tonal"
+                :prepend-icon="mdiDownload"
+                @click="settings.allowTorrents = true; start()"
+              >
+                {{ $t('Turn torrent streaming on') }}
+              </v-btn>
+              <v-btn variant="text" :prepend-icon="mdiArrowLeft" @click="leave">
+                {{ $t('Back') }}
+              </v-btn>
+            </div>
+            <div v-else class="mt-2 flex gap-2">
               <v-btn variant="tonal" :prepend-icon="mdiReload" @click="start">
                 {{ $t('Try again') }}
               </v-btn>
@@ -244,7 +352,7 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
         </div>
       </div>
 
-      <!-- :key so picking a different file/torrent gets a fresh mpv process. -->
+      <!-- :key so picking a different file/torrent/server gets a fresh mpv process. -->
       <mpv-player
         v-else
         :key="src"
@@ -257,7 +365,11 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
         :year="title?.year"
         :season="season"
         :episode="episode"
+        :candidates="candidateMenus"
+        :active-candidate="activeCandidate"
         fullscreen
+        @failed="onPlaybackFailed"
+        @use-candidate="useCandidate"
       >
         <template #start>
           <v-btn icon variant="text" density="comfortable" :title="$t('Back (Esc)')" @click="leave">

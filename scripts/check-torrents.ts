@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import process from 'node:process'
-import { diskBudget, ENGINE, findReleases, haveAt, isAwkward, normalizeSource, parseRelease, pickBest, pickSubtitleFiles, pickVideoFile, planEviction, planNetwork, releaseKey, setSources, startTorrent, streamParts, toRelease, uploadLimit, usedBytes } from '../app/utils/torrents'
+import { diskBudget, ENGINE, findReleases, haveAt, isAwkward, normalizeSource, NoServerStream, parseRelease, pickBest, pickSubtitleFiles, pickVideoFile, planEviction, planNetwork, ranked, releaseKey, serverCandidates, setSources, startTorrent, streamParts, toRelease, uploadLimit, usedBytes } from '../app/utils/torrents'
 // Self-check for the torrent parser/ranker: `bun scripts/check-torrents.ts`.
 // The fixture is the response shape a source answers with, filled in with a
 // public-domain film. `--live <source-url> <imdb-id>` also searches for real.
@@ -119,6 +119,22 @@ assert.equal(pickBest([sameTier!, hosted!])!.hash, 'bbb', 'a 1080p torrent beats
 // A device with no room left can still play one: nothing is written to it.
 assert.equal(pickBest(links, 100)!.url, debrid!.url, 'the storage budget is not its business')
 assert.equal(pickBest([sameTier!], 100), null, 'which a torrent does not get away with')
+
+// --- Stream-only mode and the candidate list ---------------------------------
+// Torrents off, playback resolves through direct links only — and whatever the
+// sources answered becomes the player's failover chain, best first.
+const candidates = serverCandidates(links)
+assert.deepEqual(candidates.map(t => t.url), [debrid!.url, hosted!.url], 'only links, best first')
+assert.equal(serverCandidates(parsed.filter(t => t.hash === 'aaa')).length, 0, 'a torrent is no candidate at all')
+
+// `ranked` is pickBest without the head chop: same order by construction, so a
+// menu can never disagree with what auto-play chose.
+assert.deepEqual(ranked(links).map(t => releaseKey(t)), [releaseKey(debrid!), releaseKey(sameTier!), releaseKey(hosted!)])
+assert.equal(ranked(links)[0], pickBest(links), 'the head of the list is what pickBest picks')
+
+// Stream-only's empty answer is its own kind, so the watch page can tell it
+// apart from a search that genuinely failed and offer the toggle instead.
+assert.ok(new NoServerStream('x') instanceof Error)
 
 // --- A drive that caps one file ----------------------------------------------
 // A TV formats a USB stick as FAT32, which stops at 4 GiB however much of the
