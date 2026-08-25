@@ -37,7 +37,7 @@ const region = computed(() => {
   }
 })
 
-const { data, error } = useAsyncData(
+const { data, error, pending } = useAsyncData(
   () => `providers-${region.value}`,
   async () => {
     // Movies and shows have different availability, so both lists are asked
@@ -66,7 +66,6 @@ const ORDER: string[][] = [
   ['paramount plus'],
   ['showtime'],
   ['amc plus', 'amc'],
-  ['disney plus', 'disney'],
 ]
 
 /**
@@ -84,7 +83,7 @@ function rank(p: Provider) {
 }
 
 const providers = computed(() => {
-  // Only the strip's own ten, each once: TMDB lists the same service under
+  // Only the strip's own eight, each once: TMDB lists the same service under
   // different ids across its movie and TV catalogues, so the name is what two
   // copies of a service are recognised by.
   const seen = new Map<string, Provider>()
@@ -123,22 +122,41 @@ function to(p: Provider) {
     <!-- A scroll row, not a grid: dozens of services in a region, and the ones
          past the fold are exactly as reachable by d-pad as the rest — the
          plugin scrolls the row into view when focus asks it to. -->
-    <nav v-else class="overflow-x-auto pb-1" data-dpad-start>
+    <!-- Skeleton tiles while TMDB answers — the row keeps its height, so no
+         jump when the real cards land. -->
+    <nav v-if="pending && !providers.length" class="overflow-x-auto pb-1" aria-hidden="true">
+      <ul class="flex w-max gap-4 px-4 md:px-6">
+        <li v-for="i in 6" :key="i">
+          <div class="h-28 w-52 animate-pulse rounded-2xl border border-white/9 bg-surface-container p-2.5">
+            <div class="h-full w-full animate-pulse rounded-xl bg-white/10" />
+          </div>
+        </li>
+      </ul>
+    </nav>
+
+    <nav v-else-if="!error" class="overflow-x-auto pb-1" data-dpad-start>
       <ul class="flex w-max gap-4 px-4 md:px-6">
         <li v-for="p in providers" :key="p.provider_id">
           <nuxt-link
             :to="to(p)"
-            class="group flex h-24 w-44 items-center justify-center rounded-2xl border border-white/9 bg-surface-container p-4 transition-all hover:border-primary hover:bg-surface-container-high focus-visible:border-primary focus-visible:bg-surface-container-high focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            class="group flex h-28 w-52 shrink-0 items-center justify-center rounded-2xl border border-white/9 bg-surface-container p-2.5 transition-all hover:border-primary focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             :aria-label="$t('Browse {provider}', { provider: p.provider_name })"
           >
-            <img
-              v-if="p.logo_path"
-              :src="logoUrl(p.logo_path, 'w300') ?? ''"
-              :alt="p.provider_name"
-              loading="lazy"
-              class="max-h-full max-w-full object-contain transition-transform group-hover:scale-105"
+            <!-- White plate: every brand mark keeps its true color on any
+                 theme — the app-store-badge look, and the reason a dark-grey
+                 wordmark like Max's doesn't vanish into the tile. -->
+            <span
+              class="grid h-full w-full place-items-center overflow-hidden rounded-xl bg-white p-3 shadow-inner transition-transform duration-200 group-hover:scale-[1.04] group-focus-visible:scale-[1.04]"
             >
-            <span v-else class="truncate text-center text-title-medium">{{ p.provider_name }}</span>
+              <img
+                v-if="p.logo_path"
+                :src="logoUrl(p.logo_path, 'w500') ?? ''"
+                :alt="p.provider_name"
+                loading="lazy"
+                class="max-h-full max-w-full object-contain"
+              >
+              <span v-else class="text-2xl font-bold text-neutral-800">{{ p.provider_name[0] }}</span>
+            </span>
           </nuxt-link>
         </li>
       </ul>
