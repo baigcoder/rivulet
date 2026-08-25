@@ -18,7 +18,7 @@
 
 # Referenced only from AndroidManifest.xml as ".DownloadService" — the foreground
 # service that keeps the in-process torrent engine alive when the app is backgrounded.
--keep class com.rivulet.app.DownloadService { *; }
+-keep class io.github.rivulet.rivulet.DownloadService { *; }
 
 # Uncomment this to preserve the line number information for
 # debugging stack traces.

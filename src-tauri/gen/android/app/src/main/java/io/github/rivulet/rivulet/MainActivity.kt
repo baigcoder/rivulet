@@ -1,4 +1,4 @@
-package io.github.rivulet.app
+package io.github.rivulet.rivulet
 
 import android.Manifest
 import android.content.Intent

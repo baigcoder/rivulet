@@ -29,7 +29,7 @@ val ciKeystore: String? = System.getenv("ANDROID_KEYSTORE_PATH")
 
 android {
     compileSdk = 36
-    namespace = "io.github.rivulet.app"
+    namespace = "io.github.rivulet.rivulet"
     signingConfigs {
         // Bound to a local first: a script-level `val` is a property of the
         // script class, which Kotlin will not smart-cast inside this lambda.
@@ -45,7 +45,7 @@ android {
     }
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
-        applicationId = "io.github.rivulet.app"
+        applicationId = "io.github.rivulet.rivulet"
         minSdk = 24
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()

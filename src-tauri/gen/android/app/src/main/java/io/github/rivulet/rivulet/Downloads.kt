@@ -1,4 +1,4 @@
-package io.github.rivulet.app
+package io.github.rivulet.rivulet
 
 import android.app.Notification
 import android.app.PendingIntent
