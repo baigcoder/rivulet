@@ -1,0 +1,23 @@
+<!-- Rivulet Dark's background: Editorial flow-line motif, electric cyan and warm amber counter-hue on neutral-ink ground. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <defs>
+    <radialGradient id="cyan" cx="0.2" cy="0.3" r="0.75">
+      <stop offset="0%" stop-color="#6FE3FF" stop-opacity="0.45" />
+      <stop offset="100%" stop-color="#6FE3FF" stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id="amber" cx="0.8" cy="0.7" r="0.7">
+      <stop offset="0%" stop-color="#FFC978" stop-opacity="0.35" />
+      <stop offset="100%" stop-color="#FFC978" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="stream" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6FE3FF" stop-opacity="0.2" />
+      <stop offset="50%" stop-color="#FFC978" stop-opacity="0.1" />
+      <stop offset="100%" stop-color="#6FE3FF" stop-opacity="0.05" />
+    </linearGradient>
+  </defs>
+  <rect width="1920" height="1080" fill="#0E0F11" />
+  <rect width="1920" height="1080" fill="url(#cyan)" />
+  <rect width="1920" height="1080" fill="url(#amber)" />
+  <path d="M-100,200 Q400,600 960,300 T2020,700" fill="none" stroke="url(#stream)" stroke-width="240" opacity="0.6" />
+  <path d="M-50,400 Q600,100 1200,700 T2000,300" fill="none" stroke="url(#stream)" stroke-width="140" opacity="0.4" />
+</svg>

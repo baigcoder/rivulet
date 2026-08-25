@@ -1,0 +1,346 @@
+/* Cascade order. Later layers win, regardless of specificity.
+   `app` sits first on purpose: it holds bare element defaults, and `a { color }`
+   must lose to `.v-btn` for links wrapped in a button. UnoCSS utilities sit
+   after Vuetify's component styles so a utility class can override them. */
+@layer app;
+
+@layer uno-base, uno-theme;
+
+@layer vuetify-core, vuetify-components, vuetify-overrides, vuetify-utilities;
+
+@layer uno-shortcuts, uno-default;
+
+@layer vuetify-final;
+
+@layer app {
+  /* The only place a font is named. Vuetify's $heading-font-family and
+     $body-font-family already default to these vars, and uno.config.ts points
+     `font-heading` / `font-body` at them, so the MD3 type shortcuts and
+     Vuetify's own components resolve to the same faces. */
+  :root {
+    --v-font-heading: 'Roboto Variable', 'Roboto', sans-serif;
+    --v-font-body: 'Roboto Variable', 'Roboto', sans-serif;
+
+    /* How much of each edge the OS has already spoken for: Android's status bar
+       and gesture pill, a phone's notch in landscape. Everywhere else these are
+       0, so the same rule is a no-op on desktop and on a TV. Named once here
+       because `env()` only resolves against the viewport meta — see nuxt.config
+       — and a plain `env(...)` inside a UnoCSS arbitrary value is unreadable. */
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-left: env(safe-area-inset-left, 0px);
+    --safe-right: env(safe-area-inset-right, 0px);
+  }
+
+  /* --- Motion -------------------------------------------------------------
+     Every entrance in the app, as four named animations and a stagger step.
+
+     KEYFRAMES, NOT TRANSITIONS, and that is the whole point. `reduce-effects`
+     further down kills `transition` outright and defaults to on for a
+     television — so a transition-based reveal is, on the one device this app
+     goes out of its way to support, dead code. `animation` is deliberately left
+     alone by that rule (a frozen spinner reads as a hung app), which is the gap
+     these use.
+
+     TRANSFORM AND OPACITY ONLY, in every keyframe below. Profiling the test set
+     put paint and raster at essentially the whole frame while style, layout and
+     script together stayed under a tenth of it — so a compositor-only property
+     is close to free there and everything else is the bottleneck itself. That is
+     the difference between a hairline that traces (a `scaleX`) and a gradient
+     that drifts (large-area repaint), and it is why this design animates rules
+     and not glass. `bun run check:perf` asserts it rather than trusting it.
+
+     THE ELEMENT'S OWN CSS IS THE FINISHED STATE; a keyframe only describes
+     arriving at it. So `--motion-*: none` needs no second set of rules to undo
+     anything — the element is simply already where it was going. That is what
+     makes the `none` tier correct by construction.
+
+     Which tier is painted is one class on `<html>`, from `effectiveMotion` in
+     stores/settings.ts. No `@media (prefers-reduced-motion)` here on purpose:
+     the store already folds that in, and a rule here would outrank someone who
+     went and asked for full motion anyway. */
+  :root {
+    --motion-reveal: reveal-up 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    --motion-trace: trace-x 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    --motion-clip: clip-up 380ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    --motion-fade: motion-fade 300ms ease-out both;
+    /* Multiplied by `--i` on each sibling. For a handful of things landing
+       together — the hero's five lines — and never for a list: the hundredth card
+       in a grid would sit blank for six seconds waiting its turn. */
+    --motion-stagger: 60ms;
+  }
+
+  /* Essential only — things still appear, nothing travels to get there.
+     `html.motion-*` is one class more specific than the bare `:root` above, so
+     these win without needing a later layer or an `!important`. */
+  html.motion-reduced {
+    --motion-reveal: motion-fade 150ms linear both;
+    --motion-trace: motion-fade 150ms linear both;
+    --motion-clip: motion-fade 150ms linear both;
+    --motion-fade: motion-fade 150ms linear both;
+    --motion-stagger: 0ms;
+  }
+
+  /* Spinners and the loading skeletons never read these properties, so they keep
+     turning here — same reasoning as `reduce-effects` leaving `animation` alone. */
+  html.motion-none {
+    --motion-reveal: none;
+    --motion-trace: none;
+    --motion-clip: none;
+    --motion-fade: none;
+    --motion-stagger: 0ms;
+  }
+
+  .motion-reveal {
+    animation: var(--motion-reveal);
+    animation-delay: calc(var(--i, 0) * var(--motion-stagger));
+  }
+
+  .motion-clip {
+    animation: var(--motion-clip);
+    animation-delay: calc(var(--i, 0) * var(--motion-stagger));
+  }
+
+  .motion-fade {
+    animation: var(--motion-fade);
+    animation-delay: calc(var(--i, 0) * var(--motion-stagger));
+  }
+
+  /* A rule draws from the side the language starts on. `transform-origin` takes
+     no logical keyword — there is no `inline-start` for it — so the one place in
+     this app that needs a physical direction states both, keyed off the `dir`
+     app.vue puts on `<html>` for Arabic, Farsi, Hebrew and Urdu. Anchored the
+     wrong way a rule appears to retract rather than extend.
+
+     No clipping parent needed: scaling a 1px line has nothing to spill. */
+  .motion-trace {
+    animation: var(--motion-trace);
+    animation-delay: calc(var(--i, 0) * var(--motion-stagger));
+    transform-origin: left center;
+  }
+
+  [dir='rtl'] .motion-trace {
+    transform-origin: right center;
+  }
+
+  /* `clip-up` slides a line of text out from behind its own edge, so the parent
+     has to be the thing that hides it. */
+  .motion-clip-box {
+    overflow: hidden;
+  }
+
+  body {
+    margin: 0;
+    overflow: hidden;
+    /* .v-application is transparent (see the last layer) so the art shows
+       through, which leaves body holding the base colour. */
+    background-color: rgb(var(--v-theme-background));
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  /* Headings are here for semantics/screen readers; the look comes from the
+     .text-h* class on them, which sits in a later layer and so wins. */
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    margin: 0;
+    font-size: inherit;
+    font-weight: inherit;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  /* A finger scrolls by dragging the content, so the bar is a 10px strip of
+     nothing — and on a phone that strip is a real fraction of the width. */
+  @media (pointer: coarse) {
+    * {
+      scrollbar-width: none;
+    }
+
+    ::-webkit-scrollbar {
+      display: none;
+    }
+  }
+
+  ::-webkit-scrollbar-thumb {
+    border: 3px solid transparent;
+    border-radius: 10px;
+    background-color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 22%, transparent);
+    background-clip: padding-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 40%, transparent);
+  }
+
+  /* Sliders and cast rows scroll horizontally; a visible bar would sit on the
+     art. No utility for this in wind4, hence the two lines here. */
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* The four entrances, unlayered because a `@keyframes` name is global and takes
+   no part in the cascade — putting them in a layer would only imply they did.
+
+   Read the `from` as "where it came in from" and note that no `to` sets anything
+   the element does not already have: `transform: none` and `opacity: 1` are the
+   resting state, which is what lets the `none` tier simply not run them.
+
+   Nothing here touches a property that repaints. Adding one — a `filter`, a
+   `box-shadow`, a `width`, a colour — is what `bun run check:perf` refuses. */
+@keyframes reveal-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes trace-x {
+  from {
+    transform: scaleX(0);
+  }
+
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes clip-up {
+  from {
+    transform: translateY(100%);
+  }
+
+  to {
+    transform: none;
+  }
+}
+
+@keyframes motion-fade {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/* Last layer wins, so this is where app-wide overrides of Vuetify's own
+   component styles go. `.panel` is the frosted surface the chrome floats on:
+   sidebar, toolbars, and every menu/select popup. */
+@layer vuetify-final {
+  .panel,
+  .v-overlay__content > .v-list,
+  .v-overlay__content > .v-card,
+  .v-overlay__content > .v-sheet {
+    background-color: color-mix(in srgb, rgb(var(--v-theme-surface-container)) 78%, transparent) !important;
+    backdrop-filter: blur(24px) saturate(140%);
+    border: 1px solid rgb(var(--v-theme-outline-variant));
+  }
+
+  /* Vuetify's color props compile to bg-* utility classes, which this app
+     doesn't ship ($color-pack: false), so panels clear their children here. */
+  .panel .v-list,
+  .panel .v-toolbar__content {
+    background: transparent;
+  }
+
+  /* The layouts inset their own content, but a drawer is `position: fixed` and
+     so sits outside all of it — it has to clear the system bars itself. */
+  .v-navigation-drawer {
+    padding-top: var(--safe-top);
+    padding-bottom: var(--safe-bottom);
+  }
+
+  /* v-main hard-codes a solid background that would hide the backdrop art. */
+  .v-application,
+  .v-application__wrap,
+  .v-main {
+    background: transparent;
+  }
+
+  /* The frosted look, the crossfades and the blurred art are what a TV's GPU
+     spends its frames on. Measured on the test set (a 1.5GHz quad A53 driving
+     1080p), the cost is paint and raster almost end to end — style, layout and
+     script together never reached a tenth of a frame. It shows up worst while
+     moving around with a remote rather than while scrolling, because that is
+     what fires the transitions: ten d-pad moves along a row ran at 13fps with
+     these rules off and 23 with them on. So this is the switch in
+     Settings → Appearance, on by default on a television.
+
+     Three rules, in the order they earned their place:
+
+     `transition` is the biggest of them, and the least obvious — every card
+     carries a focus ring, an overlay and a poster scale that each animate, so
+     one move of the d-pad repaints the grid several times over. Animations are
+     deliberately left alone: the only ones here are the loading skeletons and
+     the progress spinners, and a frozen spinner reads as a hung app.
+
+     `backdrop-filter` is the frosted chrome — a readback and blur of everything
+     behind the sidebar and every menu, redone whenever what's behind them moves.
+
+     The backdrop's own `blur()` stays a blur at 0 radius rather than `none`, so
+     the brightness and saturation that keep white poster art from washing the
+     text out still apply — dropping the whole filter is a different screen, not
+     a faster one. */
+  html.reduce-effects *,
+  html.reduce-effects *::before,
+  html.reduce-effects *::after {
+    transition: none !important;
+  }
+
+  html.reduce-effects .panel,
+  html.reduce-effects .v-navigation-drawer,
+  html.reduce-effects .v-overlay__content > .v-list,
+  html.reduce-effects .v-overlay__content > .v-card,
+  html.reduce-effects .v-overlay__content > .v-sheet {
+    backdrop-filter: none;
+  }
+
+  html.reduce-effects .rivulet-backdrop {
+    filter: brightness(0.5) saturate(1.25) !important;
+  }
+
+  /* Left where it is rather than folded into the rule above: the art never
+     moves, but it sits behind a scrolling page, and without its own layer the
+     compositor re-blurs 1664x936 of it every frame the page scrolls. Promoting
+     it caches the blurred result — worth more than turning the blur off, and it
+     keeps the design. */
+  .rivulet-backdrop {
+    will-change: transform;
+  }
+
+  /* A remote has no cursor, so focus has to be as loud as hover is. `.dpad` goes
+     on <html> the first time an arrow key arrives and comes off again when a
+     mouse moves (plugins/dpad.client.ts), so desktop never sees this.
+
+     `:focus`, not `:focus-visible`: focus moved by script doesn't reliably count
+     as visible, and in d-pad mode every focus is. It has to sit in the last
+     layer because `.v-btn` sets `outline: none` in Vuetify's own; the exclusions
+     are the components that draw their own ring, which `outline-none` marks.
+     The inset offset matters — a scroller clips anything drawn outside a card. */
+  html.dpad :focus:not([tabindex='-1'], .outline-none) {
+    outline: 2px solid rgb(var(--v-theme-primary));
+    outline-offset: -2px;
+  }
+}

@@ -1,0 +1,16 @@
+<!-- Rivulet Light's background: Editorial flow-line motif on white ground. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <defs>
+    <radialGradient id="cyan-light" cx="0.2" cy="0.3" r="0.75">
+      <stop offset="0%" stop-color="#0E6C82" stop-opacity="0.15" />
+      <stop offset="100%" stop-color="#0E6C82" stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id="amber-light" cx="0.8" cy="0.7" r="0.7">
+      <stop offset="0%" stop-color="#D99B36" stop-opacity="0.1" />
+      <stop offset="100%" stop-color="#D99B36" stop-opacity="0" />
+    </radialGradient>
+  </defs>
+  <rect width="1920" height="1080" fill="#FFFFFF" />
+  <rect width="1920" height="1080" fill="url(#cyan-light)" />
+  <rect width="1920" height="1080" fill="url(#amber-light)" />
+</svg>

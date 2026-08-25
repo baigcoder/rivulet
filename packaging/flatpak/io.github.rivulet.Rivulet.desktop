@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Name=Rivulet
+Comment=Media library and BitTorrent player
+Exec=rivulet %u
+Icon=io.github.rivulet.Rivulet
+Terminal=false
+Categories=AudioVideo;Player;
+Keywords=torrent;bittorrent;mpv;video;movies;streaming;
+# The app registers these itself at startup, but inside the sandbox that write
+# lands in ~/.var/app/…/data/applications where the host's xdg-open never looks.
+# Declaring them here is what makes a rivulet:// link work from a browser.
+MimeType=x-scheme-handler/rivulet;x-scheme-handler/stremio;
+# Tauri names the window class after the binary, not the desktop file.
+StartupWMClass=rivulet
+StartupNotify=true

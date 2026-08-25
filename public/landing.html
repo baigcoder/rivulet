@@ -1,0 +1,1075 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <!-- Set before the stylesheet is applied, so `.js .reveal { opacity: 0 }` can
+       hide what is about to animate without ever hiding it from a browser that
+       never runs the observer. A scroll-reveal that fails closed is a blank page. -->
+  <script>document.documentElement.className = 'js'</script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rivulet — A media library that plays anything you point it at</title>
+  <meta name="description" content="Rivulet streams torrents into a real mpv window — HEVC, AV1, DTS, half-downloaded MKVs, all of it. The BitTorrent engine runs inside the app, the library never leaves your device." />
+  <meta name="theme-color" content="#0e0f11" />
+  <meta name="color-scheme" content="dark" />
+  <link rel="icon" href="/logo.svg" type="image/svg+xml" />
+
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Rivulet — A media library that plays anything you point it at" />
+  <meta property="og:description" content="The BitTorrent engine runs inside the app, the library never leaves your device, and it ships with nowhere to search until you say so." />
+  <meta property="og:image" content="/landing-showcase.jpg" />
+  <meta name="twitter:card" content="summary_large_image" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <!-- Roboto because the app itself is Roboto: a landing page that does not look
+       like the product it is selling is a different product. JetBrains Mono
+       carries the indices, the endpoints and the platform column — the three
+       places this design uses a monospace as a typographic device rather than as
+       code formatting. -->
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ══════════════════════════════════════════════════════════════════════
+       RIVULET — landing page
+
+       Editorial, which here means a specific set of refusals: no filled cards,
+       no drop shadows doing the work of hierarchy, no centred column of
+       identical boxes. Structure comes from rules, from a monospace index in
+       the margin, and from type sizes that actually differ. The previous
+       version had five separate content types — reasons, rooms, backends,
+       privacy points, "reaches" — rendered as five visually identical filled
+       rectangles, so the page read as one long undifferentiated grid. Ruling
+       them instead lets each one look like what it is: a numbered argument, a
+       table of contents, a real table, a list.
+
+       Motion mirrors the app's own vocabulary (app/assets/css/layers.css):
+       reveal-up and trace-x, staggered off `--i`. Same names, same curves, same
+       restriction to transform and opacity. This page is not inside the Tauri
+       webview and has no television to answer to, so it could afford more — it
+       deliberately doesn't, because the point of a landing page is to be
+       recognisably the same object as the thing it links to.
+       ══════════════════════════════════════════════════════════════════════ */
+
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      /* Straight off app/theme/presets.ts — Rivulet Dark. */
+      --ground:      #0e0f11;
+      --ground-rgb:  14, 15, 17;
+      --surface:     #16181b;
+      --accent:      #6fe3ff;
+      --accent-rgb:  111, 227, 255;
+      --warm:        #ffc978;
+
+      /* Hairlines, in three weights. Almost all structure on this page is one
+         of these three, which is why they are named rather than inlined. */
+      --rule:        rgba(255, 255, 255, .09);
+      --rule-soft:   rgba(255, 255, 255, .05);
+      --rule-strong: rgba(255, 255, 255, .16);
+
+      --on-ground: #e8e9ea;
+      --on-muted:  #a3a7ad;
+      --on-dim:    #71767d;
+      --on-faint:  #4e535a;
+
+      --font: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --mono: 'JetBrains Mono', ui-monospace, 'Fira Code', monospace;
+
+      /* Tighter than the version this replaces. Editorial wants corners that
+         read as a cut edge, not as a pill. */
+      --r-sm: 4px;
+      --r-md: 8px;
+      --r-lg: 12px;
+
+      --gutter: clamp(20px, 5vw, 40px);
+
+      /* ── Motion ──────────────────────────────────────────────────────────
+         The app's four entrances, same curve. Only transform and opacity, so
+         a long scrolling page stays on the compositor. */
+      --motion-reveal: reveal-up 620ms cubic-bezier(.2, .8, .2, 1) both;
+      --motion-trace:  trace-x  520ms cubic-bezier(.2, .8, .2, 1) both;
+      --motion-stagger: 70ms;
+    }
+
+    /* Everything still arrives, nothing travels to get there — the same bargain
+       the app's `reduced` tier strikes, and the same mechanism: redefine the
+       properties rather than fight each rule with `!important`. */
+    @media (prefers-reduced-motion: reduce) {
+      :root {
+        --motion-reveal: motion-fade 200ms linear both;
+        --motion-trace:  motion-fade 200ms linear both;
+        --motion-stagger: 0ms;
+      }
+      html { scroll-behavior: auto; }
+    }
+
+    @keyframes reveal-up  { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: none; } }
+    @keyframes trace-x    { from { transform: scaleX(0); }                    to { transform: scaleX(1); } }
+    @keyframes motion-fade { from { opacity: 0; }                            to { opacity: 1; } }
+
+    html {
+      scroll-behavior: smooth;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      background: var(--ground);
+    }
+
+    body {
+      font-family: var(--font);
+      background: var(--ground);
+      color: var(--on-ground);
+      font-size: 1rem;
+      line-height: 1.7;
+      overflow-x: hidden;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    img { display: block; max-width: 100%; }
+    ::selection { background: rgba(var(--accent-rgb), .22); color: #fff; }
+
+    :focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 3px;
+      border-radius: 2px;
+    }
+
+    /* ── Reveal plumbing ───────────────────────────────────────────────────
+       THE CONTAINER IS OBSERVED, THE CHILDREN ANIMATE. Not the other way round,
+       and this is the whole reason the hero once rendered as a label followed by
+       half a screen of nothing.
+
+       An IntersectionObserver computes its intersection *after* every ancestor's
+       clipping has been applied, and reports a ratio of the target's own area. So
+       observing the element that is being hidden is a trap whenever the hiding is
+       geometric — the first version of this page did it twice over:
+
+         · the headline was translated fully out of an `overflow: hidden` parent,
+           so its intersection area was zero, `isIntersecting` never became true,
+           and it stayed parked below its own clipping edge for ever;
+         · every `.trace` rule is `scaleX(0)`, so it has zero width — with any
+           threshold above 0 not one of them could ever fire either.
+
+       Both are cured by watching something whose geometry nothing has touched:
+       the section. A section is tall, unclipped and never zero-area, so the
+       observer's answer about it is always meaningful — and one `.in` on it
+       releases everything inside, stagger and all.
+
+       `.js` gates the hidden state, so a browser that never runs the script (or
+       one where the script throws before reaching it) shows the finished page
+       rather than a blank one. A reveal must fail visible. */
+    .js .reveal { opacity: 0; }
+    .js .trace { transform: scaleX(0); }
+
+    /* Same specificity as the two rules above (0,2,0), so source order is what
+       decides — these have to stay below them. The self-form (`.in.reveal`) is
+       there so an observed container may also animate itself. */
+    .in .reveal, .in.reveal {
+      animation: var(--motion-reveal);
+      animation-delay: calc(var(--i, 0) * var(--motion-stagger));
+    }
+
+    .in .trace, .in.trace {
+      animation: var(--motion-trace);
+      animation-delay: calc(var(--i, 0) * var(--motion-stagger));
+    }
+
+    /* The signature. A rule that draws itself is a scaleX, which costs nothing,
+       and it is the one gesture that makes a page built out of hairlines feel
+       authored rather than merely divided. */
+    .trace {
+      transform-origin: left center;
+      height: 1px;
+      border: 0;
+      background: var(--accent);
+    }
+
+    /* ── Layout ───────────────────────────────────────────────────────────── */
+    .wrap { max-width: 1160px; margin: 0 auto; padding: 0 var(--gutter); }
+    .measure { max-width: 62ch; }
+    section { border-top: 1px solid var(--rule-soft); }
+    .pad { padding: clamp(72px, 11vw, 132px) 0; }
+
+    /* ── Type ─────────────────────────────────────────────────────────────── */
+    .label {
+      display: block;
+      font-family: var(--mono);
+      font-size: .6875rem;
+      font-weight: 500;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 18px;
+    }
+
+    /* Sized for the sentence it actually has to carry. The headline here is ~100
+       characters — a full claim, not a three-word banner — so a display size with
+       a narrow measure turns it into six or seven lines and half a screen of
+       type. 34ch is about three lines of this copy, which is what a hero wants. */
+    h1 {
+      font-size: clamp(2rem, 4.4vw, 3.375rem);
+      font-weight: 700;
+      letter-spacing: -.035em;
+      line-height: 1.1;
+    }
+
+    .h2 {
+      font-size: clamp(1.625rem, 3.6vw, 2.5rem);
+      font-weight: 700;
+      letter-spacing: -.03em;
+      line-height: 1.14;
+      margin-bottom: 16px;
+      max-width: 34ch;
+    }
+
+    .lede {
+      font-size: clamp(1rem, 1.5vw, 1.1875rem);
+      color: var(--on-muted);
+      font-weight: 300;
+      line-height: 1.65;
+    }
+
+    p { color: var(--on-muted); }
+    strong { color: var(--on-ground); font-weight: 500; }
+
+    .sec-head { margin-bottom: clamp(44px, 6vw, 72px); }
+    .sec-head .trace { width: 56px; margin-bottom: 26px; }
+
+    /* ── Nav ──────────────────────────────────────────────────────────────── */
+    nav {
+      position: fixed; inset: 0 0 auto 0; z-index: 200;
+      height: 58px;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 var(--gutter);
+      background: rgba(var(--ground-rgb), .72);
+      backdrop-filter: blur(20px) saturate(1.6);
+      -webkit-backdrop-filter: blur(20px) saturate(1.6);
+      border-bottom: 1px solid var(--rule-soft);
+    }
+    .brand {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 1rem; font-weight: 700; letter-spacing: -.02em;
+      color: var(--on-ground);
+    }
+    .brand img { width: 26px; height: 26px; }
+    .nav-links { display: flex; align-items: center; gap: 4px; }
+    .nav-links a {
+      color: var(--on-dim);
+      font-size: .8125rem; font-weight: 400;
+      padding: 6px 12px; border-radius: var(--r-sm);
+      transition: color .18s;
+    }
+    .nav-links a:hover, .nav-links a:focus-visible { color: var(--on-ground); }
+
+    /* ── Buttons ──────────────────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex; align-items: center; gap: 9px;
+      padding: 12px 24px;
+      border: 1px solid transparent;
+      border-radius: var(--r-md);
+      font-family: var(--font); font-size: .875rem; font-weight: 500;
+      cursor: pointer;
+      transition: background .2s, border-color .2s, color .2s;
+    }
+    .btn svg { width: 17px; height: 17px; flex-shrink: 0; }
+    .btn-primary { background: var(--accent); color: #00323d; font-weight: 700; }
+    .btn-primary:hover { background: #a4eeff; }
+    .btn-ghost { border-color: var(--rule-strong); color: var(--on-ground); }
+    .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+    .btn-sm { padding: 7px 16px; font-size: .8125rem; }
+
+    /* ── Hero ─────────────────────────────────────────────────────────────── */
+    .hero { padding: 150px 0 0; border-top: 0; position: relative; }
+    .hero::before {
+      content: '';
+      position: absolute; top: -80px; left: 0; right: 0; height: 620px;
+      background: radial-gradient(70% 90% at 18% 0%, rgba(var(--accent-rgb), .07), transparent 70%);
+      pointer-events: none;
+    }
+    .hero-inner { position: relative; }
+    .hero h1 { max-width: 34ch; }
+    .hero .lede { margin-top: 28px; max-width: 56ch; }
+
+    /* Facts on a rule, not floating dots. */
+    .facts {
+      display: flex; flex-wrap: wrap; gap: 0;
+      margin: 40px 0 0;
+      border-top: 1px solid var(--rule);
+      list-style: none;
+    }
+    .facts li {
+      font-family: var(--mono);
+      font-size: .75rem; letter-spacing: .06em; text-transform: uppercase;
+      color: var(--on-dim);
+      padding: 14px 28px 14px 0;
+    }
+    .facts li + li { padding-left: 28px; border-left: 1px solid var(--rule); }
+
+    .hero-cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 36px; }
+
+    .shot {
+      margin-top: clamp(56px, 8vw, 96px);
+      border: 1px solid var(--rule);
+      border-radius: var(--r-lg);
+      overflow: hidden;
+      position: relative;
+      background: var(--surface);
+    }
+    .shot img { width: 100%; height: auto; }
+    .caption {
+      font-family: var(--mono);
+      font-size: .6875rem; letter-spacing: .1em; text-transform: uppercase;
+      color: var(--on-faint);
+      margin-top: 14px;
+      padding-bottom: clamp(72px, 10vw, 120px);
+    }
+
+    /* ── Ruled list: the numbered argument ────────────────────────────────── */
+    .ruled { list-style: none; display: grid; grid-template-columns: repeat(2, 1fr); column-gap: clamp(32px, 5vw, 72px); }
+    .ruled > li {
+      display: grid; grid-template-columns: 2.75rem 1fr;
+      gap: 0 4px;
+      padding: 26px 0;
+      border-top: 1px solid var(--rule);
+    }
+    .idx {
+      font-family: var(--mono);
+      font-size: .75rem; font-weight: 500;
+      color: var(--accent);
+      padding-top: .32em;
+    }
+    .ruled h3 {
+      font-size: 1rem; font-weight: 500; letter-spacing: -.01em;
+      margin-bottom: 7px; line-height: 1.4;
+    }
+    .ruled p { font-size: .875rem; line-height: 1.65; }
+
+    /* ── Split feature ───────────────────────────────────────────────────── */
+    .split {
+      display: grid; grid-template-columns: 1fr 1.05fr;
+      gap: clamp(36px, 6vw, 80px); align-items: start;
+    }
+    .split.flip .split-text { order: 2; }
+    .split.flip .split-media { order: 1; }
+    .split-media {
+      border: 1px solid var(--rule);
+      border-radius: var(--r-lg);
+      overflow: hidden;
+      background: var(--surface);
+    }
+    /* No `position: sticky` on the media here, tempting as it is: `body` carries
+       `overflow-x: hidden`, which computes `overflow-y` to `auto` and makes the
+       body a scroll container — the classic reason a sticky element silently
+       does nothing in some engines and works in others. Not worth a flourish
+       that behaves differently per browser. */
+
+    /* Hairline rows instead of bullet dots: the rule is the list marker. */
+    .points { list-style: none; margin-top: 30px; border-top: 1px solid var(--rule); }
+    .points li {
+      font-size: .875rem; line-height: 1.6;
+      color: var(--on-muted);
+      padding: 13px 0 13px 0;
+      border-bottom: 1px solid var(--rule-soft);
+    }
+
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 28px; }
+    .chip {
+      font-family: var(--mono);
+      font-size: .6875rem; font-weight: 500; letter-spacing: .04em;
+      color: var(--on-muted);
+      padding: 5px 11px;
+      border: 1px solid var(--rule);
+      border-radius: var(--r-sm);
+    }
+    .chip-accent { color: var(--accent); border-color: rgba(var(--accent-rgb), .3); }
+
+    /* ── Index grid: the table of contents ───────────────────────────────── */
+    .index { list-style: none; display: grid; grid-template-columns: repeat(4, 1fr); column-gap: clamp(20px, 3vw, 40px); }
+    .index > li { padding: 22px 0; border-top: 1px solid var(--rule); }
+    .index h4 {
+      font-size: .9375rem; font-weight: 500;
+      margin-bottom: 6px; letter-spacing: -.01em;
+    }
+    .index .n {
+      display: block; font-family: var(--mono);
+      font-size: .6875rem; color: var(--on-faint);
+      margin-bottom: 12px; letter-spacing: .08em;
+    }
+    .index p { font-size: .8125rem; line-height: 1.55; }
+
+    /* ── Real table, for tabular data ────────────────────────────────────── */
+    .table { width: 100%; border-collapse: collapse; }
+    .table th {
+      text-align: left;
+      font-family: var(--mono);
+      font-size: .6875rem; font-weight: 500;
+      letter-spacing: .14em; text-transform: uppercase;
+      color: var(--on-faint);
+      padding: 0 20px 14px 0;
+      border-bottom: 1px solid var(--rule);
+    }
+    .table td {
+      padding: 20px 20px 20px 0;
+      border-bottom: 1px solid var(--rule-soft);
+      font-size: .875rem;
+      color: var(--on-muted);
+      vertical-align: baseline;
+    }
+    .table td:first-child {
+      font-family: var(--mono); font-size: .8125rem;
+      color: var(--on-ground); white-space: nowrap;
+    }
+    .table td.player { color: var(--accent); font-weight: 500; font-family: var(--font); font-size: .9375rem; white-space: nowrap; }
+
+    /* Three columns of prose will outgrow a narrow window well before the 680px
+       breakpoint, so this is unconditional rather than a mobile afterthought.
+       A table that overflows the page is worse than one that scrolls itself. */
+    .table-scroll { overflow-x: auto; }
+
+    /* ── Sources ─────────────────────────────────────────────────────────── */
+    .code {
+      font-family: var(--mono); font-size: .8125rem; line-height: 2;
+      color: var(--on-muted);
+      background: var(--surface);
+      border: 1px solid var(--rule);
+      border-left: 2px solid var(--accent);
+      border-radius: 0 var(--r-md) var(--r-md) 0;
+      padding: 22px 26px;
+      margin: 28px 0;
+      overflow-x: auto;
+    }
+    .code .kw { color: var(--accent); font-weight: 500; }
+    .code .str { color: var(--warm); }
+    .code .dim { color: var(--on-faint); }
+
+    .subhead { font-size: 1rem; font-weight: 500; margin-bottom: 8px; }
+    .stack > * + * { margin-top: 28px; }
+
+    /* The legal note earns a marked edge rather than a box: it is the one thing
+       on this page nobody may skim past. */
+    .note {
+      font-size: .8125rem; line-height: 1.7;
+      color: var(--on-dim);
+      border-left: 2px solid var(--rule-strong);
+      padding: 4px 0 4px 20px;
+    }
+
+    kbd, code.inl {
+      font-family: var(--mono); font-size: .875em;
+      color: var(--accent);
+    }
+
+    /* ── Definition rows ─────────────────────────────────────────────────── */
+    .defs { display: grid; grid-template-columns: repeat(2, 1fr); column-gap: clamp(32px, 5vw, 72px); }
+    .defs > div { padding: 20px 0; border-top: 1px solid var(--rule); }
+    .defs dt { font-size: .875rem; font-weight: 500; color: var(--on-ground); margin-bottom: 5px; }
+    .defs dd { font-size: .8125rem; line-height: 1.6; color: var(--on-muted); }
+
+    /* ── Download ────────────────────────────────────────────────────────── */
+    .get { text-align: center; }
+    .get .trace { width: 56px; margin: 0 auto 26px; }
+    .get .h2 { max-width: 30ch; margin-inline: auto; }
+    .get .lede { max-width: 52ch; margin: 0 auto; }
+    .detected {
+      font-family: var(--mono);
+      font-size: .75rem; letter-spacing: .08em; text-transform: uppercase;
+      color: var(--on-faint);
+      margin: 40px 0 16px;
+    }
+    .detected strong { color: var(--on-muted); font-weight: 500; }
+    .dl-buttons { display: flex; justify-content: center; flex-wrap: wrap; gap: 10px; }
+    .dl-alt { font-size: .8125rem; color: var(--on-dim); margin-top: 20px; }
+    .dl-alt a { color: var(--on-muted); border-bottom: 1px solid var(--rule-strong); }
+    .dl-alt a:hover { color: var(--accent); border-color: var(--accent); }
+    .dl-sep { margin: 0 8px; color: var(--on-faint); }
+
+    /* ── Footer ──────────────────────────────────────────────────────────── */
+    footer { border-top: 1px solid var(--rule); padding: 64px 0 40px; }
+    .foot-grid { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 40px; }
+    .foot-grid p { font-size: .8125rem; line-height: 1.7; margin-top: 14px; max-width: 34ch; }
+    .foot-col h5 {
+      font-family: var(--mono);
+      font-size: .6875rem; font-weight: 500;
+      letter-spacing: .14em; text-transform: uppercase;
+      color: var(--on-faint);
+      margin-bottom: 14px;
+    }
+    .foot-col a {
+      display: block; color: var(--on-muted);
+      font-size: .8125rem; padding: 4px 0;
+      transition: color .18s;
+    }
+    .foot-col a:hover { color: var(--on-ground); }
+    .foot-bottom {
+      border-top: 1px solid var(--rule-soft);
+      margin-top: 48px; padding-top: 22px;
+      font-size: .75rem; line-height: 1.8;
+      color: var(--on-faint);
+    }
+    .foot-bottom a { color: var(--on-dim); }
+
+    /* ── Responsive ──────────────────────────────────────────────────────── */
+    @media (max-width: 1000px) {
+      .index { grid-template-columns: repeat(2, 1fr); }
+      .split { grid-template-columns: 1fr; gap: 40px; }
+      .split.flip .split-text { order: 1; }
+      .split.flip .split-media { order: 2; }
+      .split-media { position: static; }
+      .foot-grid { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 680px) {
+      .nav-links a:not(.btn) { display: none; }
+      .hero { padding-top: 116px; }
+      .ruled, .defs { grid-template-columns: 1fr; }
+      .index { grid-template-columns: 1fr; }
+      .facts { display: block; }
+      .facts li { padding: 10px 0; border-top: 1px solid var(--rule-soft); }
+      .facts li + li { padding-left: 0; border-left: 0; }
+      .foot-grid { grid-template-columns: 1fr; gap: 32px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <span class="brand">
+    <img src="/logo.svg" alt="" />
+    Rivulet
+  </span>
+  <div class="nav-links">
+    <a href="#why">Why</a>
+    <a href="#player">Player</a>
+    <a href="#downloads">Downloads</a>
+    <a href="#sources">Sources</a>
+    <a href="#privacy">Privacy</a>
+    <a href="#download" class="btn btn-primary btn-sm">Download</a>
+  </div>
+</nav>
+
+<!-- ═══════════════════════════════ HERO ═══════════════════════════════ -->
+<section class="hero">
+  <div class="wrap hero-inner">
+    <span class="label reveal" style="--i: 0">A media library that plays anything you point it at</span>
+
+    <h1 class="reveal" style="--i: 1">
+      Rivulet streams torrents into a real mpv&nbsp;window&nbsp;— HEVC, AV1, DTS,
+      half&#8209;downloaded MKVs, all&nbsp;of&nbsp;it.
+    </h1>
+
+    <p class="lede reveal" style="--i: 3">
+      The BitTorrent engine runs inside the app, the library never leaves your device,
+      and it ships with nowhere to search until you say&nbsp;so.
+    </p>
+
+    <ul class="facts reveal" style="--i: 4">
+      <li>Free forever</li>
+      <li>No account</li>
+      <li>No telemetry</li>
+    </ul>
+
+    <div class="hero-cta reveal" style="--i: 5">
+      <a href="#download" class="btn btn-primary">Download Rivulet</a>
+      <a href="#why" class="btn btn-ghost">See what it does</a>
+    </div>
+
+    <div class="shot reveal" style="--i: 6">
+      <img src="/landing-showcase.jpg" alt="The Rivulet home screen, showing a featured title above rows of posters" />
+    </div>
+    <p class="caption">Rivulet home screen</p>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ WHY ════════════════════════════════ -->
+<section class="pad" id="why">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <hr class="trace" />
+      <span class="label">Why Rivulet</span>
+      <h2 class="h2">Most torrent players are a video tag in a trench coat</h2>
+      <p class="lede measure">The codec support shows. Rivulet embeds the real thing and keeps the library around it honest and local.</p>
+    </div>
+
+    <ol class="ruled">
+      <li class="reveal" style="--i: 0">
+        <span class="idx">01</span>
+        <div>
+          <h3>A real mpv window, not a video tag</h3>
+          <p>On Linux and Windows the Rust side parents an actual mpv window into the page and keeps it glued to a box in the layout. mpv carries its own ffmpeg, so HEVC, AV1, 10-bit, E-AC-3, DTS and half-downloaded MKVs play with no codec packs.</p>
+        </div>
+      </li>
+      <li class="reveal" style="--i: 1">
+        <span class="idx">02</span>
+        <div>
+          <h3>The engine is in the app</h3>
+          <p>librqbit runs in-process — a full downloads page with file pickers, seeding, speed limits and a disk budget, rather than a hidden cache you cannot see or control.</p>
+        </div>
+      </li>
+      <li class="reveal" style="--i: 2">
+        <span class="idx">03</span>
+        <div>
+          <h3>Playback starts on the first bytes</h3>
+          <p>You are watching while it downloads. A title already on disk replays with no metadata lookup, no source search and no peers at all.</p>
+        </div>
+      </li>
+      <li class="reveal" style="--i: 3">
+        <span class="idx">04</span>
+        <div>
+          <h3>One player, three backends</h3>
+          <p>Where mpv cannot be embedded, ExoPlayer or the webview answers the same command protocol — so there is one player component and one set of controls, not three.</p>
+        </div>
+      </li>
+      <li class="reveal" style="--i: 4">
+        <span class="idx">05</span>
+        <div>
+          <h3>Your library stays yours</h3>
+          <p>History, progress, favourites and the watchlist live in this device's storage. No Rivulet account, no Rivulet server, no sync — and one backup file carries the lot to another machine.</p>
+        </div>
+      </li>
+      <li class="reveal" style="--i: 5">
+        <span class="idx">06</span>
+        <div>
+          <h3>Usable from the sofa</h3>
+          <p>Full d-pad navigation, a focus style anywhere there is a hover style, and an Android TV build. A remote reaches everything a mouse does.</p>
+        </div>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ PLAYER ═════════════════════════════ -->
+<section class="pad" id="player">
+  <div class="wrap">
+    <div class="split">
+      <div class="split-text reveal">
+        <hr class="trace" style="width: 56px; margin-bottom: 26px" />
+        <span class="label">The player</span>
+        <h2 class="h2">Everything about the picture, in one place</h2>
+        <p class="lede">
+          The native mpv surface paints above the webview, so the controls cannot simply be stacked over it.
+          Every overlay measures its own rectangle each frame and the Rust side subtracts it from mpv's window —
+          the page shows through the holes, clicks included, while the video window itself never resizes.
+        </p>
+        <ul class="points">
+          <li>Seek-preview frames pulled with ffmpeg and cached, warmed only while the control bar is up</li>
+          <li>The file's own audio and subtitle tracks, the release's subtitle files and OpenSubtitles in one menu</li>
+          <li>Subtitle font, size, colour, outline and position — applied to mpv and to page-drawn cues alike</li>
+          <li>Auto-sync slides a mismatched subtitle onto the audio's silence map and reports its confidence</li>
+          <li>Progress recorded per episode, picked back up from the card or the detail page</li>
+        </ul>
+        <div class="chips">
+          <span class="chip chip-accent">HEVC</span>
+          <span class="chip chip-accent">AV1</span>
+          <span class="chip chip-accent">10-bit</span>
+          <span class="chip chip-accent">E-AC-3</span>
+          <span class="chip chip-accent">DTS</span>
+          <span class="chip">x264</span>
+          <span class="chip">AAC</span>
+          <span class="chip">MKV</span>
+          <span class="chip">Half-downloaded</span>
+        </div>
+      </div>
+      <div class="split-media reveal" style="--i: 1">
+        <img src="/landing-player.jpg" alt="The Rivulet player with the subtitle menu open over a film" />
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═════════════════════════════ DOWNLOADS ════════════════════════════ -->
+<section class="pad" id="downloads">
+  <div class="wrap">
+    <div class="split flip">
+      <div class="split-text reveal">
+        <hr class="trace" style="width: 56px; margin-bottom: 26px" />
+        <span class="label">Downloads</span>
+        <h2 class="h2">A torrent client that happens to have a library on top</h2>
+        <p class="lede">
+          Paste a magnet and it plays. The downloads page is the engine's own UI, so nothing is hidden behind
+          a "cache" setting — and with no sources configured, that is a complete BitTorrent client on its own.
+        </p>
+        <ul class="points">
+          <li>Magnets, .torrent files, or a release picked from a source you added</li>
+          <li>Pick what to fetch inside a torrent — a season pack downloads the one episode</li>
+          <li>Seeding on by default, with upload and download limits</li>
+          <li>A disk budget that evicts oldest-watched first and never touches what is playing</li>
+          <li>Wi-Fi only pauses background torrents on a metered connection and restarts exactly those</li>
+          <li>On Android a foreground service keeps downloading when you switch apps</li>
+        </ul>
+      </div>
+      <div class="split-media reveal" style="--i: 1">
+        <img src="/landing-downloads.jpg" alt="The Rivulet downloads page with per-file selection and speed limits" />
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════ APPEARANCE ════════════════════════════ -->
+<section class="pad" id="appearance">
+  <div class="wrap">
+    <div class="split">
+      <div class="split-text reveal">
+        <hr class="trace" style="width: 56px; margin-bottom: 26px" />
+        <span class="label">Appearance</span>
+        <h2 class="h2">26 themes, or one built from a colour you pick</h2>
+        <p class="lede">
+          Pick a colour off the spectrum slider and every role from primary-container to
+          on-tertiary-fixed-variant is derived with Google's own generator — the engine behind
+          Material Theme Builder. Every foreground and background pair's contrast is asserted by
+          a check script rather than eyeballed.
+        </p>
+        <ul class="points">
+          <li>Rivulet Dark, Midnight (OLED), Nord, Tokyo Night, Mocha, Dracula, Gruvbox, Solarized and more</li>
+          <li>A theme is a preset: it can carry the background it was drawn for, with its own blur and tint</li>
+          <li>Poster art behind the app, a picture of your own, or nothing at all</li>
+          <li>App scale, poster size, a performance switch for televisions, and a global CSS box</li>
+        </ul>
+      </div>
+      <div class="split-media reveal" style="--i: 1">
+        <img src="/landing-themes.jpg" alt="Rivulet appearance settings showing the theme grid" />
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ THE APP ════════════════════════════ -->
+<section class="pad" id="app">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <hr class="trace" />
+      <span class="label">The app</span>
+      <h2 class="h2">Eight rooms, and TMDB metadata through all of them</h2>
+      <p class="lede measure">
+        Posters, backdrops, cast, ratings, per-episode watched state and resume points —
+        with favourites, a watchlist and history kept on the device.
+      </p>
+    </div>
+
+    <ul class="index">
+      <li class="reveal" style="--i: 0"><span class="n">01</span><h4>Home</h4><p>Continue watching, trending today, popular, top rated, in cinemas</p></li>
+      <li class="reveal" style="--i: 1"><span class="n">02</span><h4>Movies · TV · Anime</h4><p>Browse rows in a grid or a list, remembered per session</p></li>
+      <li class="reveal" style="--i: 2"><span class="n">03</span><h4>Search</h4><p>One box across TMDB; a result carries straight through to a source search</p></li>
+      <li class="reveal" style="--i: 3"><span class="n">04</span><h4>Favourites</h4><p>The local list, on the device, uncapped</p></li>
+      <li class="reveal" style="--i: 0"><span class="n">05</span><h4>Watchlist</h4><p>What you mean to get to, kept next to the rest</p></li>
+      <li class="reveal" style="--i: 1"><span class="n">06</span><h4>History</h4><p>What you watched and where you stopped, per episode</p></li>
+      <li class="reveal" style="--i: 2"><span class="n">07</span><h4>Detail</h4><p>Backdrop, synopsis, cast, trailer, seasons and per-episode state</p></li>
+      <li class="reveal" style="--i: 3"><span class="n">08</span><h4>Settings</h4><p>Appearance, sources, subtitles, network, storage, account, about</p></li>
+    </ul>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ PLAYBACK ═══════════════════════════ -->
+<section class="pad" id="playback">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <hr class="trace" />
+      <span class="label">Playback</span>
+      <h2 class="h2">The right player for the screen it is on</h2>
+      <p class="lede measure">
+        Ranking asks the device rather than guessing: a release name is read for the codecs it claims and each
+        is put to the device's own decoder list, so a TV keeps the Dolby copy it can play and a phone that cannot
+        is steered off it — never at the cost of a quality tier.
+      </p>
+    </div>
+
+    <!-- Four platforms with three attributes each is a table. Rendering it as
+         four boxes made the reader compare across cards instead of down a column. -->
+    <div class="table-scroll reveal">
+      <table class="table">
+        <thead>
+          <tr><th scope="col">Platform</th><th scope="col">Player</th><th scope="col">What it needs</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Linux</td><td class="player">mpv</td><td>Needs mpv and ffmpeg from your package manager</td></tr>
+          <tr><td>Windows</td><td class="player">mpv</td><td>Ships its own mpv and ffmpeg — nothing to install</td></tr>
+          <tr><td>Android · Android&nbsp;TV</td><td class="player">ExoPlayer</td><td>The device's own decoders; landscape and immersive while playing</td></tr>
+          <tr><td>macOS</td><td class="player">libmpv</td><td>Linked rather than launched, drawn under the webview</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ REMOTE ═════════════════════════════ -->
+<section class="pad" id="remote">
+  <div class="wrap">
+    <div class="reveal">
+      <hr class="trace" style="width: 56px; margin-bottom: 26px" />
+      <span class="label">Built for a remote</span>
+      <h2 class="h2">Up, down, left, right, OK, back</h2>
+      <p class="lede measure">
+        Driving the app from a sofa is a constraint on every screen, not a mode.
+        Real links and buttons throughout, a focus style anywhere there is a hover style,
+        decorative overlays taken out of the tab order, and nothing that depends on typing or pointing.
+      </p>
+      <div class="chips" style="margin-top: 32px">
+        <span class="chip">Android TV build</span>
+        <span class="chip">Full d-pad navigation</span>
+        <span class="chip">Performance switch</span>
+        <span class="chip">Focus-first styling</span>
+        <span class="chip">Themes for a dark room</span>
+        <span class="chip">App scale for a 10-foot UI</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ SOURCES ════════════════════════════ -->
+<section class="pad" id="sources">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <hr class="trace" />
+      <span class="label">Sources</span>
+      <h2 class="h2">It ships with nowhere to look</h2>
+      <p class="lede measure">
+        Rivulet hosts no content and indexes no content. It searches nothing on its own
+        and will not suggest anywhere to look. A source is a URL you add.
+      </p>
+    </div>
+
+    <div class="stack measure reveal">
+      <div>
+        <h3 class="subhead">The whole integration</h3>
+        <p>
+          A source is a server that speaks the Stremio addon protocol. Rivulet runs no code
+          from one — it reads the JSON, ranks the results and hands the one you pick to its own engine.
+        </p>
+      </div>
+
+      <div class="code">
+        <span class="kw">GET</span>&nbsp; <span class="str">{source}/stream/movie/{imdbId}.json</span><br />
+        <span class="kw">GET</span>&nbsp; <span class="str">{source}/stream/series/{imdbId}:{s}:{e}.json</span><br />
+        <span class="dim">→</span>&nbsp;&nbsp;&nbsp; <span class="dim">{ "streams": [ { "infoHash": "…", "title": "…" } ] }</span>
+      </div>
+
+      <p>
+        Add several and their results merge, duplicates dropped. A stream that names a URL instead of
+        an info hash — what a debrid addon answers with — is played directly, with no swarm joined
+        and nothing written to disk.
+      </p>
+
+      <div>
+        <h3 class="subhead">A link can never change what it searches</h3>
+        <p>
+          Rivulet registers the <code class="inl">rivulet://</code>
+          scheme so an addon page can offer a one-click install. The app shows the URL in full and
+          asks before adding it — always.
+        </p>
+      </div>
+
+      <p class="note">
+        This project does not host, run, bundle, endorse or recommend any source, and distributes no list of them.
+        What a given source offers, and whether you have the right to play it, is a matter between you and whoever operates it.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ PRIVACY ════════════════════════════ -->
+<section class="pad" id="privacy">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <hr class="trace" />
+      <span class="label">Privacy</span>
+      <h2 class="h2">Nothing phones home</h2>
+    </div>
+
+    <ol class="ruled" style="margin-bottom: 56px">
+      <li class="reveal" style="--i: 0">
+        <span class="idx">01</span>
+        <div>
+          <h3>No analytics, no telemetry, no crash reporting</h3>
+          <p>Nothing phones home. There is no build flag to turn back on.</p>
+        </div>
+      </li>
+      <li class="reveal" style="--i: 1">
+        <span class="idx">02</span>
+        <div>
+          <h3>No account and no server</h3>
+          <p>There is nothing to sign into, and watch state never leaves the device.</p>
+        </div>
+      </li>
+      <li class="reveal" style="--i: 2">
+        <span class="idx">03</span>
+        <div>
+          <h3>Credentials stay on the device</h3>
+          <p>A debrid key lives inside the source URL you added, and backup files leave credential-bearing keys out.</p>
+        </div>
+      </li>
+      <li class="reveal" style="--i: 3">
+        <span class="idx">04</span>
+        <div>
+          <h3>You decide what it can search</h3>
+          <p>With no sources configured, the app queries no one for releases at all.</p>
+        </div>
+      </li>
+    </ol>
+
+    <div class="reveal">
+      <h3 class="subhead" style="color: var(--on-muted); font-weight: 400; margin-bottom: 4px">
+        Besides the sources you add and the peers your torrents connect to, Rivulet reaches:
+      </h3>
+      <dl class="defs">
+        <div><dt>TMDB</dt><dd>Posters, backdrops, synopses, cast and ratings, and the title → IMDb id lookup</dd></div>
+        <div><dt>Stremio's public addons</dt><dd>The OpenSubtitles list, and the one case TMDB cannot produce an IMDb id for</dd></div>
+        <div><dt>YouTube</dt><dd>A title's trailer, on the no-cookie domain</dd></div>
+        <div><dt>GitHub</dt><dd>One unauthenticated request at startup asking whether a newer release exists</dd></div>
+      </dl>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ DOWNLOAD ═══════════════════════════ -->
+<section class="pad" id="download">
+  <div class="wrap get">
+    <div class="reveal">
+      <hr class="trace" />
+      <span class="label">Get Rivulet</span>
+      <h2 class="h2">Put it on the machine you actually watch things on</h2>
+      <p class="lede">
+        One download, no account, and a first run that searches absolutely nothing until you tell it where to look.
+      </p>
+      <p class="detected">We detected <strong id="detected-os">your platform</strong></p>
+      <div class="dl-buttons" id="dl-buttons"></div>
+      <p class="dl-alt">Also available for <span id="alt-platforms"></span></p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ FOOTER ═════════════════════════════ -->
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <span class="brand"><img src="/logo.svg" alt="" /> Rivulet</span>
+        <p>A media library and BitTorrent player for the desktop and Android TV. Free, MIT-licensed, and built to be used from a sofa.</p>
+      </div>
+      <div class="foot-col">
+        <h5>Get it</h5>
+        <a href="#download">Download</a>
+        <a href="#remote">Install on a TV</a>
+        <a href="https://github.com/nicholasgasior/rivulet/releases">All releases</a>
+        <a href="https://github.com/nicholasgasior/rivulet">Build from source</a>
+      </div>
+      <div class="foot-col">
+        <h5>Learn</h5>
+        <a href="#why">Feature tour</a>
+        <a href="#playback">Playback</a>
+        <a href="#sources">Sources</a>
+        <a href="#privacy">Privacy</a>
+      </div>
+      <div class="foot-col">
+        <h5>Project</h5>
+        <a href="https://github.com/nicholasgasior/rivulet">GitHub</a>
+        <a href="https://github.com/nicholasgasior/rivulet/issues">Issues</a>
+        <a href="https://github.com/nicholasgasior/rivulet/blob/main/LICENSE">Licence (MIT)</a>
+      </div>
+    </div>
+    <div class="foot-bottom">
+      © 2026 Rivulet contributors · <a href="https://github.com/nicholasgasior/rivulet/blob/main/LICENSE">MIT</a>
+      &nbsp;·&nbsp; Metadata by <a href="https://www.themoviedb.org/">TMDB</a>.
+      This product uses the TMDB API but is not endorsed or certified by TMDB.
+      Rivulet hosts no content, indexes no content, and ships with no sources configured.
+    </div>
+  </div>
+</footer>
+
+<script>
+  /* ── Reveal ─────────────────────────────────────────────────────────────
+     FIRST, deliberately. Everything below this point is a nice-to-have, and
+     with `.js` hiding the page until `.in` lands, anything that throws up here
+     would leave a blank document behind it. Reveal, then embellish.
+
+     Sections are what get observed, never the elements being animated — see the
+     long note in the stylesheet. A clipped or zero-width target reports no
+     intersection at all, which is how the hero title managed to never arrive. */
+  var groups = document.querySelectorAll('section, footer');
+
+  function release(el) {
+    el.classList.add('in');
+  }
+
+  if ('IntersectionObserver' in window) {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (!e.isIntersecting) return;
+        release(e.target);
+        io.unobserve(e.target);
+      });
+    }, { rootMargin: '0px 0px -40px 0px' });
+
+    groups.forEach(function (el) { io.observe(el); });
+
+    /* A short window with everything already on screen would otherwise wait for
+       a scroll that never comes. The observer's own first callback usually covers
+       this, but it costs nothing to be certain. */
+    window.addEventListener('load', function () {
+      groups.forEach(function (el) {
+        var r = el.getBoundingClientRect();
+        if (r.top < window.innerHeight && r.bottom > 0) {
+          release(el);
+          io.unobserve(el);
+        }
+      });
+    });
+  }
+  else {
+    groups.forEach(release);
+  }
+
+  /* ── Platform detection & download buttons ──────────────────────────────
+     Wrapped, because a missing element here must not cost anyone the page. */
+  try {
+    var P = {
+      windows: {
+        name: 'Windows',
+        icon: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>',
+        file: 'Rivulet_Setup.exe',
+      },
+      macos: {
+        name: 'macOS',
+        icon: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>',
+        file: 'Rivulet.dmg',
+      },
+      linux: {
+        name: 'Linux',
+        icon: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.345 1.884 1.345.358 0 .733-.132 1.073-.396.34-.265.64-.66.914-1.132.229-.4.487-.672.752-.955.132-.142.263-.283.382-.465.117-.18.22-.39.247-.581.056-.392-.058-.78-.36-1.09-.36-.36-.75-.54-1.037-.81-.287-.27-.481-.694-.681-1.012a12.502 12.502 0 01-.764-1.467c-.094-.198-.143-.334-.16-.469-.019-.134-.006-.268-.014-.465-.011-.199-.03-.465-.091-.695-.04-.158-.087-.264-.167-.399.019-.047.037-.093.053-.14.673-1.77.8-3.679.32-5.332-.48-1.656-1.4-3.006-2.664-3.676C14.067.263 13.282 0 12.504 0z"/></svg>',
+        file: 'Rivulet.AppImage',
+      },
+    };
+
+    var ua = navigator.userAgent.toLowerCase();
+    var det = 'linux';
+    if (ua.indexOf('win') !== -1) det = 'windows';
+    else if (ua.indexOf('mac') !== -1) det = 'macos';
+
+    var label = document.getElementById('detected-os');
+    if (label) label.textContent = P[det].name;
+
+    var order = [det].concat(Object.keys(P).filter(function (k) { return k !== det; }));
+    var base = 'https://github.com/nicholasgasior/rivulet/releases/latest/download/';
+
+    var btnBox = document.getElementById('dl-buttons');
+    if (btnBox) {
+      order.forEach(function (k, i) {
+        var a = document.createElement('a');
+        a.href = base + P[k].file;
+        a.className = i === 0 ? 'btn btn-primary' : 'btn btn-ghost';
+        a.innerHTML = P[k].icon + (i === 0 ? ' Download for ' + P[k].name : ' ' + P[k].name);
+        btnBox.appendChild(a);
+      });
+    }
+
+    var alt = document.getElementById('alt-platforms');
+    if (alt) {
+      alt.innerHTML = order.slice(1).map(function (k) {
+        return '<a href="' + base + P[k].file + '">' + P[k].name + '</a>';
+      }).join('<span class="dl-sep">·</span>');
+    }
+  }
+  catch (e) {
+    /* The buttons are a convenience; the release links in the footer are not
+       generated and still work. */
+  }
+</script>
+
+</body>
+</html>

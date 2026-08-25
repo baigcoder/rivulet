@@ -1,0 +1,75 @@
+{
+	"bundle": {
+		"active": true,
+		"targets": "all",
+		"createUpdaterArtifacts": true,
+		"windows": {
+			"certificateThumbprint": null,
+			"digestAlgorithm": "sha256",
+			"timestampUrl": ""
+		},
+		"icon": [
+			"icons/32x32.png",
+			"icons/128x128.png",
+			"icons/128x128@2x.png",
+			"icons/icon.icns",
+			"icons/icon.ico"
+		],
+		"resources": [],
+		"externalBin": [],
+		"copyright": "",
+		"category": "Entertainment",
+		"shortDescription": "A media library and BitTorrent player",
+		"longDescription": "Rivulet keeps track of what you watch and plays torrents in a native player, on the desktop and on Android TV. It hosts no content and ships with no sources configured.",
+		"macOS": {},
+		"linux": {
+			"deb": {}
+		}
+	},
+	"build": {
+		"beforeBuildCommand": "bun run generate",
+		"beforeBundleCommand": "bun scripts/build/macos/bundle-dylib.ts",
+		"frontendDist": "../.output/public",
+		"beforeDevCommand": "bun run dev",
+		"devUrl": "http://localhost:3000"
+	},
+	"productName": "Rivulet",
+	"version": "0.3.0",
+	"identifier": "io.github.rivulet.rivulet",
+	"plugins": {
+		"updater": {
+			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDM2NDY4OUExNDhBQUUwNUMKUldSYzRLcElvWWxHTnNWUnF0bWh1MXBMK1dFZ21MaC9mRFliYjFEZU1KZEFRVzR4QmcvNFA3TG4K",
+			"endpoints": [
+				"https://github.com/rivulet/rivulet/releases/latest/download/latest.json"
+			],
+			"windows": {
+				"installMode": "passive"
+			}
+		},
+		"shell": {
+			"open": "(?:(?:https?|file)://.+|mailto:.+|tel:.+|/.+|[A-Za-z]:[\\\\/].+|\\\\\\\\.+)"
+		},
+		"deep-link": {
+			"desktop": {
+				"schemes": ["rivulet", "stremio"]
+			}
+		}
+	},
+	"app": {
+		"windows": [
+			{
+				"title": "Rivulet",
+				"width": 1366,
+				"height": 768,
+				"minWidth": 480,
+				"minHeight": 400,
+				"resizable": true,
+				"fullscreen": false,
+				"backgroundColor": "#0e0f11"
+			}
+		],
+		"security": {
+			"csp": null
+		}
+	}
+}
