@@ -96,15 +96,14 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: Rivulet ${{ github.ref_name }}
           releaseDraft: true
+          # Betas ship from here too, and a pre-release never satisfies
+          # /releases/latest — so it can't reach installed stable copies.
+          prerelease: true
           args: ${{ matrix.args }}
           # Windows builds both, and the updater installs whichever this names.
           # NSIS: it is per-user, so `installMode: passive` can run it without a
           # UAC prompt, where the .msi needs admin for a machine-wide install.
           updaterJsonPreferNsis: true
-          # latest.json carries every signature inline, and that is the only copy
-          # the updater ever reads — so a .sig beside each bundle is six more
-          # files on the download page answering a question nobody asked.
-          uploadUpdaterSignatures: false
 
       # tauri-action drives the bundler itself, so scripts/build/index.ts — and
       # the AppImage repack it ends with — never runs here. Do it to the bundle
