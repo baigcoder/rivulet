@@ -80,10 +80,21 @@ const target = computed(() => {
 /** "S2 E4" — also what tells the template a show has anything playable at all. */
 const targetText = computed(() => target.value ? `S${target.value.season} E${target.value.episode}` : '')
 
+/**
+ * Who this title is, handed straight to the player so the sources can be asked
+ * without waiting on a TMDB round trip first. The player still fetches the
+ * detail itself in the background — this only removes it from the critical path.
+ */
+const handoff = computed(() => ({
+  imdb: media.value?.imdbId ?? undefined,
+  title: media.value?.title,
+  year: media.value?.year,
+}))
+
 const playLink = computed(() =>
   target.value
-    ? watchLink('tv', id.value, target.value.season, target.value.episode)
-    : watchLink('movie', id.value),
+    ? watchLink('tv', id.value, target.value.season, target.value.episode, handoff.value)
+    : watchLink('movie', id.value, undefined, undefined, handoff.value),
 )
 
 // Part-way through is a resume; anything else is a play, including the next

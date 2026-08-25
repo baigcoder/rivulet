@@ -142,11 +142,22 @@ export function episodeLink(showId: string | number, season: number, episode: nu
  * lookup (utils/torrents.ts) happens there, so every Play button in the app
  * only needs what it already has on screen.
  */
-export function watchLink(type: MediaType, id: string | number, season?: number, episode?: number) {
+export function watchLink(
+  type: MediaType,
+  id: string | number,
+  season?: number,
+  episode?: number,
+  /** Extra query the player can use to skip a round trip — an IMDb id, a title. */
+  extra?: Record<string, string | undefined>,
+) {
   const query = new URLSearchParams({ type, id: String(id) })
   if (season && episode) {
     query.set('s', String(season))
     query.set('e', String(episode))
+  }
+  for (const [key, value] of Object.entries(extra ?? {})) {
+    if (value)
+      query.set(key, value)
   }
   return `${localePath('/watch')}?${query}`
 }

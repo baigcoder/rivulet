@@ -90,6 +90,11 @@ const props = defineProps<{
   } | null
   /** Which candidate is playing — the check mark in both menus. */
   activeCandidate?: number
+  /**
+   * One-shot notice shown as an OSD right after this mount starts playing —
+   * how a failover says "Switched to …" without anyone opening a menu.
+   */
+  osdOnStart?: string
 }>()
 
 const emit = defineEmits<{
@@ -1073,8 +1078,11 @@ async function startPlayer() {
     }
 
     // Never hand mpv a URL that isn't serving yet — it exits instantly on a 500.
+    // A torrent stream gets the patient window (peers need time to appear); a
+    // direct link is a server that answers or doesn't — six seconds and the
+    // candidate list moves on.
     waiting.value = true
-    const probe = await waitForStream(props.src)
+    const probe = await waitForStream(props.src, fromEngine.value ? 60_000 : 6_000)
     waiting.value = false
     if (!probe.ok) {
       if (fromEngine.value) {
@@ -1145,6 +1153,10 @@ async function startPlayer() {
       ipc(['keybind', 'WHEEL_DOWN', 'add volume -5'])
     }
 
+    // Tracks as soon as the file is open — a dual-audio server stream should
+    // show its Audio menu on the first chrome raise, not one poll later.
+    void refreshTracks()
+
     startPoll()
   }
   catch (e) {
@@ -1158,6 +1170,10 @@ async function startPlayer() {
   finally {
     busy.value = false
   }
+
+  // One-shot per mount: how an automatic failover announces itself.
+  if (props.osdOnStart && !errorMsg.value)
+    osd(props.osdOnStart, 2600)
 }
 
 /**

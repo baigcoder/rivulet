@@ -9,6 +9,7 @@ import {
   mdiPowerPlugOutline,
   mdiReload,
 } from '@mdi/js'
+import { NoServerStream, releaseKey, serverCandidates } from '~/utils/torrents'
 
 // The player owns the whole window: no app bar, no drawer, no page scroll.
 definePageMeta({ layout: false })
@@ -59,6 +60,16 @@ const src = ref('')
 const candidates = ref<Release[]>([])
 const activeCandidate = ref(0)
 
+/** False until you pick a server by hand — the automatic pick reads "Auto" in the menu. */
+const userPicked = ref(false)
+/** Shown as an OSD toast by the freshly mounted player after an auto-failover. */
+const failoverNotice = ref('')
+
+/** The playing server, for the info bar — the host you added it by. */
+function viaHost(r: Release | null) {
+  return r?.via ? hostOf(r.via) : ''
+}
+
 /** Stream-only mode found nothing to stream — a different message, and fix, than a plain failure. */
 const noServerStream = ref(false)
 
@@ -81,16 +92,20 @@ async function start() {
   torrent.value = null
   candidates.value = []
   activeCandidate.value = 0
+  userPicked.value = false
+  failoverNotice.value = ''
 
   try {
     // ?magnet=… hand-picks the release and skips the lookup — that's how the
     // downloads page replays something already in the engine, and the only
     // path that works with no sources configured.
     const started = await downloads.start(key.value, {
-      // Waited for only if the sources are actually going to be searched. A copy
-      // already on disk plays with TMDB unreachable, and hanging on this lookup
-      // first is what used to make a downloaded film slow to start.
+      // The detail page already knows who this is: when it hands the lookup
+      // over on the link, the sources are asked without any TMDB round trip.
+      // Waited for only if that param is missing.
       imdbId: async () => {
+        if (route.query.imdb)
+          return String(route.query.imdb)
         step.value = $t('Loading title…')
         await until(() => !!media.value || !!mediaError.value).toBe(true, { timeout: 20_000 })
         return media.value?.imdbId
@@ -104,6 +119,18 @@ async function start() {
       episode: episode.value,
       fileIndex: fileIndex.value,
       allowTorrents: settings.allowTorrents,
+      // Race the sources: first healthy answer plays, slower ones join the
+      // candidate list as they land (see below).
+      fast: true,
+      onAlternativesLate: late => {
+        if (mine !== generation)
+          return
+        const known = new Set(candidates.value.map(releaseKey))
+        candidates.value = [...candidates.value, ...late.filter(r => !known.has(releaseKey(r)))]
+        // Re-ranking may shuffle indexes; the playing URL keeps its place.
+        candidates.value = serverCandidates(candidates.value)
+        activeCandidate.value = Math.max(0, candidates.value.findIndex(r => r.url === src.value))
+      },
       onStep: value => (step.value = value),
     })
 
@@ -148,10 +175,12 @@ async function start() {
  * the old mount is what the new one resumes from — so a film continues where it
  * stopped, on a different server.
  */
-function useCandidate(index: number) {
+function useCandidate(index: number, manual = true) {
   const next = candidates.value[index]
   if (!next || !next.url || index === activeCandidate.value)
     return
+  if (manual)
+    userPicked.value = true
   activeCandidate.value = index
   torrent.value = next
   torrentId.value = null
@@ -164,8 +193,12 @@ function onPlaybackFailed() {
   if (!candidates.value.length)
     return
   const following = activeCandidate.value + 1
-  if (following < candidates.value.length)
-    useCandidate(following)
+  const next = candidates.value[following]
+  if (!next)
+    return
+  // The swap itself is silent; the new player mount announces it (osd-on-start).
+  failoverNotice.value = `${$t('Switched to')} ${hostOf(next.via ?? '') || next.source}`
+  useCandidate(following, false)
 }
 
 /**
@@ -231,7 +264,8 @@ const candidateMenus = computed(() => {
     return null
   const servers = candidates.value.map((r, index) => ({
     index,
-    label: hostOf(r.via ?? '') || r.source,
+    // The automatic pick is marked until a hand chooses otherwise.
+    label: `${index === 0 && !userPicked.value ? `${$t('Auto')} · ` : ''}${hostOf(r.via ?? '') || r.source}`,
     detail: [r.quality || qualityLabel(r), r.size].filter(Boolean).join(' · '),
   }))
   const seen = new Map<string, number>()
@@ -419,9 +453,10 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
         :episode="episode"
         :candidates="candidateMenus"
         :active-candidate="activeCandidate"
+        :osd-on-start="failoverNotice"
         fullscreen
         @failed="onPlaybackFailed"
-        @use-candidate="useCandidate"
+        @use-candidate="(i: number) => useCandidate(i)"
       >
         <template #start>
           <v-btn icon variant="text" density="comfortable" :title="$t('Back (Esc)')" @click="leave">
@@ -437,6 +472,9 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
               </div>
               <div v-if="torrent" class="truncate text-body-small opacity-50">
                 {{ torrent.quality }} · {{ torrent.size }} · {{ torrent.source }}
+                <template v-if="viaHost(torrent)">
+                  · {{ viaHost(torrent) }}
+                </template>
               </div>
             </div>
 

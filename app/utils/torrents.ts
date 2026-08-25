@@ -346,39 +346,111 @@ async function searchOne(base: string, path: string): Promise<Release[]> {
 
 /**
  * Everything the configured sources know for a movie, or for one episode of a
- * show. Sources are searched together and their results merged: one being
- * down or slow costs its results, not the search.
+ * show.
+ *
+ * Two speeds, one machinery. The patient search waits for every server so the
+ * caller sees one complete answer; the racing search cuts loose as soon as the
+ * first healthy server answers (plus a short grace window), hands those back,
+ * and streams anything slower into `onLate` afterwards — which is how playback
+ * starts on the fastest server instead of the slowest source's deadline.
  */
-export async function findReleases(imdbId: string, season = 0, episode = 0): Promise<Release[]> {
+
+function searchPath(imdbId: string, season: number, episode: number) {
+  const series = season > 0 && episode > 0
+  const id = series ? `${imdbId}:${season}:${episode}` : imdbId
+  return `/stream/${series ? 'series' : 'movie'}/${id}.json`
+}
+
+async function runSources(
+  path: string,
+  wait: { mode: 'all' } | { mode: 'first', graceMs: number },
+): Promise<{ releases: Release[], rest: Promise<Release[]> }> {
   if (!sources.length)
     throw new Error(NO_SOURCES())
 
-  const series = season > 0 && episode > 0
-  const id = series ? `${imdbId}:${season}:${episode}` : imdbId
-  const path = `/stream/${series ? 'series' : 'movie'}/${id}.json`
+  const tasks = sources.map(base => searchOne(base, path))
+  const batches: (Release[] | null)[] = sources.map(() => null)
+  let anyAnswered = false
+  let anyFailed = false
 
-  const results = await Promise.allSettled(sources.map(base => searchOne(base, path)))
-  const failed = results.flatMap(r => r.status === 'rejected' ? [String(r.reason)] : [])
-  // One source down out of several is not worth an error. All of them is — and
-  // it reads the same as "nothing found" unless we say so.
-  if (failed.length === results.length)
-    throw new Error($t('No source answered — {reason}', { reason: failed[0]! }))
-
-  // Two sources drawing on the same origins hand back the same release twice;
-  // first one wins, so the order sources were added in is the preference order.
-  const seen = new Map<string, Release>()
-  results.forEach((settled, i) => {
-    if (settled.status !== 'fulfilled')
-      return
-    for (const t of settled.value) {
-      if (!seen.has(releaseKey(t))) {
-        seen.set(releaseKey(t), t)
-        t.via = sources[i]
-      }
+  const settled = tasks.map(async (task, i) => {
+    try {
+      batches[i] = await task
+      anyAnswered = true
+    }
+    catch {
+      anyFailed = true
     }
   })
 
-  return [...seen.values()]
+  // First healthy answer starts the clock; everyone else gets `graceMs` to
+  // join before the window shuts. In 'all' mode the window never shuts early.
+  const firstAnswer = settled[0]!.then(() => {}, () => {})
+  for (const s of settled.slice(1)) s.then(() => {}, () => {})
+  const opened = wait.mode === 'first'
+    ? Promise.race([firstAnswer, ...settled])
+    : Promise.all(settled)
+  await Promise.race([
+    opened.then(() => new Promise(r => setTimeout(r, wait.mode === 'first' ? wait.graceMs : 0))),
+    Promise.all(tasks.map(t => t.catch(() => []))),
+  ])
+
+  // Merge whatever landed, in the order sources were added — that order is the
+  // preference order, and it also decides whose copy a duplicate belongs to.
+  const seen = new Map<string, Release>()
+  const takeLanded = () => {
+    for (let i = 0; i < sources.length; i++) {
+      const batch = batches[i]
+      if (!batch)
+        continue
+      batches[i] = null
+      for (const t of batch) {
+        if (!seen.has(releaseKey(t))) {
+          seen.set(releaseKey(t), t)
+          t.via = sources[i]
+        }
+      }
+    }
+  }
+  takeLanded()
+
+  if (!seen.size && !anyAnswered && anyFailed)
+    throw new Error($t('No source answered.'))
+
+  const releasedKeys = new Set(seen.keys())
+  const rest = Promise.all(tasks.map(t => t.catch(() => []))).then(() => {
+    takeLanded()
+    return [...seen.values()].filter(t => !releasedKeys.has(releaseKey(t)))
+  })
+
+  return { releases: [...seen.values()], rest }
+}
+
+/** Patient: every source answers (or times out) before anything is returned. */
+export async function findReleases(imdbId: string, season = 0, episode = 0): Promise<Release[]> {
+  const { releases } = await runSources(searchPath(imdbId, season, episode), { mode: 'all' })
+  return releases
+}
+
+/**
+ * Racing: resolve with the first wave of answers, stream the stragglers into
+ * `onLate` as they land (already deduped against what was handed back).
+ */
+export async function findReleasesFast(
+  imdbId: string,
+  season: number,
+  episode: number,
+  options: { graceMs?: number, onLate?: (releases: Release[]) => void } = {},
+): Promise<Release[]> {
+  const { releases, rest } = await runSources(
+    searchPath(imdbId, season, episode),
+    { mode: 'first', graceMs: options.graceMs ?? 1500 },
+  )
+  void rest.then(late => {
+    if (late.length)
+      options.onLate?.(late)
+  })
+  return releases
 }
 
 // --- Local engine -------------------------------------------------------------
@@ -931,6 +1003,14 @@ export async function startTorrent(options: {
    * and it plays from wherever it already sits.
    */
   allowTorrents?: boolean
+  /**
+   * Race the added sources instead of waiting for every one: playback starts
+   * on the first healthy answer, and slower servers stream into
+   * `onAlternativesLate` afterwards.
+   */
+  fast?: boolean
+  /** Late server answers from a `fast` search, ranked, ready to join the candidates. */
+  onAlternativesLate?: (releases: Release[]) => void
   onStep?: (step: string) => void
 }): Promise<Started> {
   const step = options.onStep ?? (() => {})
@@ -984,7 +1064,17 @@ export async function startTorrent(options: {
         throw new Error($t('TMDB has no IMDb id for this title, so there is nothing to look it up with.'))
 
       step($t('Searching your sources…'))
-      const found = await findReleases(imdbId, options.season, options.episode)
+      // Fast mode races the sources: playback starts on the first healthy
+      // answer and slower servers flow into the candidate list as they land.
+      const found = options.fast
+        ? await findReleasesFast(imdbId, options.season ?? 0, options.episode ?? 0, {
+            onLate: late => {
+              const more = serverCandidates(late, options.maxBytes ?? MAX_BYTES, options.compatible ?? !hasNativePlayer())
+              if (more.length)
+                options.onAlternativesLate?.(more)
+            },
+          })
+        : await findReleases(imdbId, options.season, options.episode)
 
       // Stream-only mode narrows before ranking: a torrent release is not a
       // worse pick, it is no pick at all.

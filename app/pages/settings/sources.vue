@@ -90,6 +90,22 @@ async function toggleStremio(on: boolean | null) {
 <template>
   <div class="flex flex-col gap-8">
     <settings-section
+      :title="$t('Streaming & downloads')"
+      :hint="$t('Where playback comes from, and whether the torrent engine may be used at all.')"
+    >
+      <v-switch
+        v-model="settings.allowTorrents"
+        color="primary"
+        density="comfortable"
+        hide-details
+        :label="$t('Stream with download')"
+      />
+      <p class="text-body-small opacity-70">
+        {{ $t('On, the best copy wins — a server link when one matches, a torrent download when it is the only way. Off, playback streams only from the sources you added: nothing touches the engine or the disk, and a title they can\'t serve asks for a Stremio URL instead.') }}
+      </p>
+    </settings-section>
+
+    <settings-section
       :title="$t('Sources')"
       :hint="$t('Rivulet searches nothing by itself. A source is a URL you add here, pointing at a server that answers with things to play. What a source offers, and whether you have the right to play it, is between you and whoever runs it.')"
     >
@@ -150,22 +166,6 @@ async function toggleStremio(on: boolean | null) {
           {{ $t('Add') }}
         </v-btn>
       </div>
-    </settings-section>
-
-    <settings-section
-      :title="$t('Streaming & downloads')"
-      :hint="$t('Where playback comes from, and whether the torrent engine may be used at all.')"
-    >
-      <v-switch
-        v-model="settings.allowTorrents"
-        color="primary"
-        density="comfortable"
-        hide-details
-        :label="$t('Stream with download')"
-      />
-      <p class="text-body-small opacity-70">
-        {{ $t('On, the best copy wins — a server link when one matches, a torrent download when it is the only way. Off, playback streams only from the sources you added: nothing touches the engine or the disk, and a title they can\'t serve asks for a Stremio URL instead.') }}
-      </p>
     </settings-section>
 
     <settings-section
