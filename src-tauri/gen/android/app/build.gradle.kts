@@ -69,9 +69,14 @@ android {
         getByName("release") {
             // Without this the bundler emits app-universal-release-unsigned.apk and
             // Android refuses to install it — which is the whole reason releases used
-            // to go out as debug builds.
-            if (ciKeystore != null) {
-                signingConfig = signingConfigs.getByName("ci")
+            // to go out as debug builds. No CI keystore means the AGP-managed debug
+            // key signs it instead of nothing: an unsigned APK must never leave the
+            // build, so the fallback is a throwaway identity rather than no identity.
+            signingConfig = if (ciKeystore != null) {
+                signingConfigs.getByName("ci")
+            }
+            else {
+                signingConfigs.getByName("debug")
             }
             // The torrent engine is plain http on 127.0.0.1, inside this very
             // process, and every stream, poll and playback request goes through
