@@ -57,16 +57,47 @@ const { data, error } = useAsyncData(
 )
 
 /** The household names lead; everything else follows alphabetically. */
-const PINNED = ['netflix', 'prime video', 'amazon prime video', 'disney', 'max', 'hbo max', 'apple tv', 'hulu', 'paramount', 'peacock', 'crunchyroll']
+const ORDER: string[][] = [
+  ['netflix'],
+  ['amazon prime video', 'prime video'],
+  ['hbo max', 'max'],
+  ['apple tv', 'apple tv plus'],
+  ['hulu'],
+  ['paramount plus'],
+  ['showtime'],
+  ['amc plus', 'amc'],
+  ['disney plus', 'disney'],
+]
 
-function rank(p: Provider) {
-  const name = p.provider_name.toLowerCase()
-  const at = PINNED.findIndex(pin => name.includes(pin))
-  return at === -1 ? PINNED.length : at
+/**
+ * "Paramount+" and "Disney+" normalize onto their spelled-out aliases, so one
+ * comparison covers every spelling TMDB uses.
+ */
+function normalize(name: string) {
+  return name.toLowerCase().replace(/\+/g, ' plus').replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
-const providers = computed(() =>
-  [...(data.value ?? [])].sort((a, b) => rank(a) - rank(b) || a.provider_name.localeCompare(b.provider_name)))
+function rank(p: Provider) {
+  const name = normalize(p.provider_name)
+  const at = ORDER.findIndex(aliases => aliases.includes(name))
+  return at
+}
+
+const providers = computed(() => {
+  // Only the strip's own ten, each once: TMDB lists the same service under
+  // different ids across its movie and TV catalogues, so the name is what two
+  // copies of a service are recognised by.
+  const seen = new Map<string, Provider>()
+  for (const p of data.value ?? []) {
+    const at = rank(p)
+    if (at === -1)
+      continue
+    const key = normalize(p.provider_name)
+    if (!seen.has(key) || rank(seen.get(key)!) > at)
+      seen.set(key, p)
+  }
+  return [...seen.values()].sort((a, b) => rank(a) - rank(b))
+})
 
 function to(p: Provider) {
   // No locale prefix exists in the URL (no_prefix strategy), so a plain route
@@ -77,12 +108,12 @@ function to(p: Provider) {
 
 <template>
   <section class="mt-5" aria-labelledby="streaming-heading">
-    <div class="mx-4 mb-2 flex items-center gap-2 md:mx-6">
-      <v-icon :icon="mdiTelevisionClassic" size="18" class="opacity-70" />
-      <h2 id="streaming-heading" class="text-title-medium">
+    <div class="mx-4 mb-3 flex items-center gap-2 md:mx-6">
+      <v-icon :icon="mdiTelevisionClassic" size="22" class="opacity-70" />
+      <h2 id="streaming-heading" class="text-title-large">
         {{ $t('Streaming') }}
       </h2>
-      <span class="text-label-small opacity-50">{{ region }}</span>
+      <span class="text-body-small opacity-50">{{ region }}</span>
     </div>
 
     <p v-if="error" class="mx-4 text-body-small opacity-60 md:mx-6">
@@ -93,11 +124,11 @@ function to(p: Provider) {
          past the fold are exactly as reachable by d-pad as the rest — the
          plugin scrolls the row into view when focus asks it to. -->
     <nav v-else class="overflow-x-auto pb-1" data-dpad-start>
-      <ul class="flex w-max gap-3 px-4 md:px-6">
+      <ul class="flex w-max gap-4 px-4 md:px-6">
         <li v-for="p in providers" :key="p.provider_id">
           <nuxt-link
             :to="to(p)"
-            class="group flex h-16 w-32 items-center justify-center rounded-xl border border-white/9 bg-surface-container p-3 transition-all hover:border-primary hover:bg-surface-container-high focus-visible:border-primary focus-visible:bg-surface-container-high focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            class="group flex h-24 w-44 items-center justify-center rounded-2xl border border-white/9 bg-surface-container p-4 transition-all hover:border-primary hover:bg-surface-container-high focus-visible:border-primary focus-visible:bg-surface-container-high focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             :aria-label="$t('Browse {provider}', { provider: p.provider_name })"
           >
             <img
@@ -107,7 +138,7 @@ function to(p: Provider) {
               loading="lazy"
               class="max-h-full max-w-full object-contain transition-transform group-hover:scale-105"
             >
-            <span v-else class="truncate text-center text-body-small">{{ p.provider_name }}</span>
+            <span v-else class="truncate text-center text-title-medium">{{ p.provider_name }}</span>
           </nuxt-link>
         </li>
       </ul>

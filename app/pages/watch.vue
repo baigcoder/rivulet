@@ -6,6 +6,7 @@ import {
   mdiAlertCircleOutline,
   mdiArrowLeft,
   mdiDownload,
+  mdiPowerPlugOutline,
   mdiReload,
 } from '@mdi/js'
 
@@ -124,6 +125,13 @@ async function start() {
     // the failover below walk this list.
     candidates.value = started.alternatives ?? []
     activeCandidate.value = 0
+
+    // A hand-picked link (the release picker's play button) arrives without its
+    // siblings: the picker navigated straight here, so no ranking ever ran. Ask
+    // the sources once more, quietly, so the Server and Quality menus still have
+    // something to list — and a dead link still has somewhere to fail over to.
+    if (started.url && !candidates.value.length)
+      void fetchCandidates(started.url)
   }
   catch (e) {
     if (mine !== generation)
@@ -158,6 +166,42 @@ function onPlaybackFailed() {
   const following = activeCandidate.value + 1
   if (following < candidates.value.length)
     useCandidate(following)
+}
+
+/**
+ * The other direct links for this title, for a playback that started without
+ * them. Runs only after the player already has its stream — a miss changes
+ * nothing on screen, it just leaves the menus thinner than they might have been.
+ */
+async function fetchCandidates(playingUrl: string) {
+  const mine = generation
+  try {
+    await until(() => !!media.value || !!mediaError.value).toBe(true, { timeout: 20_000 })
+    const imdbId = media.value?.imdbId
+    if (!imdbId || mine !== generation || candidates.value.length)
+      return
+
+    const found = await findReleases(imdbId, season.value, episode.value)
+    const rest = serverCandidates(found).filter(r => r.url !== playingUrl)
+    if (mine !== generation || !rest.length || candidates.value.length)
+      return
+
+    // The playing link sits at [0] even though it arrived from outside this
+    // search — every menu and the failover walk indexes into one list.
+    const current = torrent.value?.url === playingUrl
+      ? torrent.value!
+      : { name: '', hash: '', url: playingUrl, fileIdx: null, file: null, seeders: 0, size: '', bytes: 0, source: '', quality: '', magnet: '' }
+    candidates.value = [current, ...rest]
+    activeCandidate.value = 0
+  }
+  catch {
+    // Thinner menus are the whole cost; playback itself is already running.
+  }
+}
+
+function goToSources() {
+  leave()
+  navigateTo(localePath('/settings/sources'))
 }
 
 /** Host of a source base URL — "https://addon.example/manifest…" → "addon.example". */
@@ -300,15 +344,23 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
             <p class="text-body-medium opacity-70">
               {{ failure }}
             </p>
-            <!-- Stream-only mode's fix is one toggle away — right here, so a
-                 title that only torrents can serve doesn't dead-end. -->
-            <div v-if="noServerStream" class="mt-2 flex gap-2">
+            <!-- Stream-only mode's fixes sit right here: add a server that does
+                 carry the title, or let torrents back in — either restarts. -->
+            <div v-if="noServerStream" class="mt-2 flex flex-wrap justify-center gap-2">
+              <v-btn
+                variant="tonal"
+                color="primary"
+                :prepend-icon="mdiPowerPlugOutline"
+                @click="goToSources"
+              >
+                {{ $t('Add a source') }}
+              </v-btn>
               <v-btn
                 variant="tonal"
                 :prepend-icon="mdiDownload"
                 @click="settings.allowTorrents = true; start()"
               >
-                {{ $t('Turn torrent streaming on') }}
+                {{ $t('Turn on downloading') }}
               </v-btn>
               <v-btn variant="text" :prepend-icon="mdiArrowLeft" @click="leave">
                 {{ $t('Back') }}

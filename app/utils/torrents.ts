@@ -992,7 +992,7 @@ export async function startTorrent(options: {
       picked = pickBest(pool, options.maxBytes, options.compatible ?? !hasNativePlayer())
       if (!picked) {
         throw pool.length && !allowTorrents
-          ? new NoServerStream($t('None of your added sources streams this title directly. Turn torrent streaming on, or add a server that carries it.'))
+          ? new NoServerStream($t('None of your added sources stream this title directly. Add a Stremio URL in Sources, or turn Stream with download back on.'))
           : new Error(found.length
               ? $t('All {count} releases found were cams, dead, or too big for this device.', { count: found.length })
               : $t('Your sources have nothing for this title.'))

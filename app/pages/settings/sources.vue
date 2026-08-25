@@ -153,18 +153,18 @@ async function toggleStremio(on: boolean | null) {
     </settings-section>
 
     <settings-section
-      :title="$t('Torrent streaming')"
-      :hint="$t('Whether playing a title may download while it streams. Off, only servers that hand back a direct link are used — nothing touches the engine or the disk.')"
+      :title="$t('Streaming & downloads')"
+      :hint="$t('Where playback comes from, and whether the torrent engine may be used at all.')"
     >
       <v-switch
         v-model="settings.allowTorrents"
         color="primary"
         density="comfortable"
         hide-details
-        :label="$t('Allow torrent streaming')"
+        :label="$t('Stream with download')"
       />
       <p class="text-body-small opacity-70">
-        {{ $t('On, the best release wins whether it is a torrent or a direct link. Off, a title your sources can\'t serve directly shows an explanation instead of downloading — and the player\'s Server menu lists every source that answered.') }}
+        {{ $t('On, the best copy wins — a server link when one matches, a torrent download when it is the only way. Off, playback streams only from the sources you added: nothing touches the engine or the disk, and a title they can\'t serve asks for a Stremio URL instead.') }}
       </p>
     </settings-section>
 
