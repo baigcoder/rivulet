@@ -4548,6 +4548,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "rivulet"
+version = "0.3.0-beta.1"
+dependencies = [
+ "anyhow",
+ "libc",
+ "libmpv2",
+ "libmpv2-sys",
+ "librqbit",
+ "librqbit-dualstack-sockets",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "raw-window-handle",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-deep-link",
+ "tauri-plugin-dialog",
+ "tauri-plugin-fs",
+ "tauri-plugin-notification",
+ "tauri-plugin-os",
+ "tauri-plugin-process",
+ "tauri-plugin-shell",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-store",
+ "tauri-plugin-updater",
+ "tokio",
+ "windows-sys 0.61.2",
+ "x11-dl",
+]
+
+[[package]]
 name = "rlimit"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6518,39 +6551,6 @@ name = "valuable"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
-
-[[package]]
-name = "rivulet"
-version = "0.3.0"
-dependencies = [
- "anyhow",
- "libc",
- "libmpv2",
- "libmpv2-sys",
- "librqbit",
- "librqbit-dualstack-sockets",
- "objc2",
- "objc2-app-kit",
- "objc2-foundation",
- "raw-window-handle",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-deep-link",
- "tauri-plugin-dialog",
- "tauri-plugin-fs",
- "tauri-plugin-notification",
- "tauri-plugin-os",
- "tauri-plugin-process",
- "tauri-plugin-shell",
- "tauri-plugin-single-instance",
- "tauri-plugin-store",
- "tauri-plugin-updater",
- "tokio",
- "windows-sys 0.61.2",
- "x11-dl",
-]
 
 [[package]]
 name = "version-compare"

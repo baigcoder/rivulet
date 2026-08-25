@@ -1,6 +1,6 @@
 [package]
 name = "rivulet"
-version = "0.3.0"
+version = "0.3.0-beta.1"
 description = "A media library and BitTorrent player, on desktop and Android TV"
 license = "MIT"
 edition = "2021"
