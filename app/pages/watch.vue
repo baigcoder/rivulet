@@ -70,10 +70,29 @@ function viaHost(r: Release | null) {
   return r?.via ? hostOf(r.via) : ''
 }
 
+/**
+ * The Quality menu introduces itself once per title when two or more
+ * resolutions are on offer — cleared by the player the moment it has.
+ */
+const qualityPromptPending = ref(false)
+
 /** Stream-only mode found nothing to stream — a different message, and fix, than a plain failure. */
 const noServerStream = ref(false)
 
 const settings = useSettingsStore()
+
+// Flipping Stream-with-download mid-playback re-resolves playback at once:
+// Off picks up server streams, On lets torrents back in — no re-entering the
+// title, no hunting for a refresh.
+watch(() => settings.allowTorrents, (now, before) => {
+  if (now !== before && startedOnce())
+    start()
+})
+
+/** Did this page already attempt playback? Guards the toggle watcher above. */
+function startedOnce() {
+  return !!(src.value || errorMsg.value || noServerStream.value)
+}
 
 // The downloads store already polls every torrent's stats for the whole app, so
 // a second poll of this one would only ask the engine the same question twice.
@@ -152,6 +171,7 @@ async function start() {
     // the failover below walk this list.
     candidates.value = started.alternatives ?? []
     activeCandidate.value = 0
+    qualityPromptPending.value = candidates.value.length > 0
 
     // A hand-picked link (the release picker's play button) arrives without its
     // siblings: the picker navigated straight here, so no ranking ever ran. Ask
@@ -226,6 +246,7 @@ async function fetchCandidates(playingUrl: string) {
       : { name: '', hash: '', url: playingUrl, fileIdx: null, file: null, seeders: 0, size: '', bytes: 0, source: '', quality: '', magnet: '' }
     candidates.value = [current, ...rest]
     activeCandidate.value = 0
+    qualityPromptPending.value = candidates.value.length > 1
   }
   catch {
     // Thinner menus are the whole cost; playback itself is already running.
@@ -454,9 +475,11 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
         :candidates="candidateMenus"
         :active-candidate="activeCandidate"
         :osd-on-start="failoverNotice"
+        :auto-open-quality="qualityPromptPending && !userPicked"
         fullscreen
         @failed="onPlaybackFailed"
         @use-candidate="(i: number) => useCandidate(i)"
+        @auto-opened="qualityPromptPending = false"
       >
         <template #start>
           <v-btn icon variant="text" density="comfortable" :title="$t('Back (Esc)')" @click="leave">

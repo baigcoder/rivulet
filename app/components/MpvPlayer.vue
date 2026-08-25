@@ -14,7 +14,6 @@ import {
   mdiFastForward10,
   mdiFullscreen,
   mdiFullscreenExit,
-  mdiHighDefinition,
   mdiMinus,
   mdiPause,
   mdiPlay,
@@ -22,7 +21,6 @@ import {
   mdiPlus,
   mdiReload,
   mdiRewind10,
-  mdiServer,
   mdiSkipNext,
   mdiSubtitles,
   mdiSubtitlesOutline,
@@ -95,12 +93,16 @@ const props = defineProps<{
    * how a failover says "Switched to …" without anyone opening a menu.
    */
   osdOnStart?: string
+  /** While true, the Quality menu opens itself once two or more qualities exist. */
+  autoOpenQuality?: boolean
 }>()
 
 const emit = defineEmits<{
   /** The stream died and another candidate exists to try — the parent swaps URLs. */
   failed: []
   useCandidate: [index: number]
+  /** The self-introducing Quality menu fired; the parent can stop offering it. */
+  autoOpened: []
 }>()
 
 /**
@@ -787,10 +789,39 @@ const MENU_TITLES: Record<Exclude<Menu, ''>, () => string> = {
   quality: () => $t('Quality'),
 }
 const menuTitle = computed(() => menu.value ? MENU_TITLES[menu.value]() : '')
+
+/** Labelled pill for the Server / Quality selectors — text, not an icon, since "which one am I on" is their whole point. */
+const PILL = computed(() => `inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/6 px-3 font-medium transition-colors duration-120 hover:bg-white/14 disabled:pointer-events-none disabled:opacity-30 ${touch.value ? 'h-10 px-4' : 'h-8'} ${menu.value === 'server' || menu.value === 'quality' ? '!border-primary !text-primary' : ''}`)
+
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
 
 /** Server playback only — the failover list and the resolution shortcuts. */
 const hasCandidates = computed(() => !!props.candidates?.servers?.length)
+
+/** Labels for the two pills: what's playing right now, or nothing before candidates land. */
+const activeQuality = computed(() => props.candidates?.qualities?.find(q => q.index === props.activeCandidate))
+const activeServer = computed(() => props.candidates?.servers?.[Math.max(0, props.activeCandidate ?? 0)])
+
+/**
+ * When the parent says so, the Quality menu introduces itself the first time
+ * two or more resolutions exist — "must show quality to select" made literal.
+ * Once per mount; a manual close or pick ends the introduction for good.
+ */
+let qualityIntroduced = false
+watch(
+  () => [props.autoOpenQuality, props.candidates?.qualities?.length] as const,
+  ([open, count]) => {
+    if (open && !qualityIntroduced && (count ?? 0) > 1 && started.value) {
+      menu.value = 'quality'
+      qualityIntroduced = true
+      emit('autoOpened')
+    }
+  },
+)
+
+function usePill(menuName: 'server' | 'quality') {
+  openMenu(menuName)
+}
 
 function openMenu(name: Exclude<Menu, ''>) {
   menu.value = menu.value === name ? '' : name
@@ -2464,21 +2495,26 @@ defineExpose({ osd })
 
           <span v-if="remaining" class="opacity-55" :class="TIME">{{ remaining }}</span>
 
+          <!-- Server / Quality as labelled pills: "which one am I on" is their
+               whole point, so the current pick is the button text. -->
           <button
-            v-if="hasCandidates"
+            v-if="activeQuality"
             v-tooltip:top="$t('Quality')"
-            :class="[ICO, menu === 'quality' && '!text-primary !opacity-100']"
-            @click="openMenu('quality')"
+            :class="PILL"
+            @click="usePill('quality')"
           >
-            <v-icon :icon="mdiHighDefinition" size="20" />
+            {{ activeQuality.label }}
+            <v-icon :icon="mdiChevronDown" size="14" />
           </button>
           <button
-            v-if="hasCandidates"
+            v-if="activeServer"
             v-tooltip:top="$t('Server')"
-            :class="[ICO, menu === 'server' && '!text-primary !opacity-100']"
-            @click="openMenu('server')"
+            class="max-w-44"
+            :class="PILL"
+            @click="usePill('server')"
           >
-            <v-icon :icon="mdiServer" size="20" />
+            <span class="truncate">{{ activeServer.label }}</span>
+            <v-icon :icon="mdiChevronDown" size="14" class="shrink-0" />
           </button>
           <button
             v-tooltip:top="$t('Playback speed ([ / ])')"

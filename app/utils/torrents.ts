@@ -209,6 +209,16 @@ export function toRelease(raw: RawStream): Release | null {
   }
 }
 
+/** The host of a configured source URL — the identity the UI shows. */
+export function sourceHost(via: string): string {
+  try {
+    return new URL(via).host
+  }
+  catch {
+    return via
+  }
+}
+
 /** What makes two results the same result — a hash for a torrent, the link itself for a link. */
 export function releaseKey(r: Release) {
   return r.url || r.hash
@@ -324,7 +334,17 @@ export function pickBest(list: Release[], maxBytes = MAX_BYTES, compatible = fal
  * plain error because the watch page offers "turn torrents back on" beside it —
  * which is the one fix, and the toggle lives one setting away.
  */
-export class NoServerStream extends Error {}
+export class NoServerStream extends Error {
+  /**
+   * Hosts of the sources that answered with downloads only — shown by name on
+   * the explainer, so "add a Stremio URL" has something concrete to point at.
+   */
+  readonly viaNames: string[]
+  constructor(message: string, viaNames: string[] = []) {
+    super(message)
+    this.viaNames = viaNames
+  }
+}
 
 /**
  * Just the direct links, best first: what playback resolves through when
@@ -335,8 +355,12 @@ export function serverCandidates(releases: Release[], maxBytes = MAX_BYTES, comp
   return ranked(releases.filter(t => !!t.url), maxBytes, compatible)
 }
 
-async function searchOne(base: string, path: string): Promise<Release[]> {
-  const res = await fetch(base + path, { signal: AbortSignal.timeout(20000) })
+/** Patient default; racing mode shortens it so a dead server fails over in seconds. */
+const SOURCE_TIMEOUT = 20_000
+const RACE_TIMEOUT = 8_000
+
+async function searchOne(base: string, path: string, timeoutMs = SOURCE_TIMEOUT): Promise<Release[]> {
+  const res = await fetch(base + path, { signal: AbortSignal.timeout(timeoutMs) })
   if (!res.ok)
     throw new Error(`${base} answered HTTP ${res.status}`)
 
@@ -368,7 +392,10 @@ async function runSources(
   if (!sources.length)
     throw new Error(NO_SOURCES())
 
-  const tasks = sources.map(base => searchOne(base, path))
+  // Racing mode shortens the per-source leash: a server that hasn't answered
+  // in eight seconds is a dead candidate as far as this playback is concerned.
+  const timeoutMs = wait.mode === 'first' ? RACE_TIMEOUT : SOURCE_TIMEOUT
+  const tasks = sources.map(base => searchOne(base, path, timeoutMs))
   const batches: (Release[] | null)[] = sources.map(() => null)
   let anyAnswered = false
   let anyFailed = false
@@ -1081,11 +1108,18 @@ export async function startTorrent(options: {
       const pool = allowTorrents ? found : found.filter(t => !!t.url)
       picked = pickBest(pool, options.maxBytes, options.compatible ?? !hasNativePlayer())
       if (!picked) {
-        throw pool.length && !allowTorrents
-          ? new NoServerStream($t('None of your added sources stream this title directly. Add a Stremio URL in Sources, or turn Stream with download back on.'))
-          : new Error(found.length
-              ? $t('All {count} releases found were cams, dead, or too big for this device.', { count: found.length })
-              : $t('Your sources have nothing for this title.'))
+        if (pool.length && !allowTorrents) {
+          // Which added servers can't serve this mode? Named on the explainer,
+          // so "add one that streams" is actionable rather than abstract.
+          const hosts = [...new Set(found.filter(t => !t.url).map(t => (t.via ? sourceHost(t.via) : '')))].filter(Boolean)
+          const names = hosts.join(', ')
+          const msg = $t('None of your added sources stream this title directly. Add a Stremio URL that streams directly, or turn Stream with download back on.')
+            + (names ? ` ${$t('{servers} serve downloads only here.', { servers: names })}` : '')
+          throw new NoServerStream(msg, hosts)
+        }
+        throw new Error(found.length
+          ? $t('All {count} releases found were cams, dead, or too big for this device.', { count: found.length })
+          : $t('Your sources have nothing for this title.'))
       }
 
       // The source resolved this one itself — there is no torrent to add.

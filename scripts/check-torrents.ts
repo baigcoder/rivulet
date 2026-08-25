@@ -133,8 +133,11 @@ assert.deepEqual(ranked(links).map(t => releaseKey(t)), [releaseKey(debrid!), re
 assert.equal(ranked(links)[0], pickBest(links), 'the head of the list is what pickBest picks')
 
 // Stream-only's empty answer is its own kind, so the watch page can tell it
-// apart from a search that genuinely failed and offer the toggle instead.
-assert.ok(new NoServerStream('x') instanceof Error)
+// apart from a search that genuinely failed and offer the toggle instead —
+// and it names the servers that could only offer downloads.
+const err = new NoServerStream('none', ['torrentio.strem.fun', 'thepiratebay-plus.strem.fun'])
+assert.ok(err instanceof Error)
+assert.deepEqual(err.viaNames, ['torrentio.strem.fun', 'thepiratebay-plus.strem.fun'])
 
 // --- A drive that caps one file ----------------------------------------------
 // A TV formats a USB stick as FAT32, which stops at 4 GiB however much of the
