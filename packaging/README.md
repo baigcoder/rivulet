@@ -74,7 +74,7 @@ is what `generate-sources.sh` produces.
 
 The app id is `io.github.rivulet.Rivulet`, not the `com.rivulet.app` that Tauri
 uses internally. Flathub requires an id under a domain the publisher
-demonstrably controls, and `github.com/rivulet` qualifies with no paperwork. The
+demonstrably controls, and `github.com/baigcoder/rivulet` qualifies with no paperwork. The
 Tauri identifier is deliberately left alone — it names the config and data
 directories, so changing it would strand every existing install's settings.
 

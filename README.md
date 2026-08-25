@@ -908,7 +908,7 @@ distribution that includes mpv must carry mpv's licence and an offer of its sour
 
 <!-- badges -->
 
-[badge-version]: https://img.shields.io/github/v/release/rivulet/rivulet?style=for-the-badge&labelColor=1a1a1a&color=FF5555&label=version
+[badge-version]: https://img.shields.io/github/v/release/baigcoder/rivulet?style=for-the-badge&labelColor=1a1a1a&color=FF5555&label=version
 [badge-license]: https://img.shields.io/badge/license-MIT-FF5555?style=for-the-badge&labelColor=1a1a1a
 [badge-tauri]: https://img.shields.io/badge/Tauri-2-24C8DB?style=for-the-badge&logo=tauri&logoColor=white&labelColor=1a1a1a
 [badge-nuxt]: https://img.shields.io/badge/Nuxt-4-00DC82?style=for-the-badge&logo=nuxt&logoColor=white&labelColor=1a1a1a

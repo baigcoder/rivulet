@@ -38,9 +38,9 @@
 	"identifier": "io.github.rivulet.rivulet",
 	"plugins": {
 		"updater": {
-			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDM2NDY4OUExNDhBQUUwNUMKUldSYzRLcElvWWxHTnNWUnF0bWh1MXBMK1dFZ21MaC9mRFliYjFEZU1KZEFRVzR4QmcvNFA3TG4K",
+			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ4NEQzMDk4QzAyNzFGQTMKUldTakh5ZkFtREJOMkpyd2VGOEFkc0x0V2doa0FPWkxkZG90bDR0ZDNvQ2xOSTFZRUQ3ZzJxV1AK",
 			"endpoints": [
-				"https://github.com/rivulet/rivulet/releases/latest/download/latest.json"
+				"https://github.com/baigcoder/rivulet/releases/latest/download/latest.json"
 			],
 			"windows": {
 				"installMode": "passive"

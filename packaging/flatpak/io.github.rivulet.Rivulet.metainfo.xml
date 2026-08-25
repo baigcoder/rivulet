@@ -2,7 +2,7 @@
 <!--
   AppStream metadata for the Flatpak. The id is io.github.rivulet.Rivulet rather
   than the com.rivulet.app that Tauri uses internally: Flathub requires an id
-  under a domain the publisher demonstrably controls, and github.com/rivulet is
+  under a domain the publisher demonstrably controls, and github.com/baigcoder/rivulet is
   that. The Tauri identifier is deliberately left alone — it is what names the
   config and data directories, so changing it would strand every existing
   install's settings.

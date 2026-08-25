@@ -266,7 +266,7 @@
     }
 
     html += '<p style="margin:20px 0 0;color:#8a8a8a">Please photograph this screen and add it to '
-      + 'github.com/rivulet/rivulet/issues</p>'
+      + 'github.com/baigcoder/rivulet/issues</p>'
 
     panel = document.createElement('div')
     panel.id = 'rivulet-boot-error'
