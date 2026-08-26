@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { MediaType } from '~/utils/tmdb'
-import { mdiAlertCircleOutline, mdiBookmark, mdiBookmarkOutline, mdiEye, mdiEyeOutline, mdiHeart, mdiHeartOutline, mdiOpenInNew, mdiPlay, mdiStar, mdiYoutube } from '@mdi/js'
+import { mdiAlertCircleOutline, mdiBookmark, mdiBookmarkOutline, mdiClose, mdiEye, mdiEyeOutline, mdiHeart, mdiHeartOutline, mdiOpenInNew, mdiPlay, mdiStar, mdiVolumeHigh, mdiVolumeOff, mdiYoutube } from '@mdi/js'
 
 // Keeps /foo/123 out of here; anything else 404s instead of asking TMDB.
 definePageMeta({
@@ -16,6 +16,65 @@ const type = computed(() => route.params.type as MediaType)
 const id = computed(() => String(route.params.id))
 
 const { data: media, status, error } = useMediaDetail(type, id)
+
+// --- Trailer hero -----------------------------------------------------------
+// The cover plays the YouTube trailer muted on loop while the page is up,
+// Netflix-style. Gated by the reduce-effects switch (TVs default it on, so
+// they keep the calm static backdrop), and the poster/backdrop always paints
+// first — the iframe only fades in once it has something to show.
+const settings = useSettingsStore()
+const videoHidden = ref(false)
+const trailerReady = ref(false)
+const heroVideoOn = ref(false)
+const heroMuted = ref(true)
+const heroFrame = ref<HTMLIFrameElement | null>(null)
+let heroTimer: ReturnType<typeof setTimeout> | undefined
+
+const heroEligible = computed(() =>
+  !!media.value?.trailer && !settings.reduceEffects && !videoHidden.value)
+
+const origin = import.meta.client ? window.location.origin : 'https://www.youtube-nocookie.com'
+
+const heroSrc = computed(() => {
+  const key = media.value?.trailer
+  if (!key)
+    return ''
+  const params = new URLSearchParams({
+    enablejsapi: '1',
+    autoplay: '1',
+    mute: '1',
+    loop: '1',
+    playlist: key,
+    controls: '0',
+    modestbranding: '1',
+    rel: '0',
+    iv_load_policy: '3',
+    playsinline: '1',
+    disablekb: '1',
+    fs: '0',
+    origin,
+  })
+  return `https://www.youtube-nocookie.com/embed/${key}?${params}`
+})
+
+watch(heroEligible, ok => {
+  clearTimeout(heroTimer)
+  heroVideoOn.value = false
+  trailerReady.value = false
+  if (ok)
+    heroTimer = setTimeout(() => (heroVideoOn.value = true), 800)
+}, { immediate: true })
+
+onUnmounted(() => clearTimeout(heroTimer))
+
+/** YouTube's postMessage API is the only way to unmute a muted autoplay embed. */
+function toggleHeroSound() {
+  heroFrame.value?.contentWindow?.postMessage(
+    JSON.stringify({ event: 'command', func: heroMuted.value ? 'unMute' : 'mute', args: [] }),
+    '*',
+  )
+  heroMuted.value = !heroMuted.value
+}
 
 // This page's art is the app backdrop, for exactly as long as the page is up.
 let mine = 0
@@ -124,6 +183,73 @@ const playLabel = computed(() => [
     </div>
 
     <template v-else>
+      <!-- Trailer-as-cover hero. Backdrop paints immediately; the muted
+           trailer fades in over it ~0.8s later (and never at all when
+           reduce-effects is on or the title has no trailer). -->
+      <section
+        v-if="media"
+        class="relative mb-6 h-[46vh] min-h-[320px] overflow-hidden rounded-b-3xl md:h-[56vh] md:min-h-[420px]"
+      >
+        <img
+          :src="backdropUrl(media.backdrop, 'w1280') ?? ''"
+          :alt="media.title"
+          class="absolute inset-0 h-full w-full object-cover"
+        >
+        <div
+          v-if="heroVideoOn"
+          class="absolute inset-0 transition-opacity duration-700"
+          :class="trailerReady ? 'opacity-100' : 'opacity-0'"
+        >
+          <iframe
+            ref="heroFrame"
+            :src="heroSrc"
+            class="pointer-events-none absolute left-1/2 top-1/2 h-full w-full -translate-x-1/2 -translate-y-1/2 scale-[1.45]"
+            frameborder="0"
+            allow="autoplay; encrypted-media"
+            tabindex="-1"
+            aria-hidden="true"
+            @load="trailerReady = true"
+          />
+        </div>
+        <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
+
+        <div class="absolute right-3 top-3 z-10 flex gap-2">
+          <button
+            v-tooltip:bottom="heroMuted ? $t('Sound on') : $t('Sound off')"
+            class="grid size-9 place-items-center rounded-full border border-white/15 bg-black/50 text-white opacity-90 backdrop-blur-md transition-all hover:bg-black/75 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary"
+            :aria-label="heroMuted ? $t('Sound on') : $t('Sound off')"
+            @click="toggleHeroSound"
+          >
+            <v-icon :icon="heroMuted ? mdiVolumeOff : mdiVolumeHigh" size="18" />
+          </button>
+          <button
+            v-tooltip:bottom="$t('Hide video')"
+            class="grid size-9 place-items-center rounded-full border border-white/15 bg-black/50 text-white opacity-90 backdrop-blur-md transition-all hover:bg-black/75 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary"
+            :aria-label="$t('Hide video')"
+            @click="videoHidden = true"
+          >
+            <v-icon :icon="mdiClose" size="18" />
+          </button>
+        </div>
+
+        <div class="absolute inset-x-0 bottom-0 p-4 md:p-8">
+          <!-- max-w-full: a wordmark is a wide image, and `max-w-md` alone is
+               wider than a phone — the title ran off the side of the screen. -->
+          <img
+            v-if="media.logo"
+            :src="logoUrl(media.logo)!"
+            :alt="media.title"
+            class="max-h-14 max-w-full object-contain drop-shadow-[0_2px_24px_rgba(0,0,0,0.7)] md:max-h-20 md:max-w-lg"
+          >
+          <h1 v-else class="text-headline-large font-bold text-white drop-shadow-[0_2px_24px_rgba(0,0,0,0.7)]">
+            {{ media.title }}
+          </h1>
+          <p v-if="media.tagline" class="mt-1 max-w-3xl text-body-medium italic text-white/70">
+            {{ media.tagline }}
+          </p>
+        </div>
+      </section>
+
       <section class="px-4 pb-8 pt-4 md:px-6">
         <div class="flex flex-col gap-6 sm:flex-row sm:items-end">
           <div class="aspect-2/3 w-32 shrink-0 overflow-hidden rounded-2xl shadow-2xl sm:w-44 lg:w-52">
@@ -131,22 +257,6 @@ const playLabel = computed(() => [
           </div>
 
           <div v-if="media" class="flex min-w-0 flex-1 flex-col gap-3">
-            <!-- max-w-full: a wordmark is a wide image, and `max-w-md` alone is
-                 wider than a phone — the title ran off the side of the screen. -->
-            <img
-              v-if="media.logo"
-              :src="logoUrl(media.logo)!"
-              :alt="media.title"
-              class="max-h-16 max-w-full self-start object-contain drop-shadow-[0_2px_24px_rgba(0,0,0,0.6)] sm:max-h-24 sm:max-w-md"
-            >
-            <h1 v-else class="text-headline-large font-bold drop-shadow-[0_2px_24px_rgba(0,0,0,0.6)]">
-              {{ media.title }}
-            </h1>
-
-            <p v-if="media.tagline" class="text-body-medium italic opacity-60">
-              {{ media.tagline }}
-            </p>
-
             <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-body-small opacity-75">
               <span class="flex items-center gap-1 opacity-100">
                 <v-icon :icon="mdiStar" size="14" class="text-amber-400" />
