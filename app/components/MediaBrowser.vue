@@ -9,6 +9,8 @@ import type { MediaType } from '~/utils/tmdb'
 const props = defineProps<{
   type: MediaType
   anime?: boolean
+  /** Starting category when the page was opened pre-filtered (?cat=…). */
+  initialCategory?: string
   /**
    * Extra `/discover` params merged into every request — how the Streaming
    * pages narrow a feed to one watch provider without this file knowing what
@@ -36,7 +38,7 @@ const categories = computed(() => props.categoriesOverride ?? [
     : { value: 'airing_today', title: $t('Airing today') },
 ])
 
-const category = ref('popular')
+const category = ref(props.initialCategory ?? 'popular')
 const genre = ref<number | null>(null)
 
 const { data: genres } = useGenres(props.type)

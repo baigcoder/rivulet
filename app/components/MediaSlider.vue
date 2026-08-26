@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { FeedRequest } from '~/composables/useMediaFeed'
 
-const props = defineProps<{ title: string, request: FeedRequest }>()
+const props = defineProps<{ title: string, request: FeedRequest, to?: string }>()
 
 const ui = useUiStore()
 
@@ -9,7 +9,7 @@ const { items, pending, done, loadMore } = useMediaFeed(() => props.request)
 </script>
 
 <template>
-  <scroll-row :title="title" :can-load="!done && !pending" @end="loadMore">
+  <scroll-row :title="title" :to="to" :can-load="!done && !pending" @end="loadMore">
     <media-card
       v-for="media in items"
       :key="`${media.type}-${media.id}`"

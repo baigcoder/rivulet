@@ -88,10 +88,43 @@ onUnmounted(() => {
   stopTimer()
 })
 
-const rows = computed(() => [
-  { title: $t('Popular movies'), request: { path: '/movie/popular', type: 'movie' as const } },
-  { title: $t('Popular shows'), request: { path: '/tv/popular', type: 'tv' as const } },
-])
+const rows = computed(() => {
+  const day = (offset = 0) => new Date(Date.now() + offset * 864e5).toISOString().slice(0, 10)
+  return [
+    { title: $t('Trending this week'), request: { path: '/trending/all/week' }, to: '/movies?cat=trending' },
+    { title: $t('Popular movies'), request: { path: '/movie/popular', type: 'movie' as const }, to: '/movies' },
+    { title: $t('Popular TV'), request: { path: '/tv/popular', type: 'tv' as const }, to: '/tv' },
+    {
+      // Most-anticipated rather than soonest-alphabetical: popularity sorts the
+      // dated window so the big releases lead the row.
+      title: $t('Upcoming movies'),
+      request: {
+        path: '/discover/movie',
+        type: 'movie' as const,
+        params: { 'include_adult': false, 'sort_by': 'popularity.desc', 'primary_release_date.gte': day(), 'primary_release_date.lte': day(180) },
+      },
+      to: '/movies?cat=upcoming',
+    },
+    {
+      title: $t('Popular Bollywood'),
+      request: {
+        path: '/discover/movie',
+        type: 'movie' as const,
+        params: { include_adult: false, with_original_language: 'hi', sort_by: 'popularity.desc' },
+      },
+      to: '/movies?lang=hi',
+    },
+    {
+      title: $t('Popular Bollywood series'),
+      request: {
+        path: '/discover/tv',
+        type: 'tv' as const,
+        params: { include_adult: false, with_original_language: 'hi', sort_by: 'popularity.desc' },
+      },
+      to: '/tv?lang=hi',
+    },
+  ]
+})
 
 const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
 </script>
