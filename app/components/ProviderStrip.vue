@@ -19,6 +19,14 @@ interface Provider {
 const settings = useSettingsStore()
 
 /**
+ * TMDB's provider wordmarks come in every darkness, so they're repainted as
+ * single-tone marks that match the active theme: white on dark themes, black
+ * on light ones. Reactive, so flipping themes repaints the strip instantly.
+ */
+const vtheme = useTheme()
+const logoFilter = computed(() => vtheme.current.value.dark ? 'brightness(0) invert(1)' : 'brightness(0)')
+
+/**
  * TMDB's provider catalogues are per-country. The app language usually knows
  * its region ("pt-BR"), and that is the right default; '' falls back to the US
  * catalogue, the largest one TMDB has. The choice itself lives on the provider
@@ -119,9 +127,6 @@ function to(p: Provider) {
       {{ $t('Couldn\'t load the provider list from TMDB.') }}
     </p>
 
-    <!-- A scroll row, not a grid: dozens of services in a region, and the ones
-         past the fold are exactly as reachable by d-pad as the rest — the
-         plugin scrolls the row into view when focus asks it to. -->
     <!-- A wrapped grid, not a sideways scroller: all eight are on the page at
      once — nothing hangs off the edge, nothing gets cut mid-card, and the
      d-pad walks a plain grid. -->
@@ -146,7 +151,7 @@ function to(p: Provider) {
           :alt="p.provider_name"
           loading="lazy"
           class="max-h-[62%] max-w-[78%] object-contain opacity-90 transition-transform duration-200 group-hover:scale-105 group-focus-visible:scale-105"
-          :style="{ filter: 'brightness(0) invert(1)' }"
+          :style="{ filter: logoFilter }"
         >
         <span v-else class="text-2xl font-bold tracking-wide">{{ p.provider_name[0] }}</span>
       </nuxt-link>
