@@ -394,7 +394,7 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
           <template v-if="failure">
             <v-icon :icon="mdiAlertCircleOutline" color="error" size="40" />
             <div class="text-title-large">
-              {{ $t('Nothing to play') }}
+              {{ noServerStream ? $t('Your sources only provide downloads') : $t('Nothing to play') }}
             </div>
             <p class="text-body-medium opacity-70">
               {{ failure }}
@@ -415,7 +415,7 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
                 :prepend-icon="mdiDownload"
                 @click="settings.allowTorrents = true; start()"
               >
-                {{ $t('Turn on downloading') }}
+                {{ $t('Use Best available') }}
               </v-btn>
               <v-btn variant="text" :prepend-icon="mdiArrowLeft" @click="leave">
                 {{ $t('Back') }}

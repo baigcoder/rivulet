@@ -90,7 +90,7 @@ async function toggleStremio(on: boolean | null) {
 <template>
   <div class="flex flex-col gap-8">
     <settings-section
-      :title="$t('Streaming & downloads')"
+      :title="$t('Playback source')"
       :hint="$t('Where playback comes from, and whether the torrent engine may be used at all.')"
     >
       <v-switch
@@ -98,11 +98,35 @@ async function toggleStremio(on: boolean | null) {
         color="primary"
         density="comfortable"
         hide-details
-        :label="$t('Stream with download')"
+        :label="$t('Best available')"
       />
-      <p class="text-body-small opacity-70">
-        {{ $t('On, the best copy wins — a server link when one matches, a torrent download when it is the only way. Off, playback streams only from the sources you added: nothing touches the engine or the disk, and a title they can\'t serve asks for a Stremio URL instead.') }}
-      </p>
+
+      <!-- Both states stay on screen: the trade-off is readable without
+           flipping anything. The active one is bright, the other dimmed. -->
+      <div class="mt-2 flex flex-col gap-1.5">
+        <p
+          class="flex items-start gap-2 text-body-small transition-opacity"
+          :class="settings.allowTorrents ? 'opacity-95' : 'opacity-35'"
+        >
+          <v-icon
+            :icon="settings.allowTorrents ? 'mdiCheckCircle' : 'mdiCircleOutline'"
+            size="16"
+            class="mt-0.5 shrink-0"
+          />
+          <span>{{ $t('Best copy wins — instant server link when available, otherwise the torrent downloads as you watch.') }}</span>
+        </p>
+        <p
+          class="flex items-start gap-2 text-body-small transition-opacity"
+          :class="settings.allowTorrents ? 'opacity-35' : 'opacity-95'"
+        >
+          <v-icon
+            :icon="settings.allowTorrents ? 'mdiCircleOutline' : 'mdiCheckCircle'"
+            size="16"
+            class="mt-0.5 shrink-0"
+          />
+          <span>{{ $t('Instant playback straight from your added servers. Nothing is ever saved to disk.') }}</span>
+        </p>
+      </div>
     </settings-section>
 
     <settings-section
@@ -129,6 +153,12 @@ async function toggleStremio(on: boolean | null) {
             <code>manifest.json</code>
           </template>
         </i18n-t>
+      </v-alert>
+
+      <v-alert variant="tonal" border="start" border-color="primary" class="mt-3 text-body-small" rounded="lg">
+        <strong>{{ $t('Torrentio Addon') }}</strong>:
+        {{ $t('Provides torrent streams from scraped torrent providers (supports RealDebrid, Premiumize, AllDebrid, DebridLink, EasyDebrid, Offcloud, TorBox, and Put.io). Configure and get your link from') }}
+        <a href="https://torrentio.strem.fun" target="_blank" class="text-primary font-medium underline">torrentio.strem.fun</a>
       </v-alert>
 
       <v-list v-if="settings.sources.length" bg-color="transparent" class="rounded-lg bg-surface-container/40">

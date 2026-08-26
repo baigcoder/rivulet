@@ -471,7 +471,7 @@ export async function findReleasesFast(
 ): Promise<Release[]> {
   const { releases, rest } = await runSources(
     searchPath(imdbId, season, episode),
-    { mode: 'first', graceMs: options.graceMs ?? 1500 },
+    { mode: 'first', graceMs: options.graceMs ?? 600 },
   )
   void rest.then(late => {
     if (late.length)
@@ -1108,12 +1108,12 @@ export async function startTorrent(options: {
       const pool = allowTorrents ? found : found.filter(t => !!t.url)
       picked = pickBest(pool, options.maxBytes, options.compatible ?? !hasNativePlayer())
       if (!picked) {
-        if (pool.length && !allowTorrents) {
+        if (found.length && !allowTorrents) {
           // Which added servers can't serve this mode? Named on the explainer,
           // so "add one that streams" is actionable rather than abstract.
           const hosts = [...new Set(found.filter(t => !t.url).map(t => (t.via ? sourceHost(t.via) : '')))].filter(Boolean)
           const names = hosts.join(', ')
-          const msg = $t('None of your added sources stream this title directly. Add a Stremio URL that streams directly, or turn Stream with download back on.')
+          const msg = $t('None of your added sources stream this title directly. Add a Stremio URL that streams directly, or set Playback source to Best available.')
             + (names ? ` ${$t('{servers} serve downloads only here.', { servers: names })}` : '')
           throw new NoServerStream(msg, hosts)
         }
