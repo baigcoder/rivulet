@@ -98,8 +98,8 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  /** The stream died and another candidate exists to try — the parent swaps URLs. */
-  failed: []
+  /** The stream died and another candidate exists to try — the parent swaps URLs. Reason flags why, for the last-candidate message. */
+  failed: [reason?: 'stub' | 'dead']
   useCandidate: [index: number]
   /** The self-introducing Quality menu fired; the parent can stop offering it. */
   autoOpened: []
@@ -229,6 +229,8 @@ const scrubbing = ref(false)
 /** While the volume slider is being dragged, the poll must not fight it back. */
 const volumeHeld = ref(false)
 const errorMsg = ref('')
+/** The current stream was a debrid stub clip (quota/key error) — remembered for the failover verdict. */
+const stubSeen = ref(false)
 
 // ---------------------------------------------------------------------------
 // mpv IPC
@@ -1065,7 +1067,7 @@ const fromEngine = computed(() => props.src.startsWith(ENGINE))
  *   this case. Unverifiable ≠ dead: the caller opens it anyway and lets the
  *   player be the judge.
  */
-async function waitForStream(url: string, timeoutMs = 60000): Promise<{ ok: boolean, status: number, unknown?: boolean }> {
+async function waitForStream(url: string, timeoutMs = 60000): Promise<{ ok: boolean, status: number, unknown?: boolean, stub?: boolean }> {
   const local = url.startsWith(ENGINE)
   const deadline = Date.now() + (local ? timeoutMs : 15000)
   let status = 0
@@ -1075,8 +1077,17 @@ async function waitForStream(url: string, timeoutMs = 60000): Promise<{ ok: bool
       status = res.status
       // Release the connection so librqbit isn't left holding a reader.
       await res.arrayBuffer().catch(() => {})
-      if (res.ok || res.status === 206)
-        return { ok: true, status }
+      if (res.ok || res.status === 206) {
+        // Some debrid resolvers answer a dead quota with a tiny placeholder
+        // clip ("limits_exceeded.mp4") — valid video bytes, wrong movie. The
+        // final URL after redirects and the full size from Content-Range give
+        // it away without downloading anything.
+        const finalUrl = res.url || ''
+        const total = Number(res.headers.get('content-range')?.split('/')[1] ?? NaN)
+        const stubLike = /limits?[_.-]?exceeded|(?:not|un)?available[_-]?clip|error[_-]?clip/i.test(finalUrl)
+          || (Number.isFinite(total) && total > 0 && total < 3 * 1024 ** 2)
+        return { ok: true, status, stub: stubLike }
+      }
       // An explicit status from a remote host is final — waiting out a 404
       // only delays the failover. The local engine is different: statuses
       // while it warms up are just "not yet".
@@ -1133,8 +1144,15 @@ async function startPlayer() {
     // direct link is a server that answers or doesn't — six seconds and the
     // candidate list moves on.
     waiting.value = true
-    const probe = await waitForStream(props.src, fromEngine.value ? 60_000 : 6_000)
+    let probe = await waitForStream(props.src, fromEngine.value ? 60_000 : 6_000)
     waiting.value = false
+    // A stub clip is a *verdict* — quota gone or key rejected. Fail over like
+    // any dead server, and remember why for the last-one-standing message.
+    if (probe.ok && probe.stub && !fromEngine.value) {
+      const stubbed = { ...probe, ok: false, stub: true, unknown: false, status: probe.status }
+      probe = stubbed
+      stubSeen.value = true
+    }
     // `unknown` (the probe was CORS-blocked from even asking) falls through to
     // the opener: media elements don't need the permission fetch wants, so the
     // player's own exit is the only verdict that counts for such links.
@@ -1149,11 +1167,13 @@ async function startPlayer() {
         // what mints a fresh one, so that's what the message has to ask for —
         // unless another server is queued, in which case the message never
         // shows: the player moves to the next one instead.
-        if (streamDied())
+        if (streamDied(probe.stub ? 'stub' : undefined))
           return
-        errorMsg.value = probe.status
-          ? $t('The link this source gave answered HTTP {status}. It may have expired — search the sources again for a fresh one.', { status: probe.status })
-          : $t('The link this source gave could not be reached.')
+        errorMsg.value = probe.stub
+          ? $t('This source answered with an error clip instead of the title — its debrid quota is exhausted or its key was rejected.')
+          : probe.status
+            ? $t('The link this source gave answered HTTP {status}. It may have expired — search the sources again for a fresh one.', { status: probe.status })
+            : $t('The link this source gave could not be reached.')
       }
       return
     }
@@ -1234,10 +1254,10 @@ async function startPlayer() {
  * The current stream just proved unusable. With other servers queued, say so
  * and let the parent advance; its return answers whether anyone is left.
  */
-function streamDied() {
+function streamDied(reason?: 'stub' | 'dead') {
   if (!hasCandidates.value)
     return false
-  emit('failed')
+  emit('failed', reason)
   return true
 }
 
@@ -1294,7 +1314,7 @@ async function poll() {
         // A server stream that stops mid-film is the server dying, not the
         // film ending — same failover as a link that never opened.
         if (!fromEngine.value)
-          streamDied()
+          streamDied(stubSeen.value ? 'stub' : undefined)
       }
       return
     }
