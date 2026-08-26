@@ -1050,7 +1050,22 @@ const fromEngine = computed(() => props.src.startsWith(ENGINE))
  * serving or it isn't, and an expired one should say so rather than spend a
  * minute looking like it's buffering.
  */
-async function waitForStream(url: string, timeoutMs = 60000) {
+/**
+ * Is this URL serving bytes right now?
+ *
+ * Three verdicts, because "can't check" is not "dead":
+ * - `ok` — open it.
+ * - `!ok` on a **local** torrent stream — keep waiting out the window; peers
+ *   need time before the engine can answer.
+ * - `!ok` on a **remote** link that answered HTTP ≥400 — the server itself has
+ *   spoken: dead, fail over.
+ * - `!ok` with `unknown` set — the fetch *threw*, which is CORS or an
+ *   unroutable host. The browser refuses to say which, and media elements
+ *   don't need the permission `fetch` wants — Real-Debrid links are exactly
+ *   this case. Unverifiable ≠ dead: the caller opens it anyway and lets the
+ *   player be the judge.
+ */
+async function waitForStream(url: string, timeoutMs = 60000): Promise<{ ok: boolean, status: number, unknown?: boolean }> {
   const local = url.startsWith(ENGINE)
   const deadline = Date.now() + (local ? timeoutMs : 15000)
   let status = 0
@@ -1062,12 +1077,17 @@ async function waitForStream(url: string, timeoutMs = 60000) {
       await res.arrayBuffer().catch(() => {})
       if (res.ok || res.status === 206)
         return { ok: true, status }
-      // Waiting out a status only makes sense for the engine warming up. A
-      // remote host answering 403 or 404 has already given its answer.
-      if (!local && status >= 400 && status < 500)
+      // An explicit status from a remote host is final — waiting out a 404
+      // only delays the failover. The local engine is different: statuses
+      // while it warms up are just "not yet".
+      if (!local && status >= 400)
+        return { ok: false, status }
+      if (local && status >= 400 && status < 500)
         return { ok: false, status }
     }
     catch {
+      if (!local)
+        return { ok: false, unknown: true, status: 0 }
       // Engine momentarily unreachable — keep waiting.
     }
     await new Promise(r => setTimeout(r, 400))
@@ -1115,7 +1135,10 @@ async function startPlayer() {
     waiting.value = true
     const probe = await waitForStream(props.src, fromEngine.value ? 60_000 : 6_000)
     waiting.value = false
-    if (!probe.ok) {
+    // `unknown` (the probe was CORS-blocked from even asking) falls through to
+    // the opener: media elements don't need the permission fetch wants, so the
+    // player's own exit is the only verdict that counts for such links.
+    if (!probe.ok && !probe.unknown) {
       if (fromEngine.value) {
         errorMsg.value = probe.status
           ? $t('The torrent stream isn\'t ready yet (engine replied HTTP {status}). It may still be fetching metadata from peers.', { status: probe.status })
