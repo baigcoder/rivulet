@@ -9,6 +9,8 @@
   "scripts": {
     "dev": "nuxt dev",
     "generate": "nuxt generate",
+    "generate:ci": "NODE_OPTIONS=--max-old-space-size=4096 nuxt generate",
+    "bundle:macos:ci": "NODE_OPTIONS=--max-old-space-size=4096 bun scripts/build/macos/bundle-dylib.ts",
     "preinstall": "npx only-allow bun",
     "postinstall": "nuxt prepare",
     "lint": "eslint . --fix",

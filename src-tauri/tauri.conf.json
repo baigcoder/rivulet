@@ -27,8 +27,8 @@
 		}
 	},
 	"build": {
-		"beforeBuildCommand": "NODE_OPTIONS=--max-old-space-size=4096 bun run generate",
-		"beforeBundleCommand": "NODE_OPTIONS=--max-old-space-size=4096 bun scripts/build/macos/bundle-dylib.ts",
+		"beforeBuildCommand": "bun run generate:ci",
+		"beforeBundleCommand": "bun run bundle:macos:ci",
 		"frontendDist": "../.output/public",
 		"beforeDevCommand": "bun run dev",
 		"devUrl": "http://localhost:3000"
