@@ -1,6 +1,7 @@
 import type { DiskSpace, EngineTorrent } from '~/utils/torrents'
 import { mdiAlertCircleOutline, mdiCheckCircleOutline, mdiFormatListBulleted, mdiPauseCircleOutline, mdiTrayArrowDown } from '@mdi/js'
 import { invoke } from '@tauri-apps/api/core'
+import { sendNotification } from '@tauri-apps/plugin-notification'
 import { key } from '~/brand'
 
 export type StatusKey = 'downloading' | 'done' | 'paused' | 'error' | 'checking'
@@ -277,6 +278,10 @@ export const useDownloadsStore = defineStore('downloads', () => {
     await release()
     focused.value = id
 
+    // Refresh first so the newly added torrent is in the local cache.
+    // Without this, the find() below returns undefined and the torrent never gets started.
+    await refresh()
+
     const playing = torrents.value.find(t => t.id === id)
     if (playing)
       touched.value[playing.info_hash] = Date.now()
@@ -291,9 +296,9 @@ export const useDownloadsStore = defineStore('downloads', () => {
       .filter(t => t.id !== id && ['downloading', 'checking'].includes(torrentStatus(t)))
       .map(t => t.id)
     await Promise.all(paused.map(other => torrentAction(other, 'pause').catch(() => {})))
-    if (playing)
-      await torrentAction(id, 'start').catch(() => {}) // it may have been paused
-    await refresh()
+    // Always try to start the torrent - it may not be in local cache yet but exists in engine.
+    // Calling start on already-started torrent is idempotent.
+    await torrentAction(id, 'start').catch(() => {})
   }
 
   /**
@@ -340,6 +345,40 @@ export const useDownloadsStore = defineStore('downloads', () => {
 
   /** What the badge shows: anything still working, done or not. */
   const active = computed(() => counts.value.downloading + counts.value.checking)
+
+  // --- Download completion notifications ------------------------------------
+  // Track previous states so we can fire a notification on transition.
+  const prevStates = ref<Record<number, StatusKey>>({})
+
+  watch(torrents, now => {
+    for (const t of now) {
+      const prev = prevStates.value[t.id]
+      const curr = torrentStatus(t)
+      if (prev && prev !== curr) {
+        if (prev === 'downloading' || prev === 'checking') {
+          if (curr === 'done' && settings.notifyComplete) {
+            sendNotification({
+              title: $t('Download complete'),
+              body: t.name ?? $t('Your download is ready to watch'),
+            })
+          }
+          else if (curr === 'error' && settings.notifyError) {
+            sendNotification({
+              title: $t('Download failed'),
+              body: `${t.name ?? $t('Download')}: ${t.stats?.error ?? $t('Unknown error')}`,
+            })
+          }
+        }
+      }
+      prevStates.value[t.id] = curr
+    }
+    // Prune entries for torrents the engine no longer holds.
+    const ids = new Set(now.map(t => t.id))
+    for (const id of Object.keys(prevStates.value).map(Number)) {
+      if (!ids.has(id))
+        delete prevStates.value[id]
+    }
+  }, { deep: true })
 
   const speed = computed(() => {
     const sum = (pick: (t: EngineTorrent) => number) => torrents.value.reduce((n, t) => n + pick(t), 0)

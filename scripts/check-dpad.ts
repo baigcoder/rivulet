@@ -5,6 +5,8 @@ import type { Box } from '../app/utils/dpad'
 // half of the remote — BACK, which is Kotlin's to catch and the page's to answer.
 import assert from 'node:assert'
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
 import { pickDirection } from '../app/utils/dpad'
 
 function box(left: number, top: number, width: number, height: number): Box {
@@ -127,14 +129,14 @@ function code(kotlin: string) {
 }
 
 const activity = code(readFileSync(
-  new URL('../src-tauri/gen/android/app/src/main/java/io/github/rivulet/app/MainActivity.kt', import.meta.url),
+  fileURLToPath(new URL('../src-tauri/gen/android/app/src/main/java/io/github/rivulet/rivulet/MainActivity.kt', import.meta.url)),
   'utf8',
 ))
 const manifest = readFileSync(
-  new URL('../src-tauri/gen/android/app/src/main/AndroidManifest.xml', import.meta.url),
+  fileURLToPath(new URL('../src-tauri/gen/android/app/src/main/AndroidManifest.xml', import.meta.url)),
   'utf8',
 )
-const plugin = readFileSync(new URL('../app/plugins/dpad.client.ts', import.meta.url), 'utf8')
+const plugin = readFileSync(fileURLToPath(new URL('../app/plugins/dpad.client.ts', import.meta.url)), 'utf8')
 
 // The name Kotlin evaluates is a string on one side and an assignment on the
 // other, so nothing but this notices when one of them is renamed. A miss is

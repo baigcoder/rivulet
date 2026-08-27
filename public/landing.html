@@ -425,44 +425,119 @@
        A table that overflows the page is worse than one that scrolls itself. */
     .table-scroll { overflow-x: auto; }
 
-    /* ── Sources ─────────────────────────────────────────────────────────── */
-    .code {
-      font-family: var(--mono); font-size: .8125rem; line-height: 2;
-      color: var(--on-muted);
-      background: var(--surface);
-      border: 1px solid var(--rule);
-      border-left: 2px solid var(--accent);
-      border-radius: 0 var(--r-md) var(--r-md) 0;
-      padding: 22px 26px;
-      margin: 28px 0;
-      overflow-x: auto;
-    }
-    .code .kw { color: var(--accent); font-weight: 500; }
-    .code .str { color: var(--warm); }
-    .code .dim { color: var(--on-faint); }
+    /* ── FAQ Accents & Accordion ──────────────────────────────────────────── */
+      .badge-red {
+        display: inline-block;
+        font-family: var(--mono);
+        font-size: .6875rem;
+        font-weight: 700;
+        letter-spacing: .12em;
+        text-transform: uppercase;
+        background: transparent;
+        color: var(--accent);
+        padding: 3px 8px;
+        border: 1px solid rgba(var(--accent-rgb), .35);
+        border-radius: 2px;
+        margin-bottom: 16px;
+      }
 
-    .subhead { font-size: 1rem; font-weight: 500; margin-bottom: 8px; }
-    .stack > * + * { margin-top: 28px; }
+      .title-red-highlight {
+        display: inline-block;
+        background: transparent;
+        color: var(--on-ground);
+        padding: 4px 0;
+        border-radius: 0;
+        font-size: clamp(1.75rem, 4vw, 2.75rem);
+        font-weight: 700;
+        letter-spacing: -.03em;
+        line-height: 1.25;
+      }
 
-    /* The legal note earns a marked edge rather than a box: it is the one thing
-       on this page nobody may skim past. */
-    .note {
-      font-size: .8125rem; line-height: 1.7;
-      color: var(--on-dim);
-      border-left: 2px solid var(--rule-strong);
-      padding: 4px 0 4px 20px;
-    }
+      .points-red li {
+        position: relative;
+        padding-left: 20px;
+        list-style: none;
+      }
+      .points-red li::before {
+        content: "•";
+        position: absolute;
+        left: 0;
+        top: 0;
+        color: var(--accent);
+        font-size: 1.25rem;
+        line-height: 1.4;
+      }
 
-    kbd, code.inl {
-      font-family: var(--mono); font-size: .875em;
-      color: var(--accent);
-    }
+      .chips-teal .chip-teal {
+        font-family: var(--mono);
+        font-size: .75rem;
+        font-weight: 500;
+        color: #34d399;
+        background: rgba(52, 211, 153, .12);
+        border: 1px solid rgba(52, 211, 153, .25);
+        border-radius: 999px;
+        padding: 5px 14px;
+      }
 
-    /* ── Definition rows ─────────────────────────────────────────────────── */
-    .defs { display: grid; grid-template-columns: repeat(2, 1fr); column-gap: clamp(32px, 5vw, 72px); }
-    .defs > div { padding: 20px 0; border-top: 1px solid var(--rule); }
-    .defs dt { font-size: .875rem; font-weight: 500; color: var(--on-ground); margin-bottom: 5px; }
-    .defs dd { font-size: .8125rem; line-height: 1.6; color: var(--on-muted); }
+      /* Accordion */
+      .faq-list {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        background: var(--rule);
+        border: 1px solid var(--rule);
+        border-radius: var(--r-lg);
+        overflow: hidden;
+        margin-top: 36px;
+      }
+      .faq-item {
+        background: var(--surface);
+        transition: background .2s;
+      }
+      .faq-item:hover {
+        background: rgba(255, 255, 255, .03);
+      }
+      .faq-trigger {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 20px 24px;
+        background: none;
+        border: none;
+        color: var(--on-ground);
+        font-family: var(--font);
+        font-size: .9375rem;
+        font-weight: 500;
+        text-align: left;
+        cursor: pointer;
+      }
+      .faq-chevron {
+        width: 18px;
+        height: 18px;
+        color: var(--on-dim);
+        transition: transform .3s ease;
+        flex-shrink: 0;
+      }
+      .faq-item.open .faq-chevron {
+        transform: rotate(180deg);
+        color: var(--accent);
+      }
+      .faq-body {
+        max-height: 0;
+        overflow: hidden;
+        transition: max-height .35s ease-out, padding .35s ease-out;
+        padding: 0 24px;
+      }
+      .faq-item.open .faq-body {
+        max-height: 300px;
+        padding: 0 24px 24px;
+      }
+      .faq-body p {
+        font-size: .875rem;
+        line-height: 1.7;
+        color: var(--on-muted);
+      }
 
     /* ── Download ────────────────────────────────────────────────────────── */
     .get { text-align: center; }
@@ -541,6 +616,7 @@
     <a href="#downloads">Downloads</a>
     <a href="#sources">Sources</a>
     <a href="#privacy">Privacy</a>
+    <a href="#faq">FAQ</a>
     <a href="#download" class="btn btn-primary btn-sm">Download</a>
   </div>
 </nav>
@@ -572,7 +648,7 @@
     </div>
 
     <div class="shot reveal" style="--i: 6">
-      <img src="/landing-showcase.jpg" alt="The Rivulet home screen, showing a featured title above rows of posters" />
+      <img src="/landing-showcase.png" alt="The Rivulet home screen, showing a featured title above rows of posters" />
     </div>
     <p class="caption">Rivulet home screen</p>
   </div>
@@ -640,35 +716,34 @@
   <div class="wrap">
     <div class="split">
       <div class="split-text reveal">
-        <hr class="trace" style="width: 56px; margin-bottom: 26px" />
-        <span class="label">The player</span>
+        <span class="label" style="color: var(--accent);">The player</span>
         <h2 class="h2">Everything about the picture, in one place</h2>
         <p class="lede">
           The native mpv surface paints above the webview, so the controls cannot simply be stacked over it.
           Every overlay measures its own rectangle each frame and the Rust side subtracts it from mpv's window —
           the page shows through the holes, clicks included, while the video window itself never resizes.
         </p>
-        <ul class="points">
+        <ul class="points points-red" style="margin-top: 24px">
           <li>Seek-preview frames pulled with ffmpeg and cached, warmed only while the control bar is up</li>
           <li>The file's own audio and subtitle tracks, the release's subtitle files and OpenSubtitles in one menu</li>
           <li>Subtitle font, size, colour, outline and position — applied to mpv and to page-drawn cues alike</li>
           <li>Auto-sync slides a mismatched subtitle onto the audio's silence map and reports its confidence</li>
           <li>Progress recorded per episode, picked back up from the card or the detail page</li>
         </ul>
-        <div class="chips">
-          <span class="chip chip-accent">HEVC</span>
-          <span class="chip chip-accent">AV1</span>
-          <span class="chip chip-accent">10-bit</span>
-          <span class="chip chip-accent">E-AC-3</span>
-          <span class="chip chip-accent">DTS</span>
-          <span class="chip">x264</span>
-          <span class="chip">AAC</span>
-          <span class="chip">MKV</span>
-          <span class="chip">Half-downloaded</span>
+        <div class="chips chips-teal">
+          <span class="chip-teal">HEVC</span>
+          <span class="chip-teal">AV1</span>
+          <span class="chip-teal">10-bit</span>
+          <span class="chip-teal">E-AC-3</span>
+          <span class="chip-teal">DTS</span>
+          <span class="chip-teal">x264</span>
+          <span class="chip-teal">AAC</span>
+          <span class="chip-teal">MKV</span>
+          <span class="chip-teal">Half-downloaded files</span>
         </div>
       </div>
       <div class="split-media reveal" style="--i: 1">
-        <img src="/landing-player.jpg" alt="The Rivulet player with the subtitle menu open over a film" />
+        <img src="/landing-player-real.png" alt="The Rivulet player with the subtitle menu open over Night of the Living Dead" />
       </div>
     </div>
   </div>
@@ -756,6 +831,30 @@
   </div>
 </section>
 
+<!-- ═══════════════════════════════ REMOTE ═════════════════════════════ -->
+<section class="pad" id="remote">
+  <div class="wrap">
+    <div class="reveal">
+      <hr class="trace" style="width: 56px; margin-bottom: 26px" />
+      <span class="label">Built for a remote</span>
+      <h2 class="h2">Up, down, left, right, OK, back</h2>
+      <p class="lede measure">
+        Driving the app from a sofa is a constraint on every screen, not a mode.
+        Real links and buttons throughout, a focus style anywhere there is a hover style,
+        decorative overlays taken out of the tab order, and nothing that depends on typing or pointing.
+      </p>
+      <div class="chips" style="margin-top: 32px">
+        <span class="chip">Android TV build</span>
+        <span class="chip">Full d-pad navigation</span>
+        <span class="chip">Performance switch</span>
+        <span class="chip">Focus-first styling</span>
+        <span class="chip">Themes for a dark room</span>
+        <span class="chip">App scale for a 10-foot UI</span>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ═══════════════════════════════ PLAYBACK ═══════════════════════════ -->
 <section class="pad" id="playback">
   <div class="wrap">
@@ -788,30 +887,6 @@
   </div>
 </section>
 
-<!-- ═══════════════════════════════ REMOTE ═════════════════════════════ -->
-<section class="pad" id="remote">
-  <div class="wrap">
-    <div class="reveal">
-      <hr class="trace" style="width: 56px; margin-bottom: 26px" />
-      <span class="label">Built for a remote</span>
-      <h2 class="h2">Up, down, left, right, OK, back</h2>
-      <p class="lede measure">
-        Driving the app from a sofa is a constraint on every screen, not a mode.
-        Real links and buttons throughout, a focus style anywhere there is a hover style,
-        decorative overlays taken out of the tab order, and nothing that depends on typing or pointing.
-      </p>
-      <div class="chips" style="margin-top: 32px">
-        <span class="chip">Android TV build</span>
-        <span class="chip">Full d-pad navigation</span>
-        <span class="chip">Performance switch</span>
-        <span class="chip">Focus-first styling</span>
-        <span class="chip">Themes for a dark room</span>
-        <span class="chip">App scale for a 10-foot UI</span>
-      </div>
-    </div>
-  </div>
-</section>
-
 <!-- ═══════════════════════════════ SOURCES ════════════════════════════ -->
 <section class="pad" id="sources">
   <div class="wrap">
@@ -825,43 +900,246 @@
       </p>
     </div>
 
-    <div class="stack measure reveal">
-      <div>
-        <h3 class="subhead">The whole integration</h3>
-        <p>
-          A source is a server that speaks the Stremio addon protocol. Rivulet runs no code
-          from one — it reads the JSON, ranks the results and hands the one you pick to its own engine.
+    <!-- Visual Integration Cards Grid -->
+    <div class="ruled reveal" style="grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 48px;">
+      <div style="background: var(--surface); padding: 28px 24px; border: 1px solid var(--rule); border-radius: var(--r-lg);">
+        <div style="width: 40px; height: 40px; border-radius: 8px; background: rgba(111,227,255,.1); display: grid; place-items: center; margin-bottom: 16px; color: var(--accent);">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </div>
+        <h3 style="font-size: 1rem; font-weight: 600; margin-bottom: 8px; color: var(--on-ground);">Stremio Addon Protocol</h3>
+        <p style="font-size: .84375rem; color: var(--on-muted); line-height: 1.6; margin-bottom: 8px;">
+          Rivulet communicates via clean HTTP JSON endpoints. No third-party executable code or scripts are ever downloaded or executed.
+        </p>
+        <p style="font-size: .75rem; color: var(--accent); line-height: 1.4;">
+          Compatible with community addons like <a href="https://torrentio.strem.fun" target="_blank" style="text-decoration: underline; color: var(--accent); font-weight: 600;">Torrentio</a> (supporting RealDebrid, Premiumize, AllDebrid, etc.).
         </p>
       </div>
 
-      <div class="code">
-        <span class="kw">GET</span>&nbsp; <span class="str">{source}/stream/movie/{imdbId}.json</span><br />
-        <span class="kw">GET</span>&nbsp; <span class="str">{source}/stream/series/{imdbId}:{s}:{e}.json</span><br />
-        <span class="dim">→</span>&nbsp;&nbsp;&nbsp; <span class="dim">{ "streams": [ { "infoHash": "…", "title": "…" } ] }</span>
-      </div>
-
-      <p>
-        Add several and their results merge, duplicates dropped. A stream that names a URL instead of
-        an info hash — what a debrid addon answers with — is played directly, with no swarm joined
-        and nothing written to disk.
-      </p>
-
-      <div>
-        <h3 class="subhead">A link can never change what it searches</h3>
-        <p>
-          Rivulet registers the <code class="inl">rivulet://</code>
-          scheme so an addon page can offer a one-click install. The app shows the URL in full and
-          asks before adding it — always.
+      <div style="background: var(--surface); padding: 28px 24px; border: 1px solid var(--rule); border-radius: var(--r-lg);">
+        <div style="width: 40px; height: 40px; border-radius: 8px; background: rgba(111,227,255,.1); display: grid; place-items: center; margin-bottom: 16px; color: var(--accent);">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        </div>
+        <h3 style="font-size: 1rem; font-weight: 600; margin-bottom: 8px; color: var(--on-ground);">Debrid &amp; Direct Streams</h3>
+        <p style="font-size: .84375rem; color: var(--on-muted); line-height: 1.6;">
+          Sources offering direct HTTP URLs (such as Debrid services) play instantly without joining P2P swarms or storing bytes on disk.
         </p>
       </div>
 
-      <p class="note">
-        This project does not host, run, bundle, endorse or recommend any source, and distributes no list of them.
-        What a given source offers, and whether you have the right to play it, is a matter between you and whoever operates it.
-      </p>
+      <div style="background: var(--surface); padding: 28px 24px; border: 1px solid var(--rule); border-radius: var(--r-lg);">
+        <div style="width: 40px; height: 40px; border-radius: 8px; background: rgba(111,227,255,.1); display: grid; place-items: center; margin-bottom: 16px; color: var(--accent);">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        </div>
+        <h3 style="font-size: 1rem; font-weight: 600; margin-bottom: 8px; color: var(--on-ground);">Strict Scheme Security</h3>
+        <p style="font-size: .84375rem; color: var(--on-muted); line-height: 1.6;">
+          Registers the <code class="inl">rivulet://</code> scheme for one-click installation while always prompting for explicit user confirmation.
+        </p>
+      </div>
+    </div>
+
+    <!-- Terminal Inspector Box -->
+    <div class="reveal" style="margin-bottom: 40px;">
+      <div style="background: var(--surface); border: 1px solid var(--rule); border-radius: var(--r-lg); overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.6);">
+        <!-- Terminal Header Bar -->
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 12px 18px; background: rgba(0,0,0,0.4); border-bottom: 1px solid var(--rule-soft);">
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <span style="width: 11px; height: 11px; border-radius: 50%; background: #ff5f56; display: inline-block;"></span>
+            <span style="width: 11px; height: 11px; border-radius: 50%; background: #ffbd2e; display: inline-block;"></span>
+            <span style="width: 11px; height: 11px; border-radius: 50%; background: #27c93f; display: inline-block;"></span>
+            <span style="font-family: var(--mono); font-size: .75rem; color: var(--on-dim); margin-left: 12px;">Stremio HTTP Addon Specification</span>
+          </div>
+          <span style="font-family: var(--mono); font-size: .6875rem; color: var(--accent); background: rgba(111,227,255,.1); padding: 2px 8px; border-radius: 4px;">JSON over HTTPS</span>
+        </div>
+
+        <!-- Terminal Body -->
+        <div class="code" style="margin: 0; border: none; border-radius: 0; padding: 24px 28px; background: transparent;">
+          <span class="dim">// Request stream candidates for a movie or TV show episode</span><br />
+          <span class="kw">GET</span>  <span class="str">https://{source}/stream/movie/{imdbId}.json</span><br />
+          <span class="kw">GET</span>  <span class="str">https://{source}/stream/series/{imdbId}:{season}:{episode}.json</span><br /><br />
+          <span class="dim">// Response payload parsed, ranked, and passed to native engine</span><br />
+          <span class="kw">HTTP/1.1 200 OK</span><br />
+          <span class="dim">{</span><br />
+          &nbsp;&nbsp;<span class="str">"streams"</span>: [<br />
+          &nbsp;&nbsp;&nbsp;&nbsp;{ <span class="str">"infoHash"</span>: <span class="str">"4f2a89b1c7e6..."</span>, <span class="str">"title"</span>: <span class="str">"4K HDR Dolby Atmos • 14.2 GB"</span> },<br />
+          &nbsp;&nbsp;&nbsp;&nbsp;{ <span class="str">"url"</span>: <span class="str">"https://debrid.example/stream/xyz"</span>, <span class="str">"title"</span>: <span class="str">"Direct Debrid Stream • 1080p"</span> }<br />
+          &nbsp;&nbsp;]<br />
+          <span class="dim">}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Legal Disclaimer Note -->
+    <div class="note reveal" style="border-left-color: var(--accent); background: rgba(111,227,255,.03); padding: 18px 24px; border-radius: 0 var(--r-md) var(--r-md) 0;">
+      <strong style="color: var(--accent); font-family: var(--mono); font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; display: block; margin-bottom: 4px;">Compliance &amp; Responsibility</strong>
+      This project does not host, run, bundle, endorse or recommend any source, and distributes no list of them.
+      What a given source offers, and whether you have the right to play it, is a matter between you and whoever operates it.
     </div>
   </div>
 </section>
+
+<!-- ═══════════════════════════════ FAQ ════════════════════════════════ -->
+<section class="pad" id="faq" style="background: rgba(0,0,0,0.25);">
+  <div class="wrap">
+    <div class="sec-head reveal text-center" style="text-align: center;">
+      <span class="badge-red">FAQ</span><br/>
+      <h2 class="title-red-highlight">The questions that keep coming up</h2>
+    </div>
+
+    <!-- Category Filter Tabs -->
+    <div class="reveal" style="display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; margin-top: 32px; margin-bottom: 24px;">
+      <button type="button" class="faq-tab active" onclick="filterFaq('all', this)" style="padding: 6px 16px; border-radius: 999px; font-family: var(--mono); font-size: .75rem; font-weight: 500; border: 1px solid var(--accent); background: var(--accent); color: #0e0f11; cursor: pointer; transition: all .2s;">All Questions</button>
+      <button type="button" class="faq-tab" onclick="filterFaq('content', this)" style="padding: 6px 16px; border-radius: 999px; font-family: var(--mono); font-size: .75rem; font-weight: 500; border: 1px solid var(--rule); background: var(--surface); color: var(--on-muted); cursor: pointer; transition: all .2s;">Content &amp; Sources</button>
+      <button type="button" class="faq-tab" onclick="filterFaq('tech', this)" style="padding: 6px 16px; border-radius: 999px; font-family: var(--mono); font-size: .75rem; font-weight: 500; border: 1px solid var(--rule); background: var(--surface); color: var(--on-muted); cursor: pointer; transition: all .2s;">Architecture &amp; Tech</button>
+      <button type="button" class="faq-tab" onclick="filterFaq('platform', this)" style="padding: 6px 16px; border-radius: 999px; font-family: var(--mono); font-size: .75rem; font-weight: 500; border: 1px solid var(--rule); background: var(--surface); color: var(--on-muted); cursor: pointer; transition: all .2s;">TV &amp; Platforms</button>
+    </div>
+
+    <div class="faq-list reveal measure" style="max-width: 840px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; background: transparent; border: none;">
+      <div class="faq-item" data-cat="content" style="background: var(--surface); border: 1px solid var(--rule); border-radius: var(--r-md); overflow: hidden; transition: all .25s;">
+        <button type="button" class="faq-trigger" onclick="toggleFaq(this)" style="padding: 22px 26px;">
+          <span style="display: flex; align-items: center; gap: 14px;">
+            <span style="font-family: var(--mono); font-size: .8125rem; font-weight: 600; color: var(--accent);">01</span>
+            <span>Does Rivulet provide content?</span>
+          </span>
+          <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="faq-body">
+          <p>No. Rivulet hosts no content, indexes no content, and ships with no sources configured. It is a local media library and BitTorrent player for files and sources you choose to add.</p>
+        </div>
+      </div>
+
+      <div class="faq-item" data-cat="content" style="background: var(--surface); border: 1px solid var(--rule); border-radius: var(--r-md); overflow: hidden; transition: all .25s;">
+        <button type="button" class="faq-trigger" onclick="toggleFaq(this)" style="padding: 22px 26px;">
+          <span style="display: flex; align-items: center; gap: 14px;">
+            <span style="font-family: var(--mono); font-size: .8125rem; font-weight: 600; color: var(--accent);">02</span>
+            <span>Why won't you bundle a default source?</span>
+          </span>
+          <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="faq-body">
+          <p>Rivulet is built as a neutral, local-first player. Bundling third-party sources would compromise user freedom and legal neutrality. You decide what sources to add.</p>
+        </div>
+      </div>
+
+      <div class="faq-item" data-cat="content" style="background: var(--surface); border: 1px solid var(--rule); border-radius: var(--r-md); overflow: hidden; transition: all .25s;">
+        <button type="button" class="faq-trigger" onclick="toggleFaq(this)" style="padding: 22px 26px;">
+          <span style="display: flex; align-items: center; gap: 14px;">
+            <span style="font-family: var(--mono); font-size: .8125rem; font-weight: 600; color: var(--accent);">03</span>
+            <span>Do I need a source at all?</span>
+          </span>
+          <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="faq-body">
+          <p>No. If you have local video files, magnet links, or .torrent files on your computer, Rivulet downloads and plays them directly without needing any remote source configured.</p>
+        </div>
+      </div>
+
+      <div class="faq-item" data-cat="content" style="background: var(--surface); border: 1px solid var(--rule); border-radius: var(--r-md); overflow: hidden; transition: all .25s;">
+        <button type="button" class="faq-trigger" onclick="toggleFaq(this)" style="padding: 22px 26px;">
+          <span style="display: flex; align-items: center; gap: 14px;">
+            <span style="font-family: var(--mono); font-size: .8125rem; font-weight: 600; color: var(--accent);">04</span>
+            <span>Is Rivulet affiliated with Stremio?</span>
+          </span>
+          <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="faq-body">
+          <p>No. Rivulet simply implements the open Stremio HTTP addon protocol standard so community addons can provide streams if you choose to add them.</p>
+        </div>
+      </div>
+
+      <div class="faq-item" data-cat="tech" style="background: var(--surface); border: 1px solid var(--rule); border-radius: var(--r-md); overflow: hidden; transition: all .25s;">
+        <button type="button" class="faq-trigger" onclick="toggleFaq(this)" style="padding: 22px 26px;">
+          <span style="display: flex; align-items: center; gap: 14px;">
+            <span style="font-family: var(--mono); font-size: .8125rem; font-weight: 600; color: var(--accent);">05</span>
+            <span>Why is there no plugin system?</span>
+          </span>
+          <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="faq-body">
+          <p>Executing untrusted third-party code inside your media player introduces security risks. Rivulet communicates with sources via clean HTTPS JSON requests rather than running arbitrary scripts.</p>
+        </div>
+      </div>
+
+      <div class="faq-item" data-cat="tech" style="background: var(--surface); border: 1px solid var(--rule); border-radius: var(--r-md); overflow: hidden; transition: all .25s;">
+        <button type="button" class="faq-trigger" onclick="toggleFaq(this)" style="padding: 22px 26px;">
+          <span style="display: flex; align-items: center; gap: 14px;">
+            <span style="font-family: var(--mono); font-size: .8125rem; font-weight: 600; color: var(--accent);">06</span>
+            <span>Why Tauri instead of Electron?</span>
+          </span>
+          <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="faq-body">
+          <p>Tauri uses the operating system's native webview and Rust, resulting in dramatically lower RAM usage (~50MB vs ~400MB), tiny binary sizes, and instant startup times.</p>
+        </div>
+      </div>
+
+      <div class="faq-item" data-cat="platform" style="background: var(--surface); border: 1px solid var(--rule); border-radius: var(--r-md); overflow: hidden; transition: all .25s;">
+        <button type="button" class="faq-trigger" onclick="toggleFaq(this)" style="padding: 22px 26px;">
+          <span style="display: flex; align-items: center; gap: 14px;">
+            <span style="font-family: var(--mono); font-size: .8125rem; font-weight: 600; color: var(--accent);">07</span>
+            <span>Does it work on a TV?</span>
+          </span>
+          <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="faq-body">
+          <p>Yes! Rivulet has an Android TV build with full D-pad remote navigation, 10-foot UI scaling, focus-first styling, and TV performance toggles.</p>
+        </div>
+      </div>
+
+      <div class="faq-item" data-cat="platform" style="background: var(--surface); border: 1px solid var(--rule); border-radius: var(--r-md); overflow: hidden; transition: all .25s;">
+        <button type="button" class="faq-trigger" onclick="toggleFaq(this)" style="padding: 22px 26px;">
+          <span style="display: flex; align-items: center; gap: 14px;">
+            <span style="font-family: var(--mono); font-size: .8125rem; font-weight: 600; color: var(--accent);">08</span>
+            <span>Is there a phone app?</span>
+          </span>
+          <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="faq-body">
+          <p>Yes, an Android mobile APK is available that supports native decoders via ExoPlayer, landscape playback, and background downloading via a Android foreground service.</p>
+        </div>
+      </div>
+
+      <div class="faq-item" data-cat="platform" style="background: var(--surface); border: 1px solid var(--rule); border-radius: var(--r-md); overflow: hidden; transition: all .25s;">
+        <button type="button" class="faq-trigger" onclick="toggleFaq(this)" style="padding: 22px 26px;">
+          <span style="display: flex; align-items: center; gap: 14px;">
+            <span style="font-family: var(--mono); font-size: .8125rem; font-weight: 600; color: var(--accent);">09</span>
+            <span>macOS says Rivulet is damaged. Is it?</span>
+          </span>
+          <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="faq-body">
+          <p>No. macOS displays this Gatekeeper message for open-source apps downloaded from GitHub without a paid Apple Developer certificate. Run <code>xattr -cr /Applications/Rivulet.app</code> in Terminal to bypass the warning.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+  function toggleFaq(btn) {
+    var item = btn.closest('.faq-item');
+    var isOpen = item.classList.contains('open');
+    document.querySelectorAll('.faq-item').forEach(function(el) { el.classList.remove('open'); });
+    if (!isOpen) item.classList.add('open');
+  }
+
+  function filterFaq(cat, btn) {
+    document.querySelectorAll('.faq-tab').forEach(function(t) {
+      t.style.background = 'var(--surface)';
+      t.style.borderColor = 'var(--rule)';
+      t.style.color = 'var(--on-muted)';
+    });
+    btn.style.background = 'var(--accent)';
+    btn.style.borderColor = 'var(--accent)';
+    btn.style.color = '#0e0f11';
+
+    document.querySelectorAll('.faq-item').forEach(function(item) {
+      if (cat === 'all' || item.getAttribute('data-cat') === cat) {
+        item.style.display = 'block';
+      } else {
+        item.style.display = 'none';
+      }
+    });
+  }
+</script>
 
 <!-- ═══════════════════════════════ PRIVACY ════════════════════════════ -->
 <section class="pad" id="privacy">
@@ -946,8 +1224,8 @@
         <h5>Get it</h5>
         <a href="#download">Download</a>
         <a href="#remote">Install on a TV</a>
-        <a href="https://github.com/nicholasgasior/rivulet/releases">All releases</a>
-        <a href="https://github.com/nicholasgasior/rivulet">Build from source</a>
+        <a href="https://github.com/baigcoder/rivulet/releases">All releases</a>
+        <a href="https://github.com/baigcoder/rivulet">Build from source</a>
       </div>
       <div class="foot-col">
         <h5>Learn</h5>
@@ -958,13 +1236,13 @@
       </div>
       <div class="foot-col">
         <h5>Project</h5>
-        <a href="https://github.com/nicholasgasior/rivulet">GitHub</a>
-        <a href="https://github.com/nicholasgasior/rivulet/issues">Issues</a>
-        <a href="https://github.com/nicholasgasior/rivulet/blob/main/LICENSE">Licence (MIT)</a>
+        <a href="https://github.com/baigcoder/rivulet">GitHub</a>
+        <a href="https://github.com/baigcoder/rivulet/issues">Issues</a>
+        <a href="https://github.com/baigcoder/rivulet/blob/main/LICENSE">Licence (MIT)</a>
       </div>
     </div>
     <div class="foot-bottom">
-      © 2026 Rivulet contributors · <a href="https://github.com/nicholasgasior/rivulet/blob/main/LICENSE">MIT</a>
+      © 2026 Rivulet contributors · <a href="https://github.com/baigcoder/rivulet/blob/main/LICENSE">MIT</a>
       &nbsp;·&nbsp; Metadata by <a href="https://www.themoviedb.org/">TMDB</a>.
       This product uses the TMDB API but is not endorsed or certified by TMDB.
       Rivulet hosts no content, indexes no content, and ships with no sources configured.
@@ -1045,7 +1323,7 @@
     if (label) label.textContent = P[det].name;
 
     var order = [det].concat(Object.keys(P).filter(function (k) { return k !== det; }));
-    var base = 'https://github.com/nicholasgasior/rivulet/releases/latest/download/';
+    var base = 'https://github.com/baigcoder/rivulet/releases/latest/download/';
 
     var btnBox = document.getElementById('dl-buttons');
     if (btnBox) {

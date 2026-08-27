@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { MediaType } from '~/utils/tmdb'
-import { mdiAlertCircleOutline, mdiBookmark, mdiBookmarkOutline, mdiEye, mdiEyeOutline, mdiHeart, mdiHeartOutline, mdiOpenInNew, mdiPlay, mdiStar, mdiYoutube } from '@mdi/js'
+import { mdiAlertCircleOutline, mdiBookmark, mdiBookmarkOutline, mdiClose, mdiEye, mdiEyeOutline, mdiHeart, mdiHeartOutline, mdiOpenInNew, mdiPlay, mdiShieldLockOutline, mdiStar, mdiVolumeHigh, mdiVolumeOff, mdiYoutube } from '@mdi/js'
 
 // Keeps /foo/123 out of here; anything else 404s instead of asking TMDB.
 definePageMeta({
@@ -16,6 +16,119 @@ const type = computed(() => route.params.type as MediaType)
 const id = computed(() => String(route.params.id))
 
 const { data: media, status, error } = useMediaDetail(type, id)
+
+// --- Trailer hero -----------------------------------------------------------
+// The cover plays the YouTube trailer muted on loop while the page is up,
+// Netflix-style. Gated by the reduce-effects switch (TVs default it on, so
+// they keep the calm static backdrop), and the poster/backdrop always paints
+// first — the iframe only fades in once it has something to show.
+const settings = useSettingsStore()
+const videoHidden = ref(false)
+const trailerReady = ref(false)
+const heroVideoOn = ref(false)
+const heroMuted = ref(true)
+
+// --- Parental controls -------------------------------------------------------
+const RATING_ORDER = ['G', 'PG', 'PG-13', 'R', 'NC-17', '']
+const parentalBlocked = computed(() => {
+  if (!settings.parentalEnabled || !media.value?.certification)
+    return false
+  const maxIdx = RATING_ORDER.indexOf(settings.parentalMaxRating)
+  const itemIdx = RATING_ORDER.indexOf(media.value.certification)
+  return itemIdx > maxIdx
+})
+
+const pinDialog = ref(false)
+const pinInput = ref('')
+const pinError = ref('')
+const pinUnlocked = ref(false)
+
+function checkPin() {
+  if (pinInput.value === settings.parentalPin) {
+    pinUnlocked.value = true
+    pinDialog.value = false
+    pinError.value = ''
+  }
+  else {
+    pinError.value = $t('Incorrect PIN')
+  }
+  pinInput.value = ''
+}
+const heroFrame = ref<HTMLIFrameElement | null>(null)
+let heroTimer: ReturnType<typeof setTimeout> | undefined
+let youtubeApiReady = false
+
+const heroEligible = computed(() =>
+  !!media.value?.trailer && !videoHidden.value)
+
+const heroSrc = computed(() => {
+  const key = media.value?.trailer
+  if (!key)
+    return ''
+  return `https://www.youtube-nocookie.com/embed/${key}?autoplay=1&mute=1&enablejsapi=1&playsinline=1`
+})
+
+watch(heroEligible, ok => {
+  clearTimeout(heroTimer)
+  youtubeApiReady = false
+  heroVideoOn.value = false
+  trailerReady.value = false
+  if (ok) {
+    heroVideoOn.value = true
+    trailerReady.value = true
+  }
+}, { immediate: true })
+
+watch(heroFrame, frame => {
+  if (frame) {
+    onHeroLoad()
+  }
+})
+
+onUnmounted(() => {
+  clearTimeout(heroTimer)
+  window.removeEventListener('message', onYouTubeMessage)
+})
+
+/** Force YouTube to start playing via postMessage — autoplay=1 alone is
+ *  silently blocked in Tauri / Electron / some webview environments.
+ *  We wait for the YouTube iframe API 'onReady' event before sending commands. */
+function forceHeroPlay() {
+  const win = heroFrame.value?.contentWindow
+  if (!win || !youtubeApiReady)
+    return
+  const cmd = (func: string) =>
+    win.postMessage(JSON.stringify({ event: 'command', func, args: [] }), '*')
+  cmd('mute')
+  cmd('playVideo')
+}
+
+/** Listen for YouTube iframe API 'onReady' event. */
+function onYouTubeMessage(event: MessageEvent) {
+  if (event.origin !== 'https://www.youtube-nocookie.com' && event.origin !== 'https://www.youtube.com')
+    return
+  const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data
+  if (data?.event === 'onReady') {
+    youtubeApiReady = true
+    forceHeroPlay()
+  }
+}
+
+window.addEventListener('message', onYouTubeMessage)
+
+function onHeroLoad() {
+  trailerReady.value = true
+  // Don't call forceHeroPlay yet - wait for YouTube API ready event
+}
+
+/** YouTube's postMessage API is the only way to unmute a muted autoplay embed. */
+function toggleHeroSound() {
+  heroFrame.value?.contentWindow?.postMessage(
+    JSON.stringify({ event: 'command', func: heroMuted.value ? 'unMute' : 'mute', args: [] }),
+    '*',
+  )
+  heroMuted.value = !heroMuted.value
+}
 
 // This page's art is the app backdrop, for exactly as long as the page is up.
 let mine = 0
@@ -80,10 +193,21 @@ const target = computed(() => {
 /** "S2 E4" — also what tells the template a show has anything playable at all. */
 const targetText = computed(() => target.value ? `S${target.value.season} E${target.value.episode}` : '')
 
+/**
+ * Who this title is, handed straight to the player so the sources can be asked
+ * without waiting on a TMDB round trip first. The player still fetches the
+ * detail itself in the background — this only removes it from the critical path.
+ */
+const handoff = computed(() => ({
+  imdb: media.value?.imdbId ?? undefined,
+  title: media.value?.title,
+  year: media.value?.year,
+}))
+
 const playLink = computed(() =>
   target.value
-    ? watchLink('tv', id.value, target.value.season, target.value.episode)
-    : watchLink('movie', id.value),
+    ? watchLink('tv', id.value, target.value.season, target.value.episode, handoff.value)
+    : watchLink('movie', id.value, undefined, undefined, handoff.value),
 )
 
 // Part-way through is a resume; anything else is a play, including the next
@@ -112,7 +236,125 @@ const playLabel = computed(() => [
       </v-btn>
     </div>
 
+    <!-- Parental controls: blocked content requires a PIN to view. -->
+    <div v-else-if="parentalBlocked && !pinUnlocked" class="flex h-full flex-col items-center justify-center gap-4 px-4 text-center">
+      <v-icon :icon="mdiShieldLockOutline" size="48" class="opacity-60" />
+      <h2 class="text-title-large font-semibold">
+        {{ $t('Content restricted') }}
+      </h2>
+      <p class="max-w-md text-body-medium opacity-70">
+        {{ $t('This content is rated {rating} and exceeds your parental control settings.', { rating: media?.certification }) }}
+      </p>
+      <v-btn v-if="settings.parentalPin" variant="tonal" @click="pinDialog = true">
+        {{ $t('Enter PIN to unlock') }}
+      </v-btn>
+      <v-btn variant="text" :to="localePath('/')">
+        {{ $t('Go home') }}
+      </v-btn>
+
+      <v-dialog v-model="pinDialog" max-width="360">
+        <v-card rounded="xl" class="p-2">
+          <v-card-title class="text-title-medium">
+            {{ $t('Enter PIN') }}
+          </v-card-title>
+          <v-card-text>
+            <v-text-field
+              v-model="pinInput"
+              type="password"
+              :label="$t('PIN')"
+              maxlength="8"
+              density="comfortable"
+              hide-details
+              autofocus
+              @keydown.enter="checkPin"
+            />
+            <div v-if="pinError" class="pt-2 text-body-small text-error">
+              {{ pinError }}
+            </div>
+          </v-card-text>
+          <v-card-actions>
+            <v-spacer />
+            <v-btn variant="text" size="small" @click="pinDialog = false">
+              {{ $t('Cancel') }}
+            </v-btn>
+            <v-btn variant="tonal" size="small" @click="checkPin">
+              {{ $t('Unlock') }}
+            </v-btn>
+          </v-card-actions>
+        </v-card>
+      </v-dialog>
+    </div>
+
     <template v-else>
+      <!-- Trailer-as-cover hero. Backdrop paints immediately; the muted
+           trailer fades in over it ~0.8s later (never if the title has no trailer
+           or the user hid it). -->
+      <section
+        v-if="media"
+        class="relative mb-6 h-[50vh] min-h-[380px] overflow-hidden rounded-b-3xl md:h-[60vh] md:min-h-[460px]"
+      >
+        <img
+          :src="backdropUrl(media.backdrop, 'w1280') ?? ''"
+          :alt="media.title"
+          class="absolute inset-0 h-full w-full object-cover"
+        >
+        <div
+          v-if="heroVideoOn"
+          class="absolute inset-0 overflow-hidden"
+        >
+          <iframe
+            ref="heroFrame"
+            :src="heroSrc"
+            class="absolute left-1/2 top-1/2 h-full w-full -translate-x-1/2 -translate-y-1/2 scale-[1.45]"
+            frameborder="0"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            allowfullscreen
+            tabindex="-1"
+            aria-hidden="true"
+            @load="onHeroLoad"
+          />
+          <div class="absolute inset-0 bg-transparent" />
+        </div>
+        <div class="absolute inset-0 bg-gradient-to-t from-black/95 via-black/40 to-black/20" />
+        <div class="absolute inset-0 bg-gradient-to-r from-black/80 via-transparent to-transparent" />
+
+        <div class="absolute right-4 top-4 z-10 flex items-center gap-2">
+          <button
+            v-tooltip:bottom="heroMuted ? $t('Sound on') : $t('Sound off')"
+            class="grid size-10 place-items-center rounded-full border border-white/20 bg-black/60 text-white opacity-95 backdrop-blur-md transition-all hover:scale-110 hover:bg-black/80 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary"
+            :aria-label="heroMuted ? $t('Sound on') : $t('Sound off')"
+            @click="toggleHeroSound"
+          >
+            <v-icon :icon="heroMuted ? mdiVolumeOff : mdiVolumeHigh" size="18" />
+          </button>
+          <button
+            v-tooltip:bottom="$t('Hide video')"
+            class="grid size-10 place-items-center rounded-full border border-white/20 bg-black/60 text-white opacity-95 backdrop-blur-md transition-all hover:scale-110 hover:bg-black/80 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary"
+            :aria-label="$t('Hide video')"
+            @click="videoHidden = true"
+          >
+            <v-icon :icon="mdiClose" size="18" />
+          </button>
+        </div>
+
+        <div class="absolute inset-x-0 bottom-0 p-4 md:p-8">
+          <!-- max-w-full: a wordmark is a wide image, and `max-w-md` alone is
+               wider than a phone — the title ran off the side of the screen. -->
+          <img
+            v-if="media.logo"
+            :src="logoUrl(media.logo)!"
+            :alt="media.title"
+            class="max-h-14 max-w-full object-contain drop-shadow-[0_2px_24px_rgba(0,0,0,0.7)] md:max-h-20 md:max-w-lg"
+          >
+          <h1 v-else class="text-headline-large font-bold text-white drop-shadow-[0_2px_24px_rgba(0,0,0,0.7)]">
+            {{ media.title }}
+          </h1>
+          <p v-if="media.tagline" class="mt-1 max-w-3xl text-body-medium italic text-white/70">
+            {{ media.tagline }}
+          </p>
+        </div>
+      </section>
+
       <section class="px-4 pb-8 pt-4 md:px-6">
         <div class="flex flex-col gap-6 sm:flex-row sm:items-end">
           <div class="aspect-2/3 w-32 shrink-0 overflow-hidden rounded-2xl shadow-2xl sm:w-44 lg:w-52">
@@ -120,22 +362,6 @@ const playLabel = computed(() => [
           </div>
 
           <div v-if="media" class="flex min-w-0 flex-1 flex-col gap-3">
-            <!-- max-w-full: a wordmark is a wide image, and `max-w-md` alone is
-                 wider than a phone — the title ran off the side of the screen. -->
-            <img
-              v-if="media.logo"
-              :src="logoUrl(media.logo)!"
-              :alt="media.title"
-              class="max-h-16 max-w-full self-start object-contain drop-shadow-[0_2px_24px_rgba(0,0,0,0.6)] sm:max-h-24 sm:max-w-md"
-            >
-            <h1 v-else class="text-headline-large font-bold drop-shadow-[0_2px_24px_rgba(0,0,0,0.6)]">
-              {{ media.title }}
-            </h1>
-
-            <p v-if="media.tagline" class="text-body-medium italic opacity-60">
-              {{ media.tagline }}
-            </p>
-
             <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-body-small opacity-75">
               <span class="flex items-center gap-1 opacity-100">
                 <v-icon :icon="mdiStar" size="14" class="text-amber-400" />
@@ -150,6 +376,13 @@ const playLabel = computed(() => [
 
             <div class="flex flex-wrap gap-1.5">
               <v-chip v-for="genre in media.genres" :key="genre.id" size="small" :text="genre.name" />
+              <v-chip
+                v-if="media.collection"
+                size="small"
+                variant="tonal"
+                :text="media.collection.name"
+                :to="collectionLink(media.collection.id)"
+              />
             </div>
 
             <p class="max-w-3xl text-body-medium opacity-85">
@@ -265,7 +498,7 @@ const playLabel = computed(() => [
             :src="`https://www.youtube-nocookie.com/embed/${media?.trailer}?autoplay=1`"
             class="aspect-video w-full border-0"
             style="zoom: var(--frame-zoom, 1)"
-            allow="autoplay; encrypted-media; fullscreen"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
             allowfullscreen
           />
           <v-card-actions>

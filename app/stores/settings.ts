@@ -5,6 +5,7 @@ import {
   mdiInformationOutline,
   mdiPaletteOutline,
   mdiPowerPlugOutline,
+  mdiShieldLockOutline,
   mdiSubtitlesOutline,
   mdiTranslate,
   mdiWifi,
@@ -12,7 +13,7 @@ import {
 import { key } from '~/brand'
 import { DEFAULT_SOURCE } from '~/theme/presets'
 
-export type SectionKey = 'appearance' | 'language' | 'sources' | 'subtitles' | 'network' | 'storage' | 'account' | 'about'
+export type SectionKey = 'appearance' | 'language' | 'sources' | 'subtitles' | 'network' | 'storage' | 'account' | 'about' | 'parental'
 
 /**
  * The sidebar of the settings layout, in the order it lists them. A `value` is
@@ -31,6 +32,7 @@ export const SECTIONS: { value: SectionKey, title: () => string, icon: string }[
   { value: 'subtitles', title: () => $t('Subtitles'), icon: mdiSubtitlesOutline },
   { value: 'network', title: () => $t('Network'), icon: mdiWifi },
   { value: 'storage', title: () => $t('Storage'), icon: mdiFolderOutline },
+  { value: 'parental', title: () => $t('Parental controls'), icon: mdiShieldLockOutline },
   { value: 'account', title: () => $t('Account'), icon: mdiAccountCircleOutline },
   { value: 'about', title: () => $t('About'), icon: mdiInformationOutline },
 ]
@@ -146,6 +148,22 @@ export const useSettingsStore = defineStore('settings', () => {
    */
   const sources = useLocalStorage<string[]>(key('sources'), [])
 
+  /**
+   * Whether playing a title may start a torrent download at all.
+   *
+   * Off is stream-only mode: the sources are still asked, but only answers
+   * carrying a direct link are considered — nothing touches the engine, the
+   * swarm or the disk. A title no added server can serve then shows an
+   * explanation instead of starting to download.
+   */
+  const allowTorrents = useLocalStorage(key('allowTorrents'), true)
+
+  /**
+   * The TMDB watch region the Streaming pages browse — provider catalogs are
+   * per-country. '' means "take it from the app language" at the point of use.
+   */
+  const watchRegion = useLocalStorage(key('watchRegion'), '')
+
   // --- Film data ---
   /**
    * A TMDB read token of the user's own, used instead of the one the build
@@ -177,5 +195,14 @@ export const useSettingsStore = defineStore('settings', () => {
     subs.value = { ...SUBTITLE_DEFAULTS }
   }
 
-  return { locale, theme, source, themeFromArt, colourFromPicture, customCss, uiScale, reduceEffects, motion, effectiveMotion, sources, tmdbKey, downLimit, upLimit, wifiOnly, downloadDir, subs, resetSubs }
+  // --- Notifications ---
+  const notifyComplete = useLocalStorage(key('notifyComplete'), true)
+  const notifyError = useLocalStorage(key('notifyError'), true)
+
+  // --- Parental controls ---
+  const parentalEnabled = useLocalStorage(key('parentalEnabled'), false)
+  const parentalMaxRating = useLocalStorage(key('parentalMaxRating'), 'R')
+  const parentalPin = useLocalStorage(key('parentalPin'), '')
+
+  return { locale, theme, source, themeFromArt, colourFromPicture, customCss, uiScale, reduceEffects, motion, effectiveMotion, sources, allowTorrents, watchRegion, tmdbKey, downLimit, upLimit, wifiOnly, downloadDir, subs, resetSubs, notifyComplete, notifyError, parentalEnabled, parentalMaxRating, parentalPin }
 })

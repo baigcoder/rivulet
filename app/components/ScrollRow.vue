@@ -5,7 +5,7 @@ import { mdiChevronLeft, mdiChevronRight } from '@mdi/js'
  * A titled horizontal strip. The arrows page it; a wheel with Shift held, or a
  * trackpad sideways, scrolls it natively — there is no scrollbar to grab.
  */
-const props = defineProps<{ title: string, canLoad?: boolean }>()
+const props = defineProps<{ title: string, canLoad?: boolean, /** Deep link for the header's 'See all' chip. */ to?: string }>()
 
 const emit = defineEmits<{ end: [] }>()
 
@@ -82,6 +82,15 @@ function page(direction: 1 | -1) {
       <h2 class="text-title-large">
         {{ title }}
       </h2>
+      <!-- Always visible but quiet: the affordance should be findable without
+           hunting, unlike the paging arrows which are hover-only by design. -->
+      <nuxt-link
+        v-if="to"
+        :to="to"
+        class="text-label-large opacity-55 transition-opacity hover:text-primary hover:opacity-100 focus-visible:text-primary focus-visible:opacity-100"
+      >
+        {{ $t('See all') }}
+      </nuxt-link>
       <v-spacer />
       <!-- Shown while anything in the row has focus too, so a remote can see how
            far the row goes. tabindex="-1" keeps them out of the d-pad's way:
@@ -103,7 +112,7 @@ function page(direction: 1 | -1) {
          the row to it. overscroll-x-contain: reaching the end of a row must not
          hand the rest of the gesture to the page behind it. -->
     <div ref="scroller" class="overflow-x-auto scroll-px-4 overscroll-x-contain md:scroll-px-6 no-scrollbar">
-      <div ref="track" class="w-max flex gap-4 px-4 pb-1 pt-2 md:px-6" :class="{ 'pointer-events-none': gliding }">
+      <div ref="track" class="w-max flex gap-4 px-4 pb-6 pt-2 md:px-6" :class="{ 'pointer-events-none': gliding }">
         <slot />
       </div>
     </div>

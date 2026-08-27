@@ -15,16 +15,20 @@ const watched = computed(() => library.isWatched(props.media))
 // 200-row list isn't 600 Vuetify components. Focus counts as hover, so a remote
 // sees the same row it would with a pointer.
 const hover = ref(false)
+const pressed = ref(false)
 </script>
 
 <template>
   <nuxt-link
     :to="mediaLink(media)"
-    class="group flex select-none items-center gap-3 rounded-xl px-3 py-2 outline-none transition-colors odd:bg-surface-container/30 hover:bg-surface-container-high/70 focus-visible:ring-2 focus-visible:ring-primary"
+    class="group flex select-none items-center gap-3 rounded-xl px-3 py-2 outline-none transition-all duration-200 odd:bg-surface-container/30 hover:bg-surface-container-high/70 focus-visible:ring-2 focus-visible:ring-primary"
+    :style="{ transform: pressed ? 'scale(0.98)' : 'scale(1)' }"
     @mouseenter="hover = true; ui.preview(media)"
-    @mouseleave="hover = false"
+    @mouseleave="hover = false; pressed = false"
     @focus="hover = true; ui.hover(media)"
     @blur="hover = false"
+    @mousedown="pressed = true"
+    @mouseup="pressed = false"
   >
     <div class="relative aspect-2/3 w-14 shrink-0 overflow-hidden rounded-md">
       <media-poster :src="posterUrl(media.poster, 'w154')" :alt="media.title" />

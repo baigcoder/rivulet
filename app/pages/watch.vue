@@ -6,8 +6,10 @@ import {
   mdiAlertCircleOutline,
   mdiArrowLeft,
   mdiDownload,
+  mdiPowerPlugOutline,
   mdiReload,
 } from '@mdi/js'
+import { NoServerStream, releaseKey, serverCandidates } from '~/utils/torrents'
 
 // The player owns the whole window: no app bar, no drawer, no page scroll.
 definePageMeta({ layout: false })
@@ -49,6 +51,49 @@ const torrent = ref<Release | null>(null)
 const torrentId = ref<number | null>(null)
 const src = ref('')
 
+/**
+ * The server streams the sources answered with, best first, and which one is
+ * playing. Only direct-link playback has them: a torrent has no "other server"
+ * to fail over to. The player lists them (server menu, quality menu) and asks
+ * for a different index when one dies or you pick another copy.
+ */
+const candidates = ref<Release[]>([])
+const activeCandidate = ref(0)
+
+/** False until you pick a server by hand — the automatic pick reads "Auto" in the menu. */
+const userPicked = ref(false)
+/** Shown as an OSD toast by the freshly mounted player after an auto-failover. */
+const failoverNotice = ref('')
+
+/** The playing server, for the info bar — the host you added it by. */
+function viaHost(r: Release | null) {
+  return r?.via ? hostOf(r.via) : ''
+}
+
+/**
+ * The Quality menu introduces itself once per title when two or more
+ * resolutions are on offer — cleared by the player the moment it has.
+ */
+const qualityPromptPending = ref(false)
+
+/** Stream-only mode found nothing to stream — a different message, and fix, than a plain failure. */
+const noServerStream = ref(false)
+
+const settings = useSettingsStore()
+
+// Flipping Stream-with-download mid-playback re-resolves playback at once:
+// Off picks up server streams, On lets torrents back in — no re-entering the
+// title, no hunting for a refresh.
+watch(() => settings.allowTorrents, (now, before) => {
+  if (now !== before && startedOnce())
+    start()
+})
+
+/** Did this page already attempt playback? Guards the toggle watcher above. */
+function startedOnce() {
+  return !!(src.value || errorMsg.value || noServerStream.value)
+}
+
 // The downloads store already polls every torrent's stats for the whole app, so
 // a second poll of this one would only ask the engine the same question twice.
 const stats = computed(() => downloads.torrents.find(t => t.id === torrentId.value)?.stats ?? null)
@@ -61,18 +106,25 @@ let generation = 0
 async function start() {
   const mine = ++generation
   errorMsg.value = ''
+  noServerStream.value = false
   src.value = ''
   torrent.value = null
+  candidates.value = []
+  activeCandidate.value = 0
+  userPicked.value = false
+  failoverNotice.value = ''
 
   try {
     // ?magnet=… hand-picks the release and skips the lookup — that's how the
     // downloads page replays something already in the engine, and the only
     // path that works with no sources configured.
     const started = await downloads.start(key.value, {
-      // Waited for only if the sources are actually going to be searched. A copy
-      // already on disk plays with TMDB unreachable, and hanging on this lookup
-      // first is what used to make a downloaded film slow to start.
+      // The detail page already knows who this is: when it hands the lookup
+      // over on the link, the sources are asked without any TMDB round trip.
+      // Waited for only if that param is missing.
       imdbId: async () => {
+        if (route.query.imdb)
+          return String(route.query.imdb)
         step.value = $t('Loading title…')
         await until(() => !!media.value || !!mediaError.value).toBe(true, { timeout: 20_000 })
         return media.value?.imdbId
@@ -85,6 +137,19 @@ async function start() {
       season: season.value,
       episode: episode.value,
       fileIndex: fileIndex.value,
+      allowTorrents: settings.allowTorrents,
+      // Race the sources: first healthy answer plays, slower ones join the
+      // candidate list as they land (see below).
+      fast: true,
+      onAlternativesLate: late => {
+        if (mine !== generation)
+          return
+        const known = new Set(candidates.value.map(releaseKey))
+        candidates.value = [...candidates.value, ...late.filter(r => !known.has(releaseKey(r)))]
+        // Re-ranking may shuffle indexes; the playing URL keeps its place.
+        candidates.value = serverCandidates(candidates.value)
+        activeCandidate.value = Math.max(0, candidates.value.findIndex(r => r.url === src.value))
+      },
       onStep: value => (step.value = value),
     })
 
@@ -101,12 +166,140 @@ async function start() {
 
     step.value = $t('Buffering…')
     src.value = started.url || streamUrl(started.id, started.index)
+
+    // Server playback carries the other answers with it; the player's menus and
+    // the failover below walk this list.
+    candidates.value = started.alternatives ?? []
+    activeCandidate.value = 0
+    qualityPromptPending.value = candidates.value.length > 0
+
+    // A hand-picked link (the release picker's play button) arrives without its
+    // siblings: the picker navigated straight here, so no ranking ever ran. Ask
+    // the sources once more, quietly, so the Server and Quality menus still have
+    // something to list — and a dead link still has somewhere to fail over to.
+    if (started.url && !candidates.value.length)
+      void fetchCandidates(started.url)
   }
   catch (e) {
-    if (mine === generation)
-      errorMsg.value = e instanceof Error ? e.message : String(e)
+    if (mine !== generation)
+      return
+    noServerStream.value = e instanceof NoServerStream
+    errorMsg.value = e instanceof Error ? e.message : String(e)
   }
 }
+
+/**
+ * The playing server died (or you picked another one from the menu): move down
+ * the candidate list and remount the player on that URL. The `:key="src"` on
+ * `<mpv-player>` makes the swap a fresh start, and progress already recorded by
+ * the old mount is what the new one resumes from — so a film continues where it
+ * stopped, on a different server.
+ */
+function useCandidate(index: number, manual = true) {
+  const next = candidates.value[index]
+  if (!next || !next.url || index === activeCandidate.value)
+    return
+  if (manual)
+    userPicked.value = true
+  activeCandidate.value = index
+  torrent.value = next
+  torrentId.value = null
+  errorMsg.value = ''
+  src.value = next.url
+}
+
+/** Playback of the current server failed — silently move to the next one, if any. */
+function onPlaybackFailed() {
+  if (!candidates.value.length)
+    return
+  const following = activeCandidate.value + 1
+  const next = candidates.value[following]
+  if (!next)
+    return
+  // The swap itself is silent; the new player mount announces it (osd-on-start).
+  failoverNotice.value = `${$t('Switched to')} ${hostOf(next.via ?? '') || next.source}`
+  useCandidate(following, false)
+}
+
+/**
+ * The other direct links for this title, for a playback that started without
+ * them. Runs only after the player already has its stream — a miss changes
+ * nothing on screen, it just leaves the menus thinner than they might have been.
+ */
+async function fetchCandidates(playingUrl: string) {
+  const mine = generation
+  try {
+    await until(() => !!media.value || !!mediaError.value).toBe(true, { timeout: 20_000 })
+    const imdbId = media.value?.imdbId
+    if (!imdbId || mine !== generation || candidates.value.length)
+      return
+
+    const found = await findReleases(imdbId, season.value, episode.value)
+    const rest = serverCandidates(found).filter(r => r.url !== playingUrl)
+    if (mine !== generation || !rest.length || candidates.value.length)
+      return
+
+    // The playing link sits at [0] even though it arrived from outside this
+    // search — every menu and the failover walk indexes into one list.
+    const current = torrent.value?.url === playingUrl
+      ? torrent.value!
+      : { name: '', hash: '', url: playingUrl, fileIdx: null, file: null, seeders: 0, size: '', bytes: 0, source: '', quality: '', magnet: '' }
+    candidates.value = [current, ...rest]
+    activeCandidate.value = 0
+    qualityPromptPending.value = candidates.value.length > 1
+  }
+  catch {
+    // Thinner menus are the whole cost; playback itself is already running.
+  }
+}
+
+function goToSources() {
+  leave()
+  navigateTo(localePath('/settings/sources'))
+}
+
+/** Host of a source base URL — "https://addon.example/manifest…" → "addon.example". */
+function hostOf(via: string) {
+  try {
+    return new URL(via).host
+  }
+  catch {
+    return via
+  }
+}
+
+const RESOLUTION = /\b(2160p|4k|1080p|720p|480p)\b/i
+
+/** What to call a candidate in the quality menu — its resolution where one is named. */
+function qualityLabel(r: Release) {
+  const q = r.quality.match(RESOLUTION) ?? r.name.match(RESOLUTION)
+  return ((q?.[1] ?? r.quality) || '').toUpperCase() || $t('Unknown')
+}
+
+/**
+ * What the player's two menus show. Servers list everything; qualities list the
+ * first candidate per resolution, since five copies of 1080p are one choice.
+ */
+const candidateMenus = computed(() => {
+  if (!candidates.value.length)
+    return null
+  const servers = candidates.value.map((r, index) => ({
+    index,
+    // The automatic pick is marked until a hand chooses otherwise.
+    label: r.source || hostOf(r.via ?? '') || $t('Unknown source'),
+    detail: [qualityLabel(r), r.size].filter(Boolean).join(' · '),
+  }))
+  const seen = new Map<string, number>()
+  const qualities: { index: number, label: string, detail?: string }[] = []
+  for (const [index, r] of candidates.value.entries()) {
+    const label = qualityLabel(r)
+    if (!seen.has(label)) {
+      seen.set(label, index)
+      qualities.push({ index, label, detail: [r.source, r.size].filter(Boolean).join(' · ') })
+    }
+  }
+  return { servers, qualities }
+})
 
 // Driven by the route alone — the title resolving is `start`'s business now, so
 // that a downloaded film never waits on TMDB. Fires again if you jump straight
@@ -201,12 +394,34 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
           <template v-if="failure">
             <v-icon :icon="mdiAlertCircleOutline" color="error" size="40" />
             <div class="text-title-large">
-              {{ $t('Nothing to play') }}
+              {{ noServerStream ? $t('Your sources only provide downloads') : $t('Nothing to play') }}
             </div>
             <p class="text-body-medium opacity-70">
               {{ failure }}
             </p>
-            <div class="mt-2 flex gap-2">
+            <!-- Stream-only mode's fixes sit right here: add a server that does
+                 carry the title, or let torrents back in — either restarts. -->
+            <div v-if="noServerStream" class="mt-2 flex flex-wrap justify-center gap-2">
+              <v-btn
+                variant="tonal"
+                color="primary"
+                :prepend-icon="mdiPowerPlugOutline"
+                @click="goToSources"
+              >
+                {{ $t('Add a source') }}
+              </v-btn>
+              <v-btn
+                variant="tonal"
+                :prepend-icon="mdiDownload"
+                @click="settings.allowTorrents = true; start()"
+              >
+                {{ $t('Use Best available') }}
+              </v-btn>
+              <v-btn variant="text" :prepend-icon="mdiArrowLeft" @click="leave">
+                {{ $t('Back') }}
+              </v-btn>
+            </div>
+            <div v-else class="mt-2 flex gap-2">
               <v-btn variant="tonal" :prepend-icon="mdiReload" @click="start">
                 {{ $t('Try again') }}
               </v-btn>
@@ -244,7 +459,7 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
         </div>
       </div>
 
-      <!-- :key so picking a different file/torrent gets a fresh mpv process. -->
+      <!-- :key so picking a different file/torrent/server gets a fresh mpv process. -->
       <mpv-player
         v-else
         :key="src"
@@ -257,7 +472,15 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
         :year="title?.year"
         :season="season"
         :episode="episode"
+        :quality="torrent?.quality"
+        :candidates="candidateMenus"
+        :active-candidate="activeCandidate"
+        :osd-on-start="failoverNotice"
+        :auto-open-quality="qualityPromptPending && !userPicked"
         fullscreen
+        @failed="onPlaybackFailed"
+        @use-candidate="(i: number) => useCandidate(i)"
+        @auto-opened="qualityPromptPending = false"
       >
         <template #start>
           <v-btn icon variant="text" density="comfortable" :title="$t('Back (Esc)')" @click="leave">
@@ -273,6 +496,9 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
               </div>
               <div v-if="torrent" class="truncate text-body-small opacity-50">
                 {{ torrent.quality }} · {{ torrent.size }} · {{ torrent.source }}
+                <template v-if="viaHost(torrent)">
+                  · {{ viaHost(torrent) }}
+                </template>
               </div>
             </div>
 

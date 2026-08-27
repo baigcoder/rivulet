@@ -9,20 +9,22 @@
 // awake — the failure looks like "Android killed us again", not like a typo.
 import assert from 'node:assert'
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
 import { ENGINE } from '../app/utils/torrents'
 
 const kotlin = readFileSync(
-  new URL('../src-tauri/gen/android/app/src/main/java/io/github/rivulet/app/Downloads.kt', import.meta.url),
+  fileURLToPath(new URL('../src-tauri/gen/android/app/src/main/java/io/github/rivulet/rivulet/Downloads.kt', import.meta.url)),
   'utf8',
 )
-const torrents = readFileSync(new URL('../app/utils/torrents.ts', import.meta.url), 'utf8')
-const store = readFileSync(new URL('../app/stores/downloads.ts', import.meta.url), 'utf8')
+const torrents = readFileSync(fileURLToPath(new URL('../app/utils/torrents.ts', import.meta.url)), 'utf8')
+const store = readFileSync(fileURLToPath(new URL('../app/stores/downloads.ts', import.meta.url)), 'utf8')
 const manifest = readFileSync(
-  new URL('../src-tauri/gen/android/app/src/main/AndroidManifest.xml', import.meta.url),
+  fileURLToPath(new URL('../src-tauri/gen/android/app/src/main/AndroidManifest.xml', import.meta.url)),
   'utf8',
 )
 const activity = readFileSync(
-  new URL('../src-tauri/gen/android/app/src/main/java/io/github/rivulet/app/MainActivity.kt', import.meta.url),
+  fileURLToPath(new URL('../src-tauri/gen/android/app/src/main/java/io/github/rivulet/rivulet/MainActivity.kt', import.meta.url)),
   'utf8',
 )
 

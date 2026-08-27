@@ -16,6 +16,8 @@ const props = withDefaults(defineProps<{
   disabled?: boolean
   /** How far one arrow-key press moves it — seconds for seek, percent for volume. */
   step?: number
+  /** Chapter markers to display on the rail. */
+  chapters?: { time: number, title?: string }[]
 }>(), { max: 100, buffered: 0 })
 
 const emit = defineEmits<{
@@ -126,6 +128,13 @@ function onKey(e: KeyboardEvent) {
     >
       <div class="absolute inset-y-0 left-0 bg-white/35" :style="{ width: pct(buffered) }" />
       <div class="absolute inset-y-0 left-0 bg-primary" :style="{ width: pct(modelValue) }" />
+      <div
+        v-for="(ch, i) in chapters"
+        :key="i"
+        class="absolute top-0 h-full w-px bg-white/40"
+        :style="{ left: `calc(7px + (100% - 14px) * ${frac(ch.time)})` }"
+        :title="ch.title || format?.(ch.time) || ''"
+      />
     </div>
 
     <!-- Sized to match VSlider's thumbSize in vuetify.config.ts. Its travel is

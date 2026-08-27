@@ -1,17 +1,23 @@
 <script setup lang="ts">
 import type { FeedRequest } from '~/composables/useMediaFeed'
+import { mdiArrowRight } from '@mdi/js'
 
-const props = defineProps<{ title: string, request: FeedRequest }>()
+const props = defineProps<{ title: string, request: FeedRequest, to?: string }>()
 
 const ui = useUiStore()
 
-const { items, pending, done, loadMore } = useMediaFeed(() => props.request)
+const { items, pending } = useMediaFeed(() => props.request)
+
+/** Cap at 20 items — roughly 3 viewport widths of posters. */
+const MAX_SLIDER_ITEMS = 20
+const visible = computed(() => items.value.slice(0, MAX_SLIDER_ITEMS))
+const hasMore = computed(() => items.value.length > MAX_SLIDER_ITEMS || !pending.value)
 </script>
 
 <template>
-  <scroll-row :title="title" :can-load="!done && !pending" @end="loadMore">
+  <scroll-row :title="title" :to="to">
     <media-card
-      v-for="media in items"
+      v-for="media in visible"
       :key="`${media.type}-${media.id}`"
       :media="media"
       :detail="ui.isDetailed"
@@ -24,12 +30,15 @@ const { items, pending, done, loadMore } = useMediaFeed(() => props.request)
       class="animate-pulse aspect-2/3 shrink-0 rounded-xl bg-surface-container/60"
       :style="{ width: `${ui.cardWidth}px` }"
     />
-    <div
-      v-if="pending && items.length"
-      class="grid shrink-0 place-items-center"
-      :style="{ width: `${ui.cardWidth}px` }"
+    <!-- Show More card: always at the end of the row -->
+    <nuxt-link
+      v-if="to"
+      :to="to"
+      class="shrink-0 flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-outline-variant/40 bg-surface-container/30 transition-all duration-200 hover:border-primary/60 hover:bg-surface-container/60 hover:shadow-lg hover:shadow-primary/5"
+      :style="{ width: `${ui.cardWidth}px`, minHeight: `${Math.round(ui.cardWidth * 1.5) + 40}px` }"
     >
-      <v-progress-circular />
-    </div>
+      <v-icon :icon="mdiArrowRight" size="32" class="text-primary opacity-70" />
+      <span class="text-label-medium font-medium text-primary opacity-80">{{ $t('Show all') }} {{ title }}</span>
+    </nuxt-link>
   </scroll-row>
 </template>

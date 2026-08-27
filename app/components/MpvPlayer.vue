@@ -2,26 +2,34 @@
 import type { PlayerEngine } from '~/utils/htmlvideo'
 import type { Subtitle, SubtitleFile, SubtitleLanguage } from '~/utils/subtitles'
 import type { Media } from '~/utils/tmdb'
-import type { PieceMap } from '~/utils/torrents'
+import type { EngineTorrent, PieceMap } from '~/utils/torrents'
 import {
   mdiAlertCircleOutline,
+  mdiAlphaA,
   mdiAutoFix,
+  mdiBookOpenPageVariant,
+  mdiChartTimeline,
   mdiCheck,
   mdiChevronDown,
   mdiChevronUp,
   mdiClose,
+  mdiCog,
   mdiEarHearing,
   mdiFastForward10,
   mdiFullscreen,
   mdiFullscreenExit,
+  mdiInformationOutline,
   mdiMinus,
   mdiPause,
   mdiPlay,
   mdiPlaySpeed,
   mdiPlus,
   mdiReload,
+  mdiRepeat,
   mdiRewind10,
   mdiSkipNext,
+  mdiSleep,
+  mdiStepForward,
   mdiSubtitles,
   mdiSubtitlesOutline,
   mdiSurroundSound,
@@ -35,6 +43,7 @@ import { listen } from '@tauri-apps/api/event'
 
 /** Remembered, so the next episode comes up in the same language — Plex-style. */
 import { key } from '~/brand'
+import { inCredits, inIntro, progressKey, saveCredits, saveIntro } from '~/utils/library'
 
 // Player for the embedded native mpv engine. mpv renders into a surface that
 // the Rust backend keeps glued to `boxEl` below (see `player_start` /
@@ -75,6 +84,36 @@ const props = defineProps<{
   year?: string
   season?: number
   episode?: number
+  /**
+   * The other server streams the sources answered with, offered as two menus:
+   * `servers` names every candidate (and is the failover list), `qualities`
+   * points at one candidate per resolution. Both entries carry the candidate
+   * index to hand back on `use-candidate`. Absent for torrent playback, where
+   * there is no other server to be had.
+   */
+  candidates?: {
+    servers: { index: number, label: string, detail?: string }[]
+    qualities: { index: number, label: string, detail?: string }[]
+  } | null
+  /** Which candidate is playing — the check mark in both menus. */
+  activeCandidate?: number
+  /**
+   * One-shot notice shown as an OSD right after this mount starts playing —
+   * how a failover says "Switched to …" without anyone opening a menu.
+   */
+  osdOnStart?: string
+  /** While true, the Quality menu opens itself once two or more qualities exist. */
+  autoOpenQuality?: boolean
+  /** Quality label from the source, e.g. "4k DV | HDR". Used to detect HDR content. */
+  quality?: string
+}>()
+
+const emit = defineEmits<{
+  /** The stream died and another candidate exists to try — the parent swaps URLs. Reason flags why, for the last-candidate message. */
+  failed: [reason?: 'stub' | 'dead']
+  useCandidate: [index: number]
+  /** The self-introducing Quality menu fired; the parent can stop offering it. */
+  autoOpened: []
 }>()
 
 /**
@@ -201,6 +240,80 @@ const scrubbing = ref(false)
 /** While the volume slider is being dragged, the poll must not fight it back. */
 const volumeHeld = ref(false)
 const errorMsg = ref('')
+/** The current stream was a debrid stub clip (quota/key error) — remembered for the failover verdict. */
+const stubSeen = ref(false)
+/** Chapter list fetched once when the file opens. */
+const chapters = ref<{ time: number, title?: string }[]>([])
+const currentChapter = ref(-1)
+
+// ---------------------------------------------------------------------------
+// A-B Loop
+// ---------------------------------------------------------------------------
+/** null = not looping, { a, b } = loop between these two points. */
+const abLoop = ref<{ a: number, b: number } | null>(null)
+
+function setLoopA() {
+  if (!started.value)
+    return
+  abLoop.value = { a: position.value, b: abLoop.value?.b ?? position.value + 10 }
+  osd($t('Loop A: {time}', { time: fmt(position.value) }))
+}
+
+function setLoopB() {
+  if (!started.value || !abLoop.value)
+    return
+  if (position.value <= abLoop.value.a) {
+    abLoop.value = null
+    osd($t('Loop cancelled'))
+    return
+  }
+  abLoop.value.b = position.value
+  osd($t('Loop: {a} → {b}', { a: fmt(abLoop.value.a), b: fmt(position.value) }))
+}
+
+function clearLoop() {
+  abLoop.value = null
+  osd($t('Loop off'))
+}
+
+// ---------------------------------------------------------------------------
+// Network Stats Overlay
+// ---------------------------------------------------------------------------
+/** The stream is the local engine's, rather than a link a source resolved itself. */
+const fromEngine = computed(() => props.src.startsWith(ENGINE))
+
+const showStats = ref(false)
+const statsData = ref<{ download: string, upload: string, peers: number, progress: number } | null>(null)
+
+async function pollStats() {
+  if (!showStats.value || !fromEngine.value)
+    return
+  const [, id] = props.src.match(/\/torrents\/(\d+)\/stream/) ?? []
+  if (!id)
+    return
+  try {
+    const res = await fetch(`${ENGINE}/torrents/${id}`)
+    if (!res.ok)
+      return
+    const t = await res.json() as EngineTorrent
+    const live = t.stats?.live
+    const total = t.stats?.total_bytes || 1
+    statsData.value = {
+      download: live?.download_speed.human_readable ?? '0 B/s',
+      upload: live?.upload_speed.human_readable ?? '0 B/s',
+      peers: live?.snapshot.peer_stats.live ?? 0,
+      progress: Math.round((t.stats?.progress_bytes ?? 0) / total * 100),
+    }
+  }
+  catch { /* engine offline mid-poll — ignore */ }
+}
+
+const { pause: stopStatsPoll, resume: startStatsPoll } = useIntervalFn(pollStats, 1000, { immediate: false })
+watch(showStats, v => {
+  if (v)
+    startStatsPoll()
+  else stopStatsPoll()
+})
 
 // ---------------------------------------------------------------------------
 // mpv IPC
@@ -748,18 +861,323 @@ async function autoSync() {
 }
 
 // ---------------------------------------------------------------------------
-// Menus. One panel, three lists — a popup would need its own cutout and a
+// Menus. One panel, five lists — a popup would need its own cutout and a
 // Vuetify overlay renders outside this root, where the tracker can't see it.
 // ---------------------------------------------------------------------------
-type Menu = '' | 'subs' | 'audio' | 'speed'
+type Menu = '' | 'subs' | 'audio' | 'speed' | 'server' | 'quality' | 'sleep' | 'chapter' | 'video'
 const menu = ref<Menu>('')
 const MENU_TITLES: Record<Exclude<Menu, ''>, () => string> = {
   subs: () => $t('Subtitles'),
   audio: () => $t('Audio'),
   speed: () => $t('Playback speed'),
+  server: () => $t('Server'),
+  quality: () => $t('Quality'),
+  sleep: () => $t('Sleep timer'),
+  chapter: () => $t('Chapters'),
+  video: () => $t('Video & Audio'),
 }
+
+// ---------------------------------------------------------------------------
+// Sleep timer
+// ---------------------------------------------------------------------------
+const sleepTimerRemaining = ref<number | null>(null)
+let sleepTimerHandle: ReturnType<typeof setTimeout> | null = null
+let sleepTimerInterval: ReturnType<typeof setInterval> | null = null
+
+const SLEEP_PRESETS = [15, 30, 45, 60] as const
+
+function setSleepTimer(minutes: number | null) {
+  clearSleepTimer()
+  if (!minutes || minutes <= 0) {
+    sleepTimerRemaining.value = null
+    menu.value = ''
+    osd($t('Sleep timer off'))
+    return
+  }
+  sleepTimerRemaining.value = minutes * 60
+  osd($t('Sleep timer: {minutes} min', { minutes }))
+  menu.value = ''
+
+  sleepTimerHandle = setTimeout(() => {
+    if (started.value && !paused.value) {
+      paused.value = true
+      ipc(['set_property', 'pause', true])
+      saveProgress()
+    }
+    clearSleepTimer()
+    osd($t('Sleep timer: pausing'), 3000)
+  }, minutes * 60 * 1000)
+
+  sleepTimerInterval = setInterval(() => {
+    if (sleepTimerRemaining.value && sleepTimerRemaining.value > 0)
+      sleepTimerRemaining.value--
+  }, 1000)
+}
+
+function sleepEndOfEpisode() {
+  clearSleepTimer()
+  osd($t('Sleep timer: end of episode'))
+  menu.value = ''
+  // Will be checked in the poll loop — if position is near duration, pause.
+  sleepTimerRemaining.value = -1 // sentinel for "end of episode" mode
+}
+
+function clearSleepTimer() {
+  if (sleepTimerHandle) {
+    clearTimeout(sleepTimerHandle)
+    sleepTimerHandle = null
+  }
+  if (sleepTimerInterval) {
+    clearInterval(sleepTimerInterval)
+    sleepTimerInterval = null
+  }
+  sleepTimerRemaining.value = null
+}
+
+function sleepTimerText(minutes: number | null) {
+  if (!minutes)
+    return ''
+  const m = Math.floor(minutes / 60)
+  const s = minutes % 60
+  return m > 0 ? `${m}:${String(s).padStart(2, '0')}` : `0:${String(s).padStart(2, '0')}`
+}
+
+// ---------------------------------------------------------------------------
+// Skip Intro / Credits
+// ---------------------------------------------------------------------------
+const skipKey = computed(() => {
+  if (!props.media)
+    return ''
+  return progressKey(props.media.type, props.media.id, props.season ?? 0, props.episode ?? 0)
+})
+
+const introSkip = computed(() => {
+  if (!skipKey.value || !started.value)
+    return null
+  return inIntro(skipKey.value, position.value)
+})
+
+const creditsReached = computed(() => {
+  if (!skipKey.value || !started.value)
+    return false
+  return inCredits(skipKey.value, position.value, duration.value)
+})
+
+// ---------------------------------------------------------------------------
+// Auto-play next episode countdown
+// ---------------------------------------------------------------------------
+const autoPlayCountdown = ref<number | null>(null)
+let autoPlayHandle: ReturnType<typeof setTimeout> | null = null
+
+function startAutoPlayCountdown() {
+  if (!props.next || autoPlayCountdown.value !== null)
+    return
+  autoPlayCountdown.value = 15
+  const tick = () => {
+    if (autoPlayCountdown.value === null || autoPlayCountdown.value <= 0) {
+      clearAutoPlayCountdown()
+      return
+    }
+    autoPlayCountdown.value--
+    if (autoPlayCountdown.value <= 0) {
+      clearAutoPlayCountdown()
+      // Navigate via router
+      navigateTo(props.next!.to)
+    }
+    else {
+      autoPlayHandle = setTimeout(tick, 1000)
+    }
+  }
+  autoPlayHandle = setTimeout(tick, 1000)
+}
+
+function clearAutoPlayCountdown() {
+  autoPlayCountdown.value = null
+  if (autoPlayHandle) {
+    clearTimeout(autoPlayHandle)
+    autoPlayHandle = null
+  }
+}
+
+// Start countdown when credits are reached (only if there's a next episode)
+watch(creditsReached, v => {
+  if (v && props.next)
+    startAutoPlayCountdown()
+})
+
+// ---------------------------------------------------------------------------
+// HDR Tone Mapping
+// ---------------------------------------------------------------------------
+type ToneMapping = 'auto' | 'sdr' | 'hdr-passthrough'
+
+const toneMapping = ref<ToneMapping>('auto')
+
+const TONE_MAPPING_PRESETS: { value: ToneMapping, label: () => string }[] = [
+  { value: 'auto', label: () => $t('Auto') },
+  { value: 'sdr', label: () => $t('SDR (tone-map)') },
+  { value: 'hdr-passthrough', label: () => $t('HDR passthrough') },
+]
+
+/** Detect HDR / Dolby Vision from the source quality label. */
+const HDR_RE = /\bhdr\b|\bdolby\s*vision\b|\bdv\b|\bhlg\b|\bpq\b/i
+const isHdrContent = computed(() => HDR_RE.test(props.quality ?? ''))
+/** Detect Dolby specifically (Atmos, Vision, TrueHD). */
+const DOLBY_RE = /\bdolby\b|\batmos\b|\btruehd\b|\bdolby\s*digital\b/i
+const isDolbyContent = computed(() => DOLBY_RE.test(props.quality ?? ''))
+
+// Auto-apply HDR passthrough when HDR content is detected and preset is still Auto.
+watch(isHdrContent, hdr => {
+  if (hdr && toneMapping.value === 'auto' && native && started.value)
+    applyToneMapping('hdr-passthrough')
+}, { immediate: true })
+
+function applyToneMapping(preset: ToneMapping) {
+  toneMapping.value = preset
+  if (!native || !started.value)
+    return
+  switch (preset) {
+    case 'auto':
+      ipc(['set_property', 'tone-mapping', 'auto'])
+      ipc(['set_property', 'gamut-mapping-mode', 'auto'])
+      ipc(['set_property', 'target-prim', 'auto'])
+      ipc(['set_property', 'target-trc', 'auto'])
+      ipc(['set_property', 'target-colorspace-hint', false])
+      break
+    case 'sdr':
+      ipc(['set_property', 'tone-mapping', 'hable'])
+      ipc(['set_property', 'gamut-mapping-mode', 'perceptual'])
+      ipc(['set_property', 'target-prim', 'auto'])
+      ipc(['set_property', 'target-trc', 'auto'])
+      ipc(['set_property', 'target-colorspace-hint', false])
+      break
+    case 'hdr-passthrough':
+      ipc(['set_property', 'tone-mapping', 'clip'])
+      ipc(['set_property', 'gamut-mapping-mode', 'auto'])
+      ipc(['set_property', 'target-prim', 'bt.2020'])
+      ipc(['set_property', 'target-trc', 'pq'])
+      ipc(['set_property', 'target-colorspace-hint', true])
+      break
+  }
+  osd($t('HDR: {preset}', { preset: TONE_MAPPING_PRESETS.find(p => p.value === preset)?.label() ?? preset }))
+}
+
+// ---------------------------------------------------------------------------
+// Audio Output Configuration
+// ---------------------------------------------------------------------------
+type AudioChannel = 'auto' | 'stereo' | 'surround' | 'passthrough'
+
+const audioChannel = ref<AudioChannel>('auto')
+const audioDeviceInfo = ref<{ ao: string, devices: string[], channels: string }>({ ao: '', devices: [], channels: '' })
+
+const AUDIO_CHANNEL_PRESETS: { value: AudioChannel, label: () => string, desc: () => string }[] = [
+  { value: 'auto', label: () => $t('Auto'), desc: () => $t('Let the system decide') },
+  { value: 'stereo', label: () => $t('Stereo'), desc: () => $t('Headphones / two speakers') },
+  { value: 'surround', label: () => $t('Surround'), desc: () => $t('AVR / soundbar / spatial audio') },
+  { value: 'passthrough', label: () => $t('Passthrough'), desc: () => $t('Bitstream to external decoder') },
+]
+
+function applyAudioChannel(preset: AudioChannel) {
+  audioChannel.value = preset
+  if (!native || !started.value)
+    return
+  switch (preset) {
+    case 'auto':
+      ipc(['set_property', 'audio-channels', 'auto-safe'])
+      ipc(['set_property', 'audio-passthrough', false])
+      break
+    case 'stereo':
+      ipc(['set_property', 'audio-channels', 'stereo'])
+      ipc(['set_property', 'audio-passthrough', false])
+      break
+    case 'surround':
+      ipc(['set_property', 'audio-channels', 'auto'])
+      ipc(['set_property', 'audio-passthrough', false])
+      break
+    case 'passthrough':
+      ipc(['set_property', 'audio-channels', 'auto'])
+      ipc(['set_property', 'audio-passthrough', true])
+      break
+  }
+  osd($t('Audio output: {preset}', { preset: AUDIO_CHANNEL_PRESETS.find(p => p.value === preset)?.label() ?? preset }))
+}
+
+async function readAudioInfo() {
+  if (!native)
+    return
+  const p = await readProps<{ 'current-ao': string, 'audio-device-list': string[], 'audio-channels': string }>(['current-ao', 'audio-device-list', 'audio-channels'])
+  if (p) {
+    audioDeviceInfo.value = {
+      ao: p['current-ao'] ?? '',
+      devices: Array.isArray(p['audio-device-list']) ? p['audio-device-list'] : [],
+      channels: p['audio-channels'] ?? '',
+    }
+  }
+}
+
+/** Intro marking state: null = not marking, number = the recorded start time. */
+const markingIntro = ref<number | null>(null)
+
+function markIntroStart() {
+  markingIntro.value = position.value
+  osd($t('Intro start marked. Seek to the end of the intro and press "Mark end".'), 4000)
+  menu.value = ''
+}
+
+function markIntroEnd() {
+  if (markingIntro.value === null || !skipKey.value)
+    return
+  saveIntro(skipKey.value, markingIntro.value, position.value)
+  osd($t('Intro saved. A "Skip Intro" button will appear during this section.'), 3000)
+  markingIntro.value = null
+}
+
+function markCreditsStart() {
+  if (!skipKey.value)
+    return
+  saveCredits(skipKey.value, position.value)
+  osd($t('Credits start marked. The next episode will be offered from here.'), 3000)
+  menu.value = ''
+}
+
+function skipIntro() {
+  if (introSkip.value)
+    seekTo(introSkip.value.target)
+}
+
 const menuTitle = computed(() => menu.value ? MENU_TITLES[menu.value]() : '')
+
+/** Labelled pill for the Server / Quality selectors — text, not an icon, since "which one am I on" is their whole point. */
+const PILL = computed(() => `inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/6 px-3 font-medium transition-colors duration-120 hover:bg-white/14 disabled:pointer-events-none disabled:opacity-30 ${touch.value ? 'h-10 px-4' : 'h-8'} ${menu.value === 'server' || menu.value === 'quality' ? '!border-primary !text-primary' : ''}`)
+
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
+
+/** Server playback only — the failover list and the resolution shortcuts. */
+const hasCandidates = computed(() => !!props.candidates?.servers?.length)
+
+/** Labels for the two pills: what's playing right now, or nothing before candidates land. */
+const activeQuality = computed(() => props.candidates?.qualities?.find(q => q.index === props.activeCandidate))
+const activeServer = computed(() => props.candidates?.servers?.[Math.max(0, props.activeCandidate ?? 0)])
+
+/**
+ * When the parent says so, the Quality menu introduces itself the first time
+ * two or more resolutions exist — "must show quality to select" made literal.
+ * Once per mount; a manual close or pick ends the introduction for good.
+ */
+let qualityIntroduced = false
+watch(
+  () => [props.autoOpenQuality, props.candidates?.qualities?.length] as const,
+  ([open, count]) => {
+    if (open && !qualityIntroduced && (count ?? 0) > 1 && started.value) {
+      menu.value = 'quality'
+      qualityIntroduced = true
+      emit('autoOpened')
+    }
+  },
+)
+
+function usePill(menuName: 'server' | 'quality') {
+  openMenu(menuName)
+}
 
 function openMenu(name: Exclude<Menu, ''>) {
   menu.value = menu.value === name ? '' : name
@@ -774,6 +1192,61 @@ function setSpeed(v: number) {
   speed.value = v
   ipc(['set_property', 'speed', v])
   osd(v === 1 ? $t('Normal speed') : $t('Speed {rate}×', { rate: v }))
+}
+
+function skipChapter(delta: number) {
+  if (!chapters.value.length)
+    return
+  const idx = currentChapter.value + delta
+  if (idx >= 0 && idx < chapters.value.length) {
+    const ch = chapters.value[idx]!
+    seekTo(ch.time)
+    osd(ch.title || $t('Chapter {number}', { number: idx + 1 }))
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Frame Advance (when paused)
+// ---------------------------------------------------------------------------
+function frameStep() {
+  if (!started.value || !paused.value)
+    return
+  if (native) {
+    ipc(['frame-step'])
+  }
+  else {
+    const v = videoEl.value
+    if (v)
+      v.currentTime += 1 / 30 // ~30fps frame step
+  }
+  osd($t('Frame advance'))
+}
+
+function frameStepBack() {
+  if (!started.value || !paused.value)
+    return
+  if (native) {
+    ipc(['frame-back-step'])
+  }
+  else {
+    const v = videoEl.value
+    if (v)
+      v.currentTime -= 1 / 30
+  }
+  osd($t('Frame back'))
+}
+
+// ---------------------------------------------------------------------------
+// Subtitle Quick Adjustments (size, opacity)
+// ---------------------------------------------------------------------------
+function nudgeSubSize(delta: number) {
+  settings.subs.size = Math.max(20, Math.min(100, settings.subs.size + delta))
+  osd($t('Subtitle size: {size}', { size: settings.subs.size }))
+}
+
+function nudgeSubOpacity(delta: number) {
+  settings.subs.background = Math.max(0, Math.min(1, Math.round((settings.subs.background + delta) * 100) / 100))
+  osd($t('Subtitle opacity: {pct}', { pct: Math.round(settings.subs.background * 100) }))
 }
 
 // ---------------------------------------------------------------------------
@@ -975,9 +1448,6 @@ function waitForBox(timeoutMs = 4000): Promise<DOMRect | null> {
 // necessity, since start/stopPlayer below drive it) is safe.
 const { pause: stopPoll, resume: startPoll } = useIntervalFn(poll, 200, { immediate: false })
 
-/** The stream is the local engine's, rather than a link a source resolved itself. */
-const fromEngine = computed(() => props.src.startsWith(ENGINE))
-
 /**
  * librqbit answers the stream endpoint with HTTP 500 for a short window after a
  * torrent is (re-)added, while it initialises. mpv does not retry — it fails the
@@ -988,7 +1458,22 @@ const fromEngine = computed(() => props.src.startsWith(ENGINE))
  * serving or it isn't, and an expired one should say so rather than spend a
  * minute looking like it's buffering.
  */
-async function waitForStream(url: string, timeoutMs = 60000) {
+/**
+ * Is this URL serving bytes right now?
+ *
+ * Three verdicts, because "can't check" is not "dead":
+ * - `ok` — open it.
+ * - `!ok` on a **local** torrent stream — keep waiting out the window; peers
+ *   need time before the engine can answer.
+ * - `!ok` on a **remote** link that answered HTTP ≥400 — the server itself has
+ *   spoken: dead, fail over.
+ * - `!ok` with `unknown` set — the fetch *threw*, which is CORS or an
+ *   unroutable host. The browser refuses to say which, and media elements
+ *   don't need the permission `fetch` wants — Real-Debrid links are exactly
+ *   this case. Unverifiable ≠ dead: the caller opens it anyway and lets the
+ *   player be the judge.
+ */
+async function waitForStream(url: string, timeoutMs = 60000): Promise<{ ok: boolean, status: number, unknown?: boolean, stub?: boolean }> {
   const local = url.startsWith(ENGINE)
   const deadline = Date.now() + (local ? timeoutMs : 15000)
   let status = 0
@@ -998,17 +1483,31 @@ async function waitForStream(url: string, timeoutMs = 60000) {
       status = res.status
       // Release the connection so librqbit isn't left holding a reader.
       await res.arrayBuffer().catch(() => {})
-      if (res.ok || res.status === 206)
-        return { ok: true, status }
-      // Waiting out a status only makes sense for the engine warming up. A
-      // remote host answering 403 or 404 has already given its answer.
-      if (!local && status >= 400 && status < 500)
+      if (res.ok || res.status === 206) {
+        // Some debrid resolvers answer a dead quota with a tiny placeholder
+        // clip ("limits_exceeded.mp4") — valid video bytes, wrong movie. The
+        // final URL after redirects and the full size from Content-Range give
+        // it away without downloading anything.
+        const finalUrl = res.url || ''
+        const total = Number(res.headers.get('content-range')?.split('/')[1] ?? NaN)
+        const stubLike = /limits?[_.-]?exceeded|(?:not|un)?available[_-]?clip|error[_-]?clip/i.test(finalUrl)
+          || (Number.isFinite(total) && total > 0 && total < 3 * 1024 ** 2)
+        return { ok: true, status, stub: stubLike }
+      }
+      // An explicit status from a remote host is final — waiting out a 404
+      // only delays the failover. The local engine is different: statuses
+      // while it warms up are just "not yet".
+      if (!local && status >= 400)
+        return { ok: false, status }
+      if (local && status >= 400 && status < 500)
         return { ok: false, status }
     }
     catch {
+      if (!local)
+        return { ok: false, unknown: true, status: 0 }
       // Engine momentarily unreachable — keep waiting.
     }
-    await new Promise(r => setTimeout(r, 400))
+    await new Promise(r => setTimeout(r, 150))
   }
   return { ok: false, status }
 }
@@ -1047,10 +1546,23 @@ async function startPlayer() {
     }
 
     // Never hand mpv a URL that isn't serving yet — it exits instantly on a 500.
+    // A torrent stream gets the patient window (peers need time to appear); a
+    // direct link is a server that answers or doesn't — six seconds and the
+    // candidate list moves on.
     waiting.value = true
-    const probe = await waitForStream(props.src)
+    let probe = await waitForStream(props.src, fromEngine.value ? 60_000 : 6_000)
     waiting.value = false
-    if (!probe.ok) {
+    // A stub clip is a *verdict* — quota gone or key rejected. Fail over like
+    // any dead server, and remember why for the last-one-standing message.
+    if (probe.ok && probe.stub && !fromEngine.value) {
+      const stubbed = { ...probe, ok: false, stub: true, unknown: false, status: probe.status }
+      probe = stubbed
+      stubSeen.value = true
+    }
+    // `unknown` (the probe was CORS-blocked from even asking) falls through to
+    // the opener: media elements don't need the permission fetch wants, so the
+    // player's own exit is the only verdict that counts for such links.
+    if (!probe.ok && !probe.unknown) {
       if (fromEngine.value) {
         errorMsg.value = probe.status
           ? $t('The torrent stream isn\'t ready yet (engine replied HTTP {status}). It may still be fetching metadata from peers.', { status: probe.status })
@@ -1058,10 +1570,16 @@ async function startPlayer() {
       }
       else {
         // Debrid links are minted per request and go stale; searching again is
-        // what mints a fresh one, so that's what the message has to ask for.
-        errorMsg.value = probe.status
-          ? $t('The link this source gave answered HTTP {status}. It may have expired — search the sources again for a fresh one.', { status: probe.status })
-          : $t('The link this source gave could not be reached.')
+        // what mints a fresh one, so that's what the message has to ask for —
+        // unless another server is queued, in which case the message never
+        // shows: the player moves to the next one instead.
+        if (streamDied(probe.stub ? 'stub' : undefined))
+          return
+        errorMsg.value = probe.stub
+          ? $t('This source answered with an error clip instead of the title — its debrid quota is exhausted or its key was rejected.')
+          : probe.status
+            ? $t('The link this source gave answered HTTP {status}. It may have expired — search the sources again for a fresh one.', { status: probe.status })
+            : $t('The link this source gave could not be reached.')
       }
       return
     }
@@ -1115,24 +1633,53 @@ async function startPlayer() {
       ipc(['keybind', 'WHEEL_DOWN', 'add volume -5'])
     }
 
+    // Apply HDR tone mapping and read audio device info.
+    applyToneMapping(toneMapping.value)
+    void readAudioInfo()
+
+    // Tracks as soon as the file is open — a dual-audio server stream should
+    // show its Audio menu on the first chrome raise, not one poll later.
+    void refreshTracks()
+
     startPoll()
   }
   catch (e) {
     started.value = false
     errorMsg.value = String(e)
+    // A URL the backend refused outright is a dead server, same as a probe
+    // miss — hand the failure to whoever holds the candidate list.
+    if (streamDied())
+      errorMsg.value = ''
   }
   finally {
     busy.value = false
   }
+
+  // One-shot per mount: how an automatic failover announces itself.
+  if (props.osdOnStart && !errorMsg.value)
+    osd(props.osdOnStart, 2600)
+}
+
+/**
+ * The current stream just proved unusable. With other servers queued, say so
+ * and let the parent advance; its return answers whether anyone is left.
+ */
+function streamDied(reason?: 'stub' | 'dead') {
+  if (!hasCandidates.value)
+    return false
+  emit('failed', reason)
+  return true
 }
 
 async function stopPlayer() {
   stopPoll()
-  // `final`: the file really is being put down, not just ticked. That is the
-  // difference between "watching this" and "watched this far" to a sync.
   saveProgress()
   started.value = false
   lastKey = ''
+  clearSleepTimer()
+  clearAutoPlayCountdown()
+  chapters.value = []
+  currentChapter.value = -1
   if (native)
     await invoke('player_stop').catch(() => {})
   else
@@ -1176,6 +1723,10 @@ async function poll() {
       }
       else {
         errorMsg.value = st.log_tail?.trim() || (native ? $t('mpv exited unexpectedly.') : $t('Playback stopped unexpectedly.'))
+        // A server stream that stops mid-film is the server dying, not the
+        // film ending — same failover as a link that never opened.
+        if (!fromEngine.value)
+          streamDied(stubSeen.value ? 'stub' : undefined)
       }
       return
     }
@@ -1229,6 +1780,19 @@ async function poll() {
   if (!scrubbing.value && typeof p['time-pos'] === 'number' && Math.abs(p['time-pos'] - position.value) > 0.4)
     position.value = p['time-pos']
 
+  // Track which chapter we're in for the chapter menu highlight.
+  if (chapters.value.length) {
+    let ch = -1
+    for (let i = chapters.value.length - 1; i >= 0; i--) {
+      const chapter = chapters.value[i]
+      if (chapter && position.value >= chapter.time) {
+        ch = i
+        break
+      }
+    }
+    currentChapter.value = ch
+  }
+
   // mpv's window swallows pointer events over the video, so its own cursor
   // position is the only way to notice the mouse moving there.
   const m = p['mouse-pos']
@@ -1244,6 +1808,20 @@ async function poll() {
     lastMouse = key
   }
 
+  // A-B loop: when reaching B, jump back to A.
+  if (abLoop.value && position.value >= abLoop.value.b) {
+    seekTo(abLoop.value.a)
+  }
+
+  // Sleep timer: end-of-episode mode — pause when we reach the end.
+  if (sleepTimerRemaining.value === -1 && duration.value > 0 && position.value >= duration.value - 2) {
+    paused.value = true
+    ipc(['set_property', 'pause', true])
+    saveProgress()
+    clearSleepTimer()
+    osd($t('Sleep timer: pausing'), 3000)
+  }
+
   // Tracks only exist once mpv has the file open, and a duration is the first
   // sign of that.
   if (!loaded && duration.value > 0) {
@@ -1251,6 +1829,11 @@ async function poll() {
     applySubtitleStyle()
     await refreshTracks()
     applyPreferredSub()
+    // Fetch chapter list once — it doesn't change during playback.
+    if (native) {
+      const ch = await readProps<{ 'chapter-list': { title: string, time: number }[] }>(['chapter-list'])
+      chapters.value = ch?.['chapter-list'] ?? []
+    }
     const saved = props.media ? library.resumeAt(props.media, props.season, props.episode) : 0
     if (saved) {
       seekTo(saved)
@@ -1597,9 +2180,6 @@ function speedStep(delta: number) {
 const KEYS: Record<string, () => void> = {
   ' ': togglePlay,
   'k': togglePlay,
-  // OK on a remote, with nothing focused for the browser to click: bring the
-  // chrome up and put the cursor on play, rather than toggling something the
-  // screen gives no sign of. A second press then pauses.
   'Enter': () => focusChrome(),
   'ArrowLeft': () => seekBy(-5),
   'ArrowRight': () => seekBy(5),
@@ -1611,13 +2191,30 @@ const KEYS: Record<string, () => void> = {
   'f': toggleFullscreen,
   'c': toggleSubs,
   's': () => openMenu('subs'),
-  // mpv's own subtitle-delay pair, kept because muscle memory expects them.
   'z': () => nudgeDelay(-0.1),
   'Z': () => nudgeDelay(0.1),
   '[': () => setSpeed(speedStep(-1)),
   ']': () => setSpeed(speedStep(1)),
   'Home': () => seekTo(0),
   'End': () => seekTo(Math.max(0, duration.value - 5)),
+  'n': () => skipChapter(1),
+  'p': () => skipChapter(-1),
+  // Frame advance (pause only)
+  '.': frameStep,
+  ',': frameStepBack,
+  // A-B loop
+  'i': setLoopA,
+  'o': setLoopB,
+  'I': clearLoop,
+  // Stats toggle
+  'd': () => { showStats.value = !showStats.value },
+  // Video & Audio menu
+  'v': () => openMenu('video'),
+  // Subtitle quick adjust
+  'r': () => nudgeSubSize(4),
+  'R': () => nudgeSubSize(-4),
+  't': () => nudgeSubOpacity(0.1),
+  'T': () => nudgeSubOpacity(-0.1),
 }
 
 /**
@@ -1858,6 +2455,8 @@ onBeforeUnmount(() => {
   nativeMouse.forEach(off => off())
   stopPoll()
   saveProgress()
+  clearSleepTimer()
+  clearAutoPlayCountdown()
   clearTimeout(hoverTimer)
   dropThumbs()
   if (osdTimer)
@@ -1938,6 +2537,40 @@ defineExpose({ osd })
       {{ osdText }}
     </div>
 
+    <!-- A-B loop indicator -->
+    <div
+      v-if="abLoop && ui"
+      data-cut
+      class="absolute left-4 top-16 flex items-center gap-2 rounded-lg border border-primary/40 bg-black/70 px-3 py-1.5 text-label-small text-primary backdrop-blur-sm"
+    >
+      <v-icon :icon="mdiAlphaA" size="14" />
+      <span class="tabular-nums">{{ fmt(abLoop.a) }} → {{ fmt(abLoop.b) }}</span>
+    </div>
+
+    <!-- Network stats overlay -->
+    <transition
+      enter-active-class="transition-opacity duration-150"
+      leave-active-class="transition-opacity duration-150"
+      enter-from-class="opacity-0"
+      leave-to-class="opacity-0"
+    >
+      <div
+        v-if="showStats && statsData && ui"
+        data-cut
+        class="absolute left-4 top-28 flex flex-col gap-1 rounded-lg border border-white/10 bg-black/75 px-3 py-2 text-label-small backdrop-blur-sm"
+      >
+        <div class="flex items-center gap-2 opacity-70">
+          <v-icon :icon="mdiInformationOutline" size="12" />
+          <span class="text-label-xs uppercase opacity-50">{{ $t('Network') }}</span>
+        </div>
+        <div class="flex gap-4">
+          <span>↓ {{ statsData.download }}</span>
+          <span>↑ {{ statsData.upload }}</span>
+        </div>
+        <span>{{ $t('{peers} peers', { peers: statsData.peers }) }}</span>
+      </div>
+    </transition>
+
     <!-- Double-tap seek, made visible. Only ever on the <video> path, which is
          the only one whose picture is a DOM element the taps can land on, so
          there is no cutout to punch for it. -->
@@ -1974,6 +2607,15 @@ defineExpose({ osd })
         <slot name="start" />
         <div class="min-w-0 flex-1">
           <slot name="info" />
+        </div>
+        <!-- HDR / Dolby badges, auto-detected from the source quality label. -->
+        <div v-if="isHdrContent" class="flex shrink-0 items-center gap-1.5">
+          <span class="rounded bg-amber-500/20 px-1.5 py-0.5 text-label-small font-bold text-amber-400">
+            HDR
+          </span>
+          <span v-if="isDolbyContent" class="rounded bg-sky-500/20 px-1.5 py-0.5 text-label-small font-bold text-sky-400">
+            DV
+          </span>
         </div>
       </header>
     </transition>
@@ -2040,14 +2682,22 @@ defineExpose({ osd })
         <div class="text-title-small">
           {{ $t('Playback finished') }}
         </div>
+        <div v-if="autoPlayCountdown !== null" class="text-body-small opacity-70">
+          {{ $t('Next episode in {seconds}s', { seconds: autoPlayCountdown }) }}
+        </div>
         <div class="flex gap-2">
-          <!-- First in the DOM so it is where the d-pad lands, and where Enter
-               goes without moving: after an episode, next is what you want. -->
-          <nuxt-link v-if="next" :class="BTN" :to="next.to">
+          <nuxt-link v-if="next" :class="BTN" :to="next.to" @click="clearAutoPlayCountdown">
             <v-icon :icon="mdiSkipNext" size="18" /> {{ next.label }}
           </nuxt-link>
-          <button :class="BTN" :disabled="busy" @click="startPlayer">
+          <button :class="BTN" :disabled="busy" @click="clearAutoPlayCountdown(); startPlayer()">
             <v-icon :icon="mdiReload" size="18" /> {{ $t('Play again') }}
+          </button>
+          <button
+            v-if="autoPlayCountdown !== null"
+            :class="BTN"
+            @click="clearAutoPlayCountdown"
+          >
+            {{ $t('Cancel') }}
           </button>
         </div>
       </template>
@@ -2114,6 +2764,167 @@ defineExpose({ osd })
             <p v-if="!audioTracks.length" :class="NOTE">
               {{ $t('This file has one audio track.') }}
             </p>
+          </template>
+
+          <!-- The servers this title was found on, best first. Picking one is
+               also how a dead stream is recovered by hand; a dying one is left
+               for on its own (see `streamDied`). -->
+          <template v-else-if="menu === 'server'">
+            <p :class="MENU_GROUP">
+              {{ $t('Source') }}
+            </p>
+            <button
+              v-for="(s, i) in props.candidates?.servers ?? []"
+              :key="s.index"
+              :class="[MENU_ROW, i === activeCandidate && 'text-primary']"
+              @click="emit('useCandidate', s.index); menu = ''"
+            >
+              <span class="min-w-0 flex-1">
+                <span class="block truncate font-medium">{{ s.label }}</span>
+                <span v-if="s.detail" class="block truncate text-label-small opacity-50">{{ s.detail }}</span>
+              </span>
+              <v-icon v-if="i === activeCandidate" :icon="mdiCheck" size="16" />
+            </button>
+            <p v-if="!(props.candidates?.servers?.length)" :class="NOTE">
+              {{ $t('No other servers available.') }}
+            </p>
+          </template>
+
+          <!-- One entry per resolution the servers carry: switching quality is
+               switching to that server's copy, which every backend can do. -->
+          <template v-else-if="menu === 'quality'">
+            <p :class="MENU_GROUP">
+              {{ $t('Quality') }}
+            </p>
+            <button
+              v-for="q in props.candidates?.qualities ?? []"
+              :key="q.index"
+              :class="[MENU_ROW, q.index === activeCandidate && 'text-primary']"
+              @click="emit('useCandidate', q.index); menu = ''"
+            >
+              <span class="min-w-0 flex-1">
+                <span class="block truncate font-medium">{{ q.label }}</span>
+                <span v-if="q.detail" class="block truncate text-label-small opacity-50">{{ q.detail }}</span>
+              </span>
+              <v-icon v-if="q.index === activeCandidate" :icon="mdiCheck" size="16" />
+            </button>
+            <p v-if="(props.candidates?.qualities?.length ?? 0) < 2" :class="NOTE">
+              {{ $t('Your sources offer one quality for this title.') }}
+            </p>
+          </template>
+
+          <template v-else-if="menu === 'sleep'">
+            <button
+              v-for="m in SLEEP_PRESETS"
+              :key="m"
+              :class="[MENU_ROW, sleepTimerRemaining && sleepTimerRemaining > 0 && Math.abs(sleepTimerRemaining - m * 60) < 30 && 'text-primary']"
+              @click="setSleepTimer(m)"
+            >
+              <span>{{ $t('{minutes} minutes', { minutes: m }) }}</span>
+              <v-icon v-if="sleepTimerRemaining && sleepTimerRemaining > 0 && Math.abs(sleepTimerRemaining - m * 60) < 30" :icon="mdiCheck" size="16" />
+            </button>
+            <button
+              :class="[MENU_ROW, sleepTimerRemaining === -1 && 'text-primary']"
+              @click="sleepEndOfEpisode"
+            >
+              <span>{{ $t('End of episode') }}</span>
+              <v-icon v-if="sleepTimerRemaining === -1" :icon="mdiCheck" size="16" />
+            </button>
+            <button
+              v-if="sleepTimerRemaining"
+              :class="MENU_ROW"
+              @click="setSleepTimer(null)"
+            >
+              <span class="text-error">{{ $t('Cancel timer') }}</span>
+            </button>
+            <div class="border-t border-white/9 mt-1 pt-1">
+              <button v-if="!markingIntro" :class="MENU_ROW" @click="markIntroStart">
+                <span>{{ $t('Mark intro start') }}</span>
+              </button>
+              <button v-else :class="MENU_ROW" @click="markIntroEnd">
+                <span class="text-primary">{{ $t('Mark intro end') }}</span>
+              </button>
+              <button :class="MENU_ROW" @click="markCreditsStart">
+                <span>{{ $t('Mark credits start') }}</span>
+              </button>
+            </div>
+          </template>
+
+          <template v-else-if="menu === 'chapter'">
+            <button
+              v-for="(ch, i) in chapters"
+              :key="i"
+              :class="[MENU_ROW, currentChapter === i && 'text-primary']"
+              @click="seekTo(ch.time); menu = ''"
+            >
+              <span class="truncate">{{ ch.title || $t('Chapter {number}', { number: i + 1 }) }}</span>
+              <span class="text-label-small opacity-50 tabular-nums">{{ fmt(ch.time) }}</span>
+            </button>
+            <p v-if="!chapters.length" :class="NOTE">
+              {{ $t('No chapters found in this file.') }}
+            </p>
+          </template>
+
+          <template v-else-if="menu === 'video'">
+            <template v-if="isHdrContent || isDolbyContent">
+              <div class="flex items-center gap-2 px-2.5 py-2">
+                <span v-if="isHdrContent" class="rounded bg-amber-500/20 px-1.5 py-0.5 text-label-small font-bold text-amber-400">
+                  HDR
+                </span>
+                <span v-if="isDolbyContent" class="rounded bg-sky-500/20 px-1.5 py-0.5 text-label-small font-bold text-sky-400">
+                  Dolby
+                </span>
+                <span v-if="quality" class="truncate text-label-small opacity-50">{{ quality }}</span>
+              </div>
+            </template>
+
+            <template v-if="native">
+              <p :class="MENU_GROUP">
+                {{ $t('HDR Tone Mapping') }}
+              </p>
+              <button
+                v-for="p in TONE_MAPPING_PRESETS"
+                :key="p.value"
+                :class="[MENU_ROW, toneMapping === p.value && 'text-primary']"
+                @click="applyToneMapping(p.value)"
+              >
+                <span>{{ p.label() }}</span>
+                <v-icon v-if="toneMapping === p.value" :icon="mdiCheck" size="16" />
+              </button>
+            </template>
+            <p v-else :class="NOTE">
+              {{ $t('HDR tone mapping is only available with mpv.') }}
+            </p>
+
+            <template v-if="native">
+              <p :class="MENU_GROUP">
+                {{ $t('Audio Output') }}
+              </p>
+              <button
+                v-for="p in AUDIO_CHANNEL_PRESETS"
+                :key="p.value"
+                :class="[MENU_ROW, audioChannel === p.value && 'text-primary']"
+                @click="applyAudioChannel(p.value)"
+              >
+                <span class="min-w-0 flex-1">
+                  <span class="block">{{ p.label() }}</span>
+                  <span class="block text-label-small opacity-45">{{ p.desc() }}</span>
+                </span>
+                <v-icon v-if="audioChannel === p.value" :icon="mdiCheck" size="16" />
+              </button>
+
+              <p v-if="audioDeviceInfo.ao || audioDeviceInfo.channels" :class="NOTE">
+                <template v-if="audioDeviceInfo.ao">
+                  {{ $t('Output: {driver}', { driver: audioDeviceInfo.ao }) }}
+                </template>
+                <template v-if="audioDeviceInfo.ao && audioDeviceInfo.channels">
+                  ·
+                </template>
+                <template v-if="audioDeviceInfo.channels">
+                  {{ $t('Channels: {layout}', { layout: audioDeviceInfo.channels }) }}
+                </template>
+              </p>
+            </template>
           </template>
 
           <template v-else>
@@ -2235,6 +3046,34 @@ defineExpose({ osd })
               </p>
 
               <p :class="MENU_GROUP">
+                {{ $t('Appearance') }}
+              </p>
+              <div class="flex items-center justify-between px-2.5 py-1">
+                <span class="text-label-large opacity-70">{{ $t('Size') }}</span>
+                <div class="flex items-center gap-0.5">
+                  <button class="!h-7 !min-w-7" :class="ICO" @click="nudgeSubSize(-4)">
+                    <v-icon :icon="mdiMinus" size="14" />
+                  </button>
+                  <span class="w-10 text-center text-label-large tabular-nums">{{ settings.subs.size }}</span>
+                  <button class="!h-7 !min-w-7" :class="ICO" @click="nudgeSubSize(4)">
+                    <v-icon :icon="mdiPlus" size="14" />
+                  </button>
+                </div>
+              </div>
+              <div class="flex items-center justify-between px-2.5 py-1">
+                <span class="text-label-large opacity-70">{{ $t('Background') }}</span>
+                <div class="flex items-center gap-0.5">
+                  <button class="!h-7 !min-w-7" :class="ICO" @click="nudgeSubOpacity(-0.1)">
+                    <v-icon :icon="mdiMinus" size="14" />
+                  </button>
+                  <span class="w-10 text-center text-label-large tabular-nums">{{ Math.round(settings.subs.background * 100) }}%</span>
+                  <button class="!h-7 !min-w-7" :class="ICO" @click="nudgeSubOpacity(0.1)">
+                    <v-icon :icon="mdiPlus" size="14" />
+                  </button>
+                </div>
+              </div>
+
+              <p :class="MENU_GROUP">
                 {{ $t('Timing') }}
               </p>
               <div class="flex items-center justify-between px-2.5 py-1">
@@ -2285,6 +3124,16 @@ defineExpose({ osd })
       </section>
     </transition>
 
+    <!-- Skip Intro button — appears when the playhead is inside the marked intro. -->
+    <button
+      v-if="introSkip && ui"
+      data-cut
+      class="absolute right-6 bottom-28 z-10 rounded-lg border border-white/20 bg-white/12 px-4 py-2 text-label-large backdrop-blur-sm transition-colors hover:bg-white/20"
+      @click="skipIntro"
+    >
+      {{ $t('Skip Intro') }}
+    </button>
+
     <transition
       :enter-active-class="SLIDE"
       :leave-active-class="SLIDE"
@@ -2309,6 +3158,7 @@ defineExpose({ osd })
           :thumb="thumb"
           :approx="approx"
           :step="10"
+          :chapters="chapters"
           :disabled="!started || !duration"
           @update:model-value="position = $event"
           @scrub="scrubbing = $event"
@@ -2336,6 +3186,15 @@ defineExpose({ osd })
             <button v-tooltip:top="$t('Forward 10s (l)')" :class="ICO" :disabled="!started" @click="seekBy(10)">
               <v-icon :icon="mdiFastForward10" size="22" />
             </button>
+            <button
+              v-if="paused"
+              v-tooltip:top="$t('Frame forward (.)')"
+              :class="ICO"
+              :disabled="!started"
+              @click="frameStep"
+            >
+              <v-icon :icon="mdiStepForward" size="22" />
+            </button>
           </template>
 
           <!-- The slider only unrolls while the group is hovered, so the bar
@@ -2361,13 +3220,34 @@ defineExpose({ osd })
 
           <span v-if="remaining" class="opacity-55" :class="TIME">{{ remaining }}</span>
 
+          <!-- Server / Quality as labelled pills: "which one am I on" is their
+               whole point, so the current pick is the button text. -->
+          <button
+            v-if="activeQuality"
+            v-tooltip:top="$t('Quality')"
+            :class="PILL"
+            @click="usePill('quality')"
+          >
+            {{ activeQuality.label }}
+            <v-icon :icon="mdiChevronDown" size="14" />
+          </button>
+          <button
+            v-if="activeServer"
+            v-tooltip:top="$t('Source')"
+            class="max-w-44"
+            :class="PILL"
+            @click="usePill('server')"
+          >
+            <span class="truncate">{{ activeServer.label }}</span>
+            <v-icon :icon="mdiChevronDown" size="14" class="shrink-0" />
+          </button>
           <button
             v-tooltip:top="$t('Playback speed ([ / ])')"
             class="px-2" :class="[ICO, menu === 'speed' && '!text-primary !opacity-100']"
             :disabled="!started"
             @click="openMenu('speed')"
           >
-            <v-icon v-if="speed === 1" :icon="mdiPlaySpeed" size="20" />
+            <v-icon v-if="speed === 1" :icon="mdiPlaySpeed" size="22" />
             <span v-else class="text-label-large tabular-nums">{{ speed }}×</span>
           </button>
           <button
@@ -2376,7 +3256,16 @@ defineExpose({ osd })
             :class="[ICO, menu === 'audio' && '!text-primary !opacity-100']"
             @click="openMenu('audio')"
           >
-            <v-icon :icon="mdiSurroundSound" size="20" />
+            <v-icon :icon="mdiSurroundSound" size="22" />
+          </button>
+          <button
+            v-if="chapters.length"
+            v-tooltip:top="$t('Chapters')"
+            :class="[ICO, menu === 'chapter' && '!text-primary !opacity-100']"
+            :disabled="!started"
+            @click="openMenu('chapter')"
+          >
+            <v-icon :icon="mdiBookOpenPageVariant" size="22" />
           </button>
           <button
             v-tooltip:top="$t('Subtitles (s)')"
@@ -2386,8 +3275,45 @@ defineExpose({ osd })
           >
             <v-icon :icon="subsOn ? mdiSubtitles : mdiSubtitlesOutline" size="22" />
           </button>
-          <button v-tooltip:top="windowFullscreen ? $t('Exit fullscreen (f)') : $t('Fullscreen (f)')" :class="ICO" @click="toggleFullscreen">
+          <button
+            v-tooltip:top="sleepTimerRemaining ? $t('Sleep timer: {time}', { time: sleepTimerText(sleepTimerRemaining) }) : $t('Sleep timer')"
+            :class="[ICO, menu === 'sleep' && '!text-primary !opacity-100', sleepTimerRemaining && sleepTimerRemaining > 0 && '!text-primary']"
+            :disabled="!started"
+            @click="openMenu('sleep')"
+          >
+            <v-icon :icon="mdiSleep" size="22" />
+          </button>
+          <button
+            v-tooltip:top="$t('Video & Audio')"
+            :class="[ICO, menu === 'video' && '!text-primary !opacity-100', (toneMapping !== 'auto' || audioChannel !== 'auto') && '!text-primary']"
+            :disabled="!started"
+            @click="openMenu('video')"
+          >
+            <v-icon :icon="mdiCog" size="22" />
+          </button>
+          <button
+            v-tooltip:top="windowFullscreen ? $t('Exit fullscreen (f)') : $t('Fullscreen (f)')"
+            :class="ICO"
+            @click="toggleFullscreen"
+          >
             <v-icon :icon="windowFullscreen ? mdiFullscreenExit : mdiFullscreen" size="22" />
+          </button>
+          <button
+            v-tooltip:top="$t('A-B loop (i/o/I)')"
+            :class="[ICO, abLoop && '!text-primary']"
+            :disabled="!started"
+            @click="abLoop ? clearLoop() : setLoopA()"
+          >
+            <v-icon :icon="mdiRepeat" size="22" />
+          </button>
+          <button
+            v-if="!touch"
+            v-tooltip:top="$t('Network stats (d)')"
+            :class="[ICO, showStats && '!text-primary']"
+            :disabled="!fromEngine"
+            @click="showStats = !showStats"
+          >
+            <v-icon :icon="mdiChartTimeline" size="22" />
           </button>
         </div>
       </footer>

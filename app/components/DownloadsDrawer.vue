@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { mdiArrowLeft, mdiArrowUp, mdiMagnetOn, mdiTrayArrowDown } from '@mdi/js'
+import { mdiArrowLeft, mdiArrowUp, mdiFileImport, mdiMagnetOn, mdiTrayArrowDown } from '@mdi/js'
 
 const ui = useUiStore()
 const downloads = useDownloadsStore()
@@ -34,6 +34,44 @@ async function add() {
   finally {
     busy.value = false
   }
+}
+
+/** Import a .torrent file from disk via a native file picker or hidden input. */
+async function importTorrentFile() {
+  // Try the Tauri dialog first (native file picker on desktop).
+  try {
+    const picked = await useTauriDialogOpen({
+      multiple: true,
+      filters: [{ name: 'Torrent', extensions: ['torrent'] }],
+      title: $t('Import .torrent file'),
+    })
+    if (!picked)
+      return
+    const files = Array.isArray(picked) ? picked : [picked]
+    for (const p of files) {
+      const bytes = await useTauriFsReadFile(p)
+      await addTorrentBytes(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes))
+    }
+    await downloads.refresh()
+    return
+  }
+  catch {
+    // Not running under Tauri or dialog failed — fall through to browser input.
+  }
+
+  // Browser fallback: hidden <input type="file">.
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.torrent'
+  input.multiple = true
+  input.onchange = async () => {
+    for (const file of Array.from(input.files ?? [])) {
+      const bytes = new Uint8Array(await file.arrayBuffer())
+      await addTorrentBytes(bytes)
+    }
+    await downloads.refresh()
+  }
+  input.click()
 }
 
 function mbps(value: number) {
@@ -83,6 +121,9 @@ function mbps(value: number) {
         </div>
         <v-btn :prepend-icon="mdiMagnetOn" block variant="tonal" @click="adding = true">
           {{ $t('Add magnet') }}
+        </v-btn>
+        <v-btn :prepend-icon="mdiFileImport" block variant="tonal" @click="importTorrentFile">
+          {{ $t('Import .torrent') }}
         </v-btn>
       </div>
     </template>

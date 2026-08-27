@@ -139,6 +139,13 @@ export interface Release {
   /** "1080p", "720p", "4k DV | HDR", … as labelled by the source. */
   quality: string
   magnet: string
+  /**
+   * Which configured source answered with this release, as the base URL the
+   * fan-out asked. Set by `findReleases`, and it is the addon's identity in
+   * the player's server menu — the "origin" on the stats line above is only
+   * whatever label that addon printed.
+   */
+  via?: string
 }
 
 interface RawStream {
@@ -199,6 +206,16 @@ export function toRelease(raw: RawStream): Release | null {
     // The source's own label line: "<source name>\n1080p".
     quality: ((raw.name ?? '').split('\n')[1] ?? '').trim(),
     magnet: raw.infoHash ? magnetFor(raw.infoHash, name, raw.sources) : '',
+  }
+}
+
+/** The host of a configured source URL — the identity the UI shows. */
+export function sourceHost(via: string): string {
+  try {
+    return new URL(via).host
+  }
+  catch {
+    return via
   }
 }
 
@@ -274,6 +291,29 @@ export function isAwkward(t: Release) {
 }
 
 /**
+ * The list, best first. `pickBest` is this plus `[0]`, and the player's server
+ * and quality menus are the whole of it — so both places order candidates
+ * identically by construction.
+ *
+ * When `allowTorrents` is true, torrents are preferred over direct links so the
+ * torrent engine downloads progressively while you watch (offline copy).
+ * When false (stream-only mode), only direct links are considered anyway.
+ */
+export function ranked(list: Release[], maxBytes = MAX_BYTES, compatible = false, allowTorrents = false): Release[] {
+  const limit = Math.min(MAX_BYTES, maxBytes)
+  return [...list]
+    // Neither test applies to a link: there is no swarm to have seeders, and
+    // nothing is written to the disk the budget is protecting.
+    .filter(t => !!t.url || (t.seeders > 0 && (!t.bytes || t.bytes <= limit)))
+    .sort((a, b) =>
+      rank(a) - rank(b)
+      || (compatible ? Number(isAwkward(a)) - Number(isAwkward(b)) : 0)
+      || Number(isBloated(a)) - Number(isBloated(b))
+      || (allowTorrents ? Number(!!a.url) - Number(!!b.url) : Number(!a.url) - Number(!b.url))
+      || b.seeders - a.seeders)
+}
+
+/**
  * Best quality tier we'd actually stream, then the copies of it that aren't
  * bloated, and within those the most seeders. `maxBytes` is the device's storage
  * budget: a release that can't fit on the disk is no use however good it is.
@@ -286,25 +326,51 @@ export function isAwkward(t: Release) {
  * the wrong trade now that the check is accurate, since anything it demotes is
  * something this device genuinely cannot play at any resolution.
  *
- * A direct link wins the last tiebreak before seeders: same picture, same
- * bitrate, but it starts at once and nothing has to be kept on the disk.
+ * When `allowTorrents` is true, torrents are preferred over direct links so the
+ * torrent engine downloads progressively while you watch (offline copy).
+ * When false, a direct link wins the last tiebreak before seeders: same picture,
+ * same bitrate, but it starts at once and nothing has to be kept on the disk.
  */
-export function pickBest(list: Release[], maxBytes = MAX_BYTES, compatible = false): Release | null {
-  const limit = Math.min(MAX_BYTES, maxBytes)
-  return [...list]
-    // Neither test applies to a link: there is no swarm to have seeders, and
-    // nothing is written to the disk the budget is protecting.
-    .filter(t => !!t.url || (t.seeders > 0 && (!t.bytes || t.bytes <= limit)))
-    .sort((a, b) =>
-      rank(a) - rank(b)
-      || (compatible ? Number(isAwkward(a)) - Number(isAwkward(b)) : 0)
-      || Number(isBloated(a)) - Number(isBloated(b))
-      || Number(!a.url) - Number(!b.url)
-      || b.seeders - a.seeders)[0] ?? null
+export function pickBest(list: Release[], maxBytes = MAX_BYTES, compatible = false, allowTorrents = false): Release | null {
+  return ranked(list, maxBytes, compatible, allowTorrents)[0] ?? null
 }
 
-async function searchOne(base: string, path: string): Promise<Release[]> {
-  const res = await fetch(base + path, { signal: AbortSignal.timeout(20000) })
+/**
+ * Stream-only mode's answer when there is nothing to stream. Distinct from a
+ * plain error because the watch page offers "turn torrents back on" beside it —
+ * which is the one fix, and the toggle lives one setting away.
+ */
+export class NoServerStream extends Error {
+  /**
+   * Hosts of the sources that answered with downloads only — shown by name on
+   * the explainer, so "add a Stremio URL" has something concrete to point at.
+   */
+  readonly viaNames: string[]
+  constructor(message: string, viaNames: string[] = []) {
+    super(message)
+    this.viaNames = viaNames
+  }
+}
+
+/**
+ * Just the direct links, best first: what playback resolves through when
+ * torrent downloads are switched off, and the pool the player's server and
+ * quality menus draw from either way.
+ *
+ * When `allowTorrents` is true, torrents at the same quality tier are included
+ * so the failover/alternatives menus show torrents too.
+ */
+export function serverCandidates(releases: Release[], maxBytes = MAX_BYTES, compatible = false, allowTorrents = false): Release[] {
+  const pool = allowTorrents ? releases : releases.filter(t => !!t.url)
+  return ranked(pool, maxBytes, compatible, allowTorrents)
+}
+
+/** Patient default; racing mode shortens it so a dead server fails over in seconds. */
+const SOURCE_TIMEOUT = 20_000
+const RACE_TIMEOUT = 8_000
+
+async function searchOne(base: string, path: string, timeoutMs = SOURCE_TIMEOUT): Promise<Release[]> {
+  const res = await fetch(base + path, { signal: AbortSignal.timeout(timeoutMs) })
   if (!res.ok)
     throw new Error(`${base} answered HTTP ${res.status}`)
 
@@ -314,33 +380,114 @@ async function searchOne(base: string, path: string): Promise<Release[]> {
 
 /**
  * Everything the configured sources know for a movie, or for one episode of a
- * show. Sources are searched together and their results merged: one being
- * down or slow costs its results, not the search.
+ * show.
+ *
+ * Two speeds, one machinery. The patient search waits for every server so the
+ * caller sees one complete answer; the racing search cuts loose as soon as the
+ * first healthy server answers (plus a short grace window), hands those back,
+ * and streams anything slower into `onLate` afterwards — which is how playback
+ * starts on the fastest server instead of the slowest source's deadline.
  */
-export async function findReleases(imdbId: string, season = 0, episode = 0): Promise<Release[]> {
+
+function searchPath(imdbId: string, season: number, episode: number) {
+  const series = season > 0 && episode > 0
+  const id = series ? `${imdbId}:${season}:${episode}` : imdbId
+  return `/stream/${series ? 'series' : 'movie'}/${id}.json`
+}
+
+async function runSources(
+  path: string,
+  wait: { mode: 'all' } | { mode: 'first', graceMs: number },
+): Promise<{ releases: Release[], rest: Promise<Release[]> }> {
   if (!sources.length)
     throw new Error(NO_SOURCES())
 
-  const series = season > 0 && episode > 0
-  const id = series ? `${imdbId}:${season}:${episode}` : imdbId
-  const path = `/stream/${series ? 'series' : 'movie'}/${id}.json`
+  // Racing mode shortens the per-source leash: a server that hasn't answered
+  // in eight seconds is a dead candidate as far as this playback is concerned.
+  const timeoutMs = wait.mode === 'first' ? RACE_TIMEOUT : SOURCE_TIMEOUT
+  const tasks = sources.map(base => searchOne(base, path, timeoutMs))
+  const batches: (Release[] | null)[] = sources.map(() => null)
+  let anyAnswered = false
+  let anyFailed = false
 
-  const results = await Promise.allSettled(sources.map(base => searchOne(base, path)))
-  const failed = results.flatMap(r => r.status === 'rejected' ? [String(r.reason)] : [])
-  // One source down out of several is not worth an error. All of them is — and
-  // it reads the same as "nothing found" unless we say so.
-  if (failed.length === results.length)
-    throw new Error($t('No source answered — {reason}', { reason: failed[0]! }))
+  const settled = tasks.map(async (task, i) => {
+    try {
+      batches[i] = await task
+      anyAnswered = true
+    }
+    catch {
+      anyFailed = true
+    }
+  })
 
-  // Two sources drawing on the same origins hand back the same release twice;
-  // first one wins, so the order sources were added in is the preference order.
+  // First healthy answer starts the clock; everyone else gets `graceMs` to
+  // join before the window shuts. In 'all' mode the window never shuts early.
+  const firstAnswer = settled[0]!.then(() => {}, () => {})
+  for (const s of settled.slice(1)) s.then(() => {}, () => {})
+  const opened = wait.mode === 'first'
+    ? Promise.race([firstAnswer, ...settled])
+    : Promise.all(settled)
+  await Promise.race([
+    opened.then(() => new Promise(r => setTimeout(r, wait.mode === 'first' ? wait.graceMs : 0))),
+    Promise.all(tasks.map(t => t.catch(() => []))),
+  ])
+
+  // Merge whatever landed, in the order sources were added — that order is the
+  // preference order, and it also decides whose copy a duplicate belongs to.
   const seen = new Map<string, Release>()
-  for (const t of results.flatMap(r => r.status === 'fulfilled' ? r.value : [])) {
-    if (!seen.has(releaseKey(t)))
-      seen.set(releaseKey(t), t)
+  const takeLanded = () => {
+    for (let i = 0; i < sources.length; i++) {
+      const batch = batches[i]
+      if (!batch)
+        continue
+      batches[i] = null
+      for (const t of batch) {
+        if (!seen.has(releaseKey(t))) {
+          seen.set(releaseKey(t), t)
+          t.via = sources[i]
+        }
+      }
+    }
   }
+  takeLanded()
 
-  return [...seen.values()]
+  if (!seen.size && !anyAnswered && anyFailed)
+    throw new Error($t('No source answered.'))
+
+  const releasedKeys = new Set(seen.keys())
+  const rest = Promise.all(tasks.map(t => t.catch(() => []))).then(() => {
+    takeLanded()
+    return [...seen.values()].filter(t => !releasedKeys.has(releaseKey(t)))
+  })
+
+  return { releases: [...seen.values()], rest }
+}
+
+/** Patient: every source answers (or times out) before anything is returned. */
+export async function findReleases(imdbId: string, season = 0, episode = 0): Promise<Release[]> {
+  const { releases } = await runSources(searchPath(imdbId, season, episode), { mode: 'all' })
+  return releases
+}
+
+/**
+ * Racing: resolve with the first wave of answers, stream the stragglers into
+ * `onLate` as they land (already deduped against what was handed back).
+ */
+export async function findReleasesFast(
+  imdbId: string,
+  season: number,
+  episode: number,
+  options: { graceMs?: number, onLate?: (releases: Release[]) => void } = {},
+): Promise<Release[]> {
+  const { releases, rest } = await runSources(
+    searchPath(imdbId, season, episode),
+    { mode: 'first', graceMs: options.graceMs ?? 600 },
+  )
+  void rest.then(late => {
+    if (late.length)
+      options.onLate?.(late)
+  })
+  return releases
 }
 
 // --- Local engine -------------------------------------------------------------
@@ -418,6 +565,36 @@ export async function addTorrent(magnet: string) {
   }
   if (added.id == null)
     throw new Error($t('The torrent engine accepted the magnet but gave it no id.'))
+  return { ...added, id: added.id }
+}
+
+/**
+ * Import a raw .torrent file by sending its bytes to the engine. librqbit
+ * accepts both magnet links and raw .torrent data as the POST body.
+ */
+export async function addTorrentBytes(bytes: Uint8Array) {
+  const folder = downloadDir ? `&output_folder=${encodeURIComponent(downloadDir)}` : ''
+  let res: Response
+  const buf = new ArrayBuffer(bytes.byteLength)
+  new Uint8Array(buf).set(bytes)
+  try {
+    res = await fetch(`${ENGINE}/torrents?overwrite=true${folder}`, {
+      method: 'POST',
+      body: buf,
+      headers: { 'content-type': 'application/x-bittorrent' },
+    })
+  }
+  catch {
+    throw new Error($t('Torrent engine offline. Launch the native desktop or Android app to play torrents.'))
+  }
+  if (!res.ok)
+    throw new Error($t('Torrent engine said {status}: {reason}', { status: res.status, reason: await res.text() }))
+  const added = await res.json() as {
+    id: number | null
+    details: { name: string | null, info_hash: string, files: EngineFile[] | null }
+  }
+  if (added.id == null)
+    throw new Error($t('The torrent engine accepted the file but gave it no id.'))
   return { ...added, id: added.id }
 }
 
@@ -747,6 +924,14 @@ export interface Started {
   url: string
   /** The release we picked, or null when the caller named one itself. */
   torrent: Release | null
+  /**
+   * The other direct links the sources answered with, best first, current one
+   * included at [0]. The player's server and quality menus are built from it,
+   * and a server that dies mid-film is failed over to the next entry. Present
+   * only when playback resolved through a search; absent for magnets and
+   * already-held copies.
+   */
+  alternatives?: Release[]
 }
 
 /**
@@ -877,9 +1062,26 @@ export async function startTorrent(options: {
    * device plays with, so every caller gets it right without knowing about it.
    */
   compatible?: boolean
+  /**
+   * Whether the search may resolve to a torrent at all. Off, only direct links
+   * are considered — nothing is added to the engine and nothing lands on the
+   * disk — and a title no added server can serve throws `NoServerStream`.
+   * A magnet handed in by name bypasses this: that copy was chosen by hand,
+   * and it plays from wherever it already sits.
+   */
+  allowTorrents?: boolean
+  /**
+   * Race the added sources instead of waiting for every one: playback starts
+   * on the first healthy answer, and slower servers stream into
+   * `onAlternativesLate` afterwards.
+   */
+  fast?: boolean
+  /** Late server answers from a `fast` search, ranked, ready to join the candidates. */
+  onAlternativesLate?: (releases: Release[]) => void
   onStep?: (step: string) => void
 }): Promise<Started> {
   const step = options.onStep ?? (() => {})
+  const allowTorrents = options.allowTorrents ?? true
   let magnet = options.magnet ?? ''
   let picked: Release | null = null
   let hint: number | null = null
@@ -891,8 +1093,9 @@ export async function startTorrent(options: {
   // A magnet the caller named is a release someone chose by hand, so it beats
   // whatever is already on the disk. Asked before the id lookup below, because
   // skipping that round trip is the point: a film on the disk plays with TMDB
-  // unreachable.
-  if (!magnet && options.cached) {
+  // unreachable. (Torrent-only by nature — stream-only mode never gets here,
+  // because a hand-named magnet is exactly the "download it for me" ask.)
+  if (!magnet && allowTorrents && options.cached) {
     const { hash, file } = options.cached
     const held = await heldCopy(hash, file)
     // Every byte is here: nothing to search, nobody to ask, nothing to wait for.
@@ -912,9 +1115,11 @@ export async function startTorrent(options: {
     // Nothing was filed under this title, but the engine may still be holding it
     // from a pasted magnet or a download the app didn't start. Read after the
     // lookup above, because that is what fills the title in. Adopting beats a
-    // search, and is the only thing that works with no sources configured.
+    // search, and is the only thing that works with no sources configured —
+    // and, like the cached copy above, it is torrent-only: stream-only mode is
+    // about not pulling bytes, so nothing already on the disk counts either.
     const named = options.named?.()
-    const adopted = named?.title
+    const adopted = allowTorrents && named?.title
       ? await heldByName(named.title, named.year, options.season, options.episode)
       : null
 
@@ -926,16 +1131,68 @@ export async function startTorrent(options: {
         throw new Error($t('TMDB has no IMDb id for this title, so there is nothing to look it up with.'))
 
       step($t('Searching your sources…'))
-      const found = await findReleases(imdbId, options.season, options.episode)
-      picked = pickBest(found, options.maxBytes, options.compatible ?? !hasNativePlayer())
+      // Fast mode races the sources: playback starts on the first healthy
+      // answer and slower servers flow into the candidate list as they land.
+      const found = options.fast
+        ? await findReleasesFast(imdbId, options.season ?? 0, options.episode ?? 0, {
+            onLate: late => {
+              const more = serverCandidates(late, options.maxBytes ?? MAX_BYTES, options.compatible ?? !hasNativePlayer(), allowTorrents)
+              if (more.length)
+                options.onAlternativesLate?.(more)
+            },
+          })
+        : await findReleases(imdbId, options.season, options.episode)
+
+      // Stream-only mode narrows before ranking: a torrent release is not a
+      // worse pick, it is no pick at all.
+      const pool = allowTorrents ? found : found.filter(t => !!t.url)
+      picked = pickBest(pool, options.maxBytes, options.compatible ?? !hasNativePlayer(), allowTorrents)
       if (!picked) {
+        if (found.length && !allowTorrents) {
+          // Which added servers can't serve this mode? Named on the explainer,
+          // so "add one that streams" is actionable rather than abstract.
+          const hosts = [...new Set(found.filter(t => !t.url).map(t => (t.via ? sourceHost(t.via) : '')))].filter(Boolean)
+          const names = hosts.join(', ')
+          const msg = $t('None of your added sources stream this title directly. Add a Stremio URL that streams directly, or set Playback source to Best available.')
+            + (names ? ` ${$t('{servers} serve downloads only here.', { servers: names })}` : '')
+          throw new NoServerStream(msg, hosts)
+        }
         throw new Error(found.length
           ? $t('All {count} releases found were cams, dead, or too big for this device.', { count: found.length })
           : $t('Your sources have nothing for this title.'))
       }
-      // The source resolved this one itself — there is no torrent to add.
-      if (picked.url)
-        return { id: -1, index: -1, hash: '', url: picked.url, torrent: picked }
+
+      // If allowTorrents is true and a torrent magnet is available, use the torrent engine
+      // so it downloads to disk and shows progress in the UI and Transfers tab.
+      if (allowTorrents) {
+        const torrentRelease = picked.magnet ? picked : found.find(t => !!t.magnet)
+        if (torrentRelease) {
+          picked = torrentRelease
+          magnet = picked.magnet
+          hint = picked.fileIdx
+          // Continue to torrent engine logic below
+        }
+        else if (picked.url) {
+          return {
+            id: -1,
+            index: -1,
+            hash: '',
+            url: picked.url,
+            torrent: picked,
+            alternatives: serverCandidates(found, options.maxBytes, options.compatible ?? !hasNativePlayer(), allowTorrents),
+          }
+        }
+      }
+      else if (picked.url) {
+        return {
+          id: -1,
+          index: -1,
+          hash: '',
+          url: picked.url,
+          torrent: picked,
+          alternatives: serverCandidates(found, options.maxBytes, options.compatible ?? !hasNativePlayer(), allowTorrents),
+        }
+      }
       magnet = picked.magnet
       hint = picked.fileIdx
     }
@@ -951,7 +1208,17 @@ export async function startTorrent(options: {
     return playHeld(already, picked)
 
   step($t('Fetching metadata from peers…'))
-  const added = await addTorrent(magnet)
+  let added
+  try {
+    added = await addTorrent(magnet)
+  }
+  catch (engineError) {
+    // Engine offline (browser mode) — fall back to the direct URL if available.
+    const directFallback = picked?.url || options.url
+    if (directFallback)
+      return { id: -1, index: -1, hash: '', url: directFallback, torrent: picked }
+    throw engineError
+  }
   const files = added.details.files ?? []
   const index = options.fileIndex ?? pickVideoFile(files, hint, options)
   if (index == null)
