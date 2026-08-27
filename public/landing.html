@@ -539,6 +539,141 @@
         color: var(--on-muted);
       }
 
+    /* ── Playback Modes Toggle ─────────────────────────────────────────────── */
+    .mode-toggle {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 32px;
+      padding: 48px 24px;
+      background: var(--surface);
+      border: 1px solid var(--rule);
+      border-radius: var(--r-lg);
+      max-width: 840px;
+      margin: 0 auto;
+    }
+    .mode-input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .mode-switch {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      width: 140px;
+      height: 48px;
+      background: var(--ground);
+      border: 1px solid var(--rule);
+      border-radius: 999px;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+    }
+    .mode-switch:hover { border-color: var(--accent); }
+    .mode-thumb {
+      position: absolute;
+      top: 4px;
+      left: 4px;
+      width: 40px;
+      height: 40px;
+      background: var(--accent);
+      border-radius: 50%;
+      box-shadow: 0 4px 12px rgba(0,0,0,.4);
+      transition: transform .25s cubic-bezier(.2,.8,.2,1);
+      z-index: 1;
+    }
+    .mode-input:checked + .mode-switch .mode-thumb {
+      transform: translateX(92px);
+    }
+    .mode-label {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      font-family: var(--mono);
+      font-size: .6875rem;
+      font-weight: 500;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--on-dim);
+      pointer-events: none;
+      transition: color .2s, opacity .2s;
+      white-space: nowrap;
+    }
+    .mode-label-on { left: 56px; }
+    .mode-label-off { right: 56px; opacity: .6; }
+    .mode-input:checked + .mode-switch .mode-label-on { color: var(--accent); opacity: 1; }
+    .mode-input:checked + .mode-switch .mode-label-off { color: var(--on-dim); opacity: .6; }
+    .mode-input:not(:checked) + .mode-switch .mode-label-on { color: var(--on-dim); opacity: .6; }
+    .mode-input:not(:checked) + .mode-switch .mode-label-off { color: var(--accent); opacity: 1; }
+
+    .mode-panels {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      width: 100%;
+    }
+    .mode-panel {
+      padding: 28px 24px;
+      background: var(--ground);
+      border: 1px solid var(--rule);
+      border-radius: var(--r-md);
+      transition: border-color .2s, box-shadow .2s;
+    }
+    .mode-panel:hover { border-color: var(--rule-strong); }
+    .mode-title {
+      display: flex;
+      align-items: center;
+      font-size: .9375rem;
+      font-weight: 600;
+      margin-bottom: 12px;
+      color: var(--on-ground);
+    }
+    .mode-title-on { color: var(--accent); }
+    .mode-title-off { color: var(--warm); }
+    .mode-desc {
+      font-size: .8125rem;
+      line-height: 1.6;
+      color: var(--on-muted);
+      margin-bottom: 16px;
+    }
+    .mode-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .mode-list li {
+      font-size: .8125rem;
+      line-height: 1.55;
+      color: var(--on-muted);
+      padding-left: 20px;
+      position: relative;
+    }
+    .mode-list li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: .55em;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--rule);
+    }
+    .mode-on .mode-list li::before { background: var(--accent); }
+    .mode-off .mode-list li::before { background: var(--warm); }
+    .mode-list li strong { color: var(--on-ground); }
+
+    @media (max-width: 680px) {
+      .mode-toggle { padding: 32px 16px; gap: 24px; }
+      .mode-panels { grid-template-columns: 1fr; }
+      .mode-switch { width: 120px; height: 40px; }
+      .mode-thumb { width: 32px; height: 32px; top: 4px; left: 4px; }
+      .mode-input:checked + .mode-switch .mode-thumb { transform: translateX(80px); }
+      .mode-label { font-size: .625rem; }
+      .mode-label-on { left: 48px; }
+      .mode-label-off { right: 48px; }
+    }
+
     /* ── Download ────────────────────────────────────────────────────────── */
     .get { text-align: center; }
     .get .trace { width: 56px; margin: 0 auto 26px; }
@@ -612,6 +747,7 @@
   </span>
   <div class="nav-links">
     <a href="#why">Why</a>
+    <a href="#modes">Modes</a>
     <a href="#player">Player</a>
     <a href="#downloads">Downloads</a>
     <a href="#sources">Sources</a>
@@ -640,6 +776,7 @@
       <li>Free forever</li>
       <li>No account</li>
       <li>No telemetry</li>
+      <li>Dual playback modes</li>
     </ul>
 
     <div class="hero-cta reveal" style="--i: 5">
@@ -708,6 +845,114 @@
         </div>
       </li>
     </ol>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ MODES ════════════════════════════════ -->
+<section class="pad" id="modes">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <hr class="trace" />
+      <span class="label">Playback modes</span>
+      <h2 class="h2">Two ways to play, one toggle</h2>
+      <p class="lede measure">
+        The <strong>Playback source</strong> setting in Rivulet is not a hidden advanced option — it is the first decision you make about how a title plays. Flip it once and the behaviour changes everywhere.
+      </p>
+    </div>
+
+    <!-- Interactive Toggle Demo -->
+    <div class="mode-toggle reveal" style="--i: 1">
+      <input type="checkbox" id="mode-demo" class="mode-input" checked>
+      <label for="mode-demo" class="mode-switch" role="switch" aria-label="Playback mode demo">
+        <span class="mode-thumb"></span>
+        <span class="mode-label mode-label-on" aria-hidden="true">Best available</span>
+        <span class="mode-label mode-label-off" aria-hidden="true">Instant playback</span>
+      </label>
+
+      <div class="mode-panels">
+        <div class="mode-panel mode-on">
+          <h4 class="mode-title mode-title-on">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 8px; vertical-align: -3px;"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+            ON — Best available
+          </h4>
+          <p class="mode-desc">The torrent engine runs inside the app. You watch while it downloads, and the file stays on disk for offline replay.</p>
+          <ul class="mode-list">
+            <li><strong>Progressive download</strong> — stream from the first bytes, no waiting for completion</li>
+            <li><strong>Offline copy</strong> — replay next time with no sources, no peers, no network</li>
+            <li><strong>Full codec support</strong> — mpv / ExoPlayer handle HEVC, AV1, DTS, Dolby</li>
+            <li><strong>Seeding on by default</strong> — gives back to the swarm while you watch</li>
+            <li><strong>Disk budget</strong> — oldest-watched evicted first, playing torrent protected</li>
+          </ul>
+        </div>
+        <div class="mode-panel mode-off">
+          <h4 class="mode-title mode-title-off">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 8px; vertical-align: -3px;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            OFF — Instant playback
+          </h4>
+          <p class="mode-desc">Only direct HTTP links from your sources (debrid services, hosted files). Nothing joins a swarm, nothing touches the disk.</p>
+          <ul class="mode-list">
+            <li><strong>Zero wait</strong> — playback starts the moment the server responds</li>
+            <li><strong>No disk usage</strong> — stream is transient, nothing stored locally</li>
+            <li><strong>No P2P</strong> — your IP never joins a torrent swarm</li>
+            <li><strong>Debrid-friendly</strong> — RealDebrid, Premiumize, AllDebrid links play instantly</li>
+            <li><strong>Failover</strong> — if one link dies, the next direct link picks up</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Comparison Table -->
+    <div class="table-scroll reveal" style="--i: 2; margin-top: 48px;">
+      <table class="table">
+        <thead>
+          <tr>
+            <th scope="col"></th>
+            <th scope="col">ON — Best available</th>
+            <th scope="col">OFF — Instant playback</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Engine used</td>
+            <td class="player">Local torrent engine (librqbit + mpv/ExoPlayer)</td>
+            <td>Direct HTTP stream (webview / ExoPlayer)</td>
+          </tr>
+          <tr>
+            <td>Start time</td>
+            <td>~5–30 s (metadata + first peers)</td>
+            <td class="player">~1–3 s (server response)</td>
+          </tr>
+          <tr>
+            <td>Disk usage</td>
+            <td>Video + subtitles downloaded progressively</td>
+            <td class="player">Zero (transient stream)</td>
+          </tr>
+          <tr>
+            <td>Offline replay</td>
+            <td class="player">Yes — full file on disk</td>
+            <td>No</td>
+          </tr>
+          <tr>
+            <td>Network</td>
+            <td>P2P swarm + trackers</td>
+            <td class="player">Single HTTP source</td>
+          </tr>
+          <tr>
+            <td>Seeding</td>
+            <td class="player">On by default (upload limits apply)</td>
+            <td>N/A</td>
+          </tr>
+          <tr>
+            <td>Mid-playback toggle</td>
+            <td colspan="2" style="text-align: center; color: var(--accent);">Instant re-resolve — flip and it switches without leaving the title</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="reveal measure" style="--i: 3; margin-top: 32px; text-align: center; color: var(--on-muted);">
+      <strong>Default is ON.</strong> You choose per device — a TV with storage might want offline copies; a phone on mobile data might prefer instant streams.
+    </p>
   </div>
 </section>
 
@@ -867,6 +1112,11 @@
         is put to the device's own decoder list, so a TV keeps the Dolby copy it can play and a phone that cannot
         is steered off it — never at the cost of a quality tier.
       </p>
+      <div class="chips" style="margin-top: 24px;">
+        <span class="chip chip-accent">Toggle: Best available ↔ Instant playback</span>
+        <span class="chip">Per-device default</span>
+        <span class="chip">Mid-playback switch</span>
+      </div>
     </div>
 
     <!-- Four platforms with three attributes each is a table. Rendering it as
@@ -897,6 +1147,9 @@
       <p class="lede measure">
         Rivulet hosts no content and indexes no content. It searches nothing on its own
         and will not suggest anywhere to look. A source is a URL you add.
+      </p>
+      <p class="lede measure" style="margin-top: 12px; color: var(--on-dim);">
+        The <strong>Playback source</strong> toggle decides what happens when a source returns both torrents and direct links: <strong>ON</strong> prefers the torrent engine for progressive download and offline copies; <strong>OFF</strong> uses only direct links for instant playback.
       </p>
     </div>
 
@@ -1107,6 +1360,58 @@
         </button>
         <div class="faq-body">
           <p>No. macOS displays this Gatekeeper message for open-source apps downloaded from GitHub without a paid Apple Developer certificate. Run <code>xattr -cr /Applications/Rivulet.app</code> in Terminal to bypass the warning.</p>
+        </div>
+      </div>
+
+      <div class="faq-item" data-cat="content" style="background: var(--surface); border: 1px solid var(--rule); border-radius: var(--r-md); overflow: hidden; transition: all .25s;">
+        <button type="button" class="faq-trigger" onclick="toggleFaq(this)" style="padding: 22px 26px;">
+          <span style="display: flex; align-items: center; gap: 14px;">
+            <span style="font-family: var(--mono); font-size: .8125rem; font-weight: 600; color: var(--accent);">10</span>
+            <span>What does "Best available" (ON) do?</span>
+          </span>
+          <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="faq-body">
+          <p>The torrent engine runs inside the app. It downloads progressively while you watch, and the file stays on disk for offline replay — next time it plays with no sources, no peers, no network.</p>
+        </div>
+      </div>
+
+      <div class="faq-item" data-cat="content" style="background: var(--surface); border: 1px solid var(--rule); border-radius: var(--r-md); overflow: hidden; transition: all .25s;">
+        <button type="button" class="faq-trigger" onclick="toggleFaq(this)" style="padding: 22px 26px;">
+          <span style="display: flex; align-items: center; gap: 14px;">
+            <span style="font-family: var(--mono); font-size: .8125rem; font-weight: 600; color: var(--accent);">11</span>
+            <span>What does "Instant playback" (OFF) do?</span>
+          </span>
+          <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="faq-body">
+          <p>Only direct HTTP links from your sources (debrid services, hosted files) are used. Nothing joins a P2P swarm, nothing touches the disk, and playback starts the moment the server responds.</p>
+        </div>
+      </div>
+
+      <div class="faq-item" data-cat="tech" style="background: var(--surface); border: 1px solid var(--rule); border-radius: var(--r-md); overflow: hidden; transition: all .25s;">
+        <button type="button" class="faq-trigger" onclick="toggleFaq(this)" style="padding: 22px 26px;">
+          <span style="display: flex; align-items: center; gap: 14px;">
+            <span style="font-family: var(--mono); font-size: .8125rem; font-weight: 600; color: var(--accent);">12</span>
+            <span>Can I switch mid-playback?</span>
+          </span>
+          <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="faq-body">
+          <p>Yes. Flipping the toggle re-searches sources and switches instantly without leaving the title — ON picks up torrents, OFF picks up direct links.</p>
+        </div>
+      </div>
+
+      <div class="faq-item" data-cat="tech" style="background: var(--surface); border: 1px solid var(--rule); border-radius: var(--r-md); overflow: hidden; transition: all .25s;">
+        <button type="button" class="faq-trigger" onclick="toggleFaq(this)" style="padding: 22px 26px;">
+          <span style="display: flex; align-items: center; gap: 14px;">
+            <span style="font-family: var(--mono); font-size: .8125rem; font-weight: 600; color: var(--accent);">13</span>
+            <span>Which should I choose?</span>
+          </span>
+          <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="faq-body">
+          <p><strong>ON</strong> for offline copies, P2P resilience, and full codec support on a device with storage.<br><strong>OFF</strong> for instant start, no disk usage, and no P2P — ideal for mobile data or a debrid-only setup.</p>
         </div>
       </div>
     </div>
