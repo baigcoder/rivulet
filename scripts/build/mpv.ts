@@ -39,12 +39,12 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
  * from drifting apart.
  */
 const BUILD = {
-  tag: '2026-07-26-b27573a239',
+  tag: '2026-08-26-182fa6ca49',
   binaries: [
     {
       member: 'mpv.exe',
-      asset: 'mpv-x86_64-20260726-git-b27573a239.7z',
-      sha256: 'cee9077eb838c920ff1888e056cab79797539c97ed91e004bd1cf5a56afe19d5',
+      asset: 'mpv-x86_64-20260826-git-182fa6ca49.7z',
+      sha256: '6f0f3f91b978dc75dc5b0a78da58e69c5c3704a2aacc40311a4bab4442ef24bf',
     },
     /**
      * mpv links ffmpeg statically but exposes no CLI, and the seek previews and
@@ -54,8 +54,8 @@ const BUILD = {
      */
     {
       member: 'ffmpeg.exe',
-      asset: 'ffmpeg-x86_64-git-601d9ee88.7z',
-      sha256: 'c79ce973c64877367658efdf3d9e75e472506a721a2855afb5335957290c0220',
+      asset: 'ffmpeg-x86_64-git-56c3d963e.7z',
+      sha256: 'e568ed0b1aebbda552e92c09f0d596fb571d9fe09de661dcc201cb9e3a7628f8',
     },
   ],
 }
