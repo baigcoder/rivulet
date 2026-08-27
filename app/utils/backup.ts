@@ -27,6 +27,7 @@ export const PREFIX = STORAGE_PREFIX
 const SECRET = new Set([
   `${PREFIX}trakt`,
   `${PREFIX}tmdbKey`,
+  `${PREFIX}parentalPin`,
 ])
 
 export interface Backup {

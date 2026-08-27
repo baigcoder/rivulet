@@ -19,14 +19,6 @@ interface Provider {
 const settings = useSettingsStore()
 
 /**
- * TMDB's provider wordmarks come in every darkness, so they're repainted as
- * single-tone marks that match the active theme: white on dark themes, black
- * on light ones. Reactive, so flipping themes repaints the strip instantly.
- */
-const vtheme = useTheme()
-const logoFilter = computed(() => vtheme.current.value.dark ? 'brightness(0) invert(1)' : 'brightness(0)')
-
-/**
  * TMDB's provider catalogues are per-country. The app language usually knows
  * its region ("pt-BR"), and that is the right default; '' falls back to the US
  * catalogue, the largest one TMDB has. The choice itself lives on the provider
@@ -68,12 +60,12 @@ const { data, error, pending } = useAsyncData(
 const ORDER: string[][] = [
   ['netflix'],
   ['amazon prime video', 'prime video'],
+  ['apple tv plus', 'apple tv'],
   ['hbo max', 'max'],
-  ['apple tv', 'apple tv plus'],
+  ['paramount plus', 'paramount', 'paramount+'],
   ['hulu'],
-  ['paramount plus'],
-  ['showtime'],
   ['amc plus', 'amc'],
+  ['disney plus', 'disney+'],
 ]
 
 /**
@@ -86,7 +78,7 @@ function normalize(name: string) {
 
 function rank(p: Provider) {
   const name = normalize(p.provider_name)
-  const at = ORDER.findIndex(aliases => aliases.includes(name))
+  const at = ORDER.findIndex(aliases => aliases.some(a => name === a || name.startsWith(`${a} `)))
   return at
 }
 
@@ -94,14 +86,13 @@ const providers = computed(() => {
   // Only the strip's own eight, each once: TMDB lists the same service under
   // different ids across its movie and TV catalogues, so the name is what two
   // copies of a service are recognised by.
-  const seen = new Map<string, Provider>()
+  const seen = new Map<number, Provider>()
   for (const p of data.value ?? []) {
     const at = rank(p)
     if (at === -1)
       continue
-    const key = normalize(p.provider_name)
-    if (!seen.has(key) || rank(seen.get(key)!) > at)
-      seen.set(key, p)
+    if (!seen.has(at) || rank(seen.get(at)!) > at)
+      seen.set(at, p)
   }
   return [...seen.values()].sort((a, b) => rank(a) - rank(b))
 })
@@ -127,33 +118,29 @@ function to(p: Provider) {
       {{ $t('Couldn\'t load the provider list from TMDB.') }}
     </p>
 
-    <!-- A wrapped grid, not a sideways scroller: all eight are on the page at
-     once — nothing hangs off the edge, nothing gets cut mid-card, and the
-     d-pad walks a plain grid. -->
-    <div v-if="pending && !providers.length" class="grid grid-cols-3 gap-4 px-4 sm:grid-cols-4 md:px-6 lg:grid-cols-8" aria-hidden="true">
-      <div v-for="i in 8" :key="i" class="h-20 animate-pulse rounded-2xl border border-white/9 bg-surface-container lg:h-24" />
+    <!-- Loading skeleton -->
+    <div v-if="pending && !providers.length" class="grid grid-cols-5 gap-3 px-4 sm:grid-cols-7 md:gap-3.5 md:px-6 lg:grid-cols-10 xl:grid-cols-12" aria-hidden="true">
+      <div v-for="i in 10" :key="i" class="aspect-square animate-pulse rounded-2xl bg-surface-container-high" />
     </div>
 
-    <div v-else-if="!error" data-dpad-start class="grid grid-cols-3 gap-4 px-4 sm:grid-cols-4 md:px-6 lg:grid-cols-8">
+    <div v-else-if="!error" data-dpad-start class="grid grid-cols-5 gap-3 px-4 sm:grid-cols-7 md:gap-3.5 md:px-6 lg:grid-cols-10 xl:grid-cols-12">
       <nuxt-link
         v-for="p in providers"
         :key="p.provider_id"
         :to="to(p)"
-        class="group relative grid h-20 place-items-center overflow-hidden rounded-2xl border border-white/9 bg-surface-container transition-all duration-200 hover:border-primary focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary lg:h-24"
+        class="provider-card group relative aspect-square w-full overflow-hidden rounded-2xl border border-white/10 bg-surface-container-high shadow-md transition-all duration-300 hover:scale-[1.06] hover:border-primary/60 hover:shadow-xl hover:shadow-primary/20 focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
         :aria-label="$t('Browse {provider}', { provider: p.provider_name })"
       >
-        <!-- Logos fill the tile as clean white marks: every service reads
-         identically on the dark theme, and none of TMDB's dark wordmarks
-         disappear into the background. -->
         <img
           v-if="p.logo_path"
           :src="logoUrl(p.logo_path, 'w500') ?? ''"
           :alt="p.provider_name"
-          loading="lazy"
-          class="max-h-[62%] max-w-[78%] object-contain opacity-90 transition-transform duration-200 group-hover:scale-105 group-focus-visible:scale-105"
-          :style="{ filter: logoFilter }"
+          class="h-full w-full rounded-2xl object-cover transition-transform duration-300 group-hover:scale-110"
         >
-        <span v-else class="text-2xl font-bold tracking-wide">{{ p.provider_name[0] }}</span>
+        <span v-else class="absolute inset-0 grid place-items-center text-xl font-bold tracking-wide opacity-70 transition-opacity group-hover:opacity-100">{{ p.provider_name[0] }}</span>
+
+        <!-- Subtle gradient gloss on hover -->
+        <div class="pointer-events-none absolute inset-0 rounded-2xl bg-gradient-to-t from-white/10 via-transparent to-transparent opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
       </nuxt-link>
     </div>
   </section>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { LibraryKind, LibrarySort } from '~/utils/library'
 import type { Media } from '~/utils/tmdb'
-import { mdiSortVariant } from '@mdi/js'
+import { mdiBookmarkPlus, mdiCheckAll, mdiClose, mdiHeartPlus, mdiSelect, mdiSelectAll, mdiSortVariant } from '@mdi/js'
 
 /**
  * Favourites, the Watchlist and History are the same page three times: a list
@@ -16,9 +16,12 @@ const props = defineProps<{
   title: string
   items: Media[]
   recent: string
+  /** Allow batch removal from this list. */
+  removable?: boolean
 }>()
 
 const { lgAndUp } = useDisplay()
+const library = useLibraryStore()
 
 /** The three the sidebar already splits the app into, plus everything. */
 const KINDS = computed<{ value: LibraryKind, title: string }[]>(() => [
@@ -32,6 +35,24 @@ const query = ref('')
 const kind = ref<LibraryKind>('all')
 const sort = ref<LibrarySort>('recent')
 const reverse = ref(false)
+
+// Multi-select
+const selecting = ref(false)
+const selected = ref(new Set<string>())
+
+function isSelected(m: Media) {
+  return selected.value.has(`${m.type}-${m.id}`)
+}
+
+function toggleSelect(m: Media) {
+  const k = `${m.type}-${m.id}`
+  const next = new Set(selected.value)
+  if (next.has(k))
+    next.delete(k)
+  else
+    next.add(k)
+  selected.value = next
+}
 
 // Each option leads with its useful end, so one Reverse toggle covers direction
 // for all of them and no label has to lie about which way it is pointing.
@@ -49,6 +70,67 @@ const shown = computed(() => arrange(props.items, {
   reverse: reverse.value,
 }))
 
+function selectAll() {
+  const next = new Set<string>()
+  for (const m of shown.value)
+    next.add(`${m.type}-${m.id}`)
+  selected.value = next
+}
+
+function deselectAll() {
+  selected.value = new Set()
+}
+
+function exitSelect() {
+  selecting.value = false
+  selected.value = new Set()
+}
+
+function selectedItems() {
+  return shown.value.filter(m => selected.value.has(`${m.type}-${m.id}`))
+}
+
+// Batch actions
+function batchFavourite() {
+  library.batchAddFavourite(selectedItems())
+  exitSelect()
+}
+
+function batchRemoveFavourite() {
+  library.batchRemoveFavourite(selectedItems())
+  exitSelect()
+}
+
+function batchWatchlist() {
+  library.batchAddWatchlist(selectedItems())
+  exitSelect()
+}
+
+function batchRemoveWatchlist() {
+  library.batchRemoveWatchlist(selectedItems())
+  exitSelect()
+}
+
+function batchWatched() {
+  library.batchMarkWatched(selectedItems())
+  exitSelect()
+}
+
+function batchUnwatched() {
+  library.batchMarkUnwatched(selectedItems())
+  exitSelect()
+}
+
+function batchRemove() {
+  if (props.title === $t('Favourites'))
+    library.batchRemoveFavourite(selectedItems())
+  else if (props.title === $t('Watchlist'))
+    library.batchRemoveWatchlist(selectedItems())
+  else if (props.title === $t('History'))
+    library.batchMarkUnwatched(selectedItems())
+  exitSelect()
+}
+
 // What the filter button counts: with the sheet shut, a filter left on from a
 // moment ago is otherwise invisible. Only what is actually behind the button —
 // where the chips are up, the bucket is on the bar for anyone to see.
@@ -56,6 +138,8 @@ const active = computed(() =>
   (query.value.trim() ? 1 : 0)
   + (!lgAndUp.value && kind.value !== 'all' ? 1 : 0)
   + (sort.value === 'recent' && !reverse.value ? 0 : 1))
+
+const selectionCount = computed(() => selected.value.size)
 </script>
 
 <template>
@@ -76,7 +160,7 @@ const active = computed(() =>
              the bar on their own, so the same choice moves into the filters as
              a dropdown; MediaBrowser does exactly this with its categories. -->
         <v-chip-group
-          v-if="lgAndUp"
+          v-if="lgAndUp && !selecting"
           v-model="kind"
           mandatory
           selected-class="bg-primary text-on-primary font-medium"
@@ -89,50 +173,149 @@ const active = computed(() =>
             size="small"
           />
         </v-chip-group>
+
+        <!-- Selection count badge -->
+        <v-chip
+          v-if="selecting"
+          size="small"
+          color="primary"
+          class="font-medium"
+        >
+          {{ $t('{count} selected', { count: selectionCount }) }}
+        </v-chip>
       </div>
 
       <!-- Inline on a wide window, in a bottom sheet on a phone. The `md:`
            widths are the bar's; in the sheet each one takes the full row. -->
       <template #filters>
-        <v-select
-          v-if="!lgAndUp"
-          v-model="kind"
-          :items="KINDS"
-          item-title="title"
-          item-value="value"
-          :label="$t('Show')"
-          class="w-40 shrink-0"
-        />
+        <template v-if="!selecting">
+          <v-select
+            v-if="!lgAndUp"
+            v-model="kind"
+            :items="KINDS"
+            item-title="title"
+            item-value="value"
+            :label="$t('Show')"
+            class="w-40 shrink-0"
+          />
 
-        <search-field
-          v-model="query"
-          :placeholder="$t('Filter by title')"
-          class="w-48 shrink-0"
-        />
+          <search-field
+            v-model="query"
+            :placeholder="$t('Filter by title')"
+            class="w-48 shrink-0"
+          />
 
-        <v-select
-          v-model="sort"
-          :items="sorts"
-          item-title="title"
-          item-value="value"
-          :label="$t('Sort by')"
-          class="w-40 shrink-0"
-        />
+          <v-select
+            v-model="sort"
+            :items="sorts"
+            item-title="title"
+            item-value="value"
+            :label="$t('Sort by')"
+            class="w-40 shrink-0"
+          />
 
-        <v-btn
-          :prepend-icon="mdiSortVariant"
-          :variant="reverse ? 'tonal' : 'text'"
-          :color="reverse ? 'primary' : 'on-surface'"
-          class="shrink-0"
-          @click="reverse = !reverse"
-        >
-          {{ $t('Reverse') }}
-        </v-btn>
+          <v-btn
+            :prepend-icon="mdiSortVariant"
+            :variant="reverse ? 'tonal' : 'text'"
+            :color="reverse ? 'primary' : 'on-surface'"
+            class="shrink-0"
+            @click="reverse = !reverse"
+          >
+            {{ $t('Reverse') }}
+          </v-btn>
+
+          <v-btn
+            variant="text"
+            color="on-surface"
+            class="shrink-0"
+            @click="selecting = true"
+          >
+            <v-icon :icon="mdiSelect" size="18" />
+            <template #append>
+              <span class="ml-1 hidden sm:inline">{{ $t('Select') }}</span>
+            </template>
+          </v-btn>
+        </template>
+
+        <!-- Select mode actions -->
+        <template v-else>
+          <v-btn variant="text" color="on-surface" @click="selectAll">
+            <v-icon :icon="mdiSelectAll" size="18" />
+            <template #append>
+              <span class="ml-1">{{ $t('All') }}</span>
+            </template>
+          </v-btn>
+          <v-btn variant="text" color="on-surface" @click="deselectAll">
+            {{ $t('None') }}
+          </v-btn>
+          <v-btn icon size="small" variant="text" @click="exitSelect">
+            <v-icon :icon="mdiClose" />
+          </v-btn>
+        </template>
       </template>
     </options-bar>
 
     <div class="min-h-0 flex-1">
-      <media-layout :items="shown" :pending="false" done />
+      <media-layout
+        :items="shown"
+        :pending="false"
+        done
+        :selecting="selecting"
+        :selected="selected"
+        @toggle-select="toggleSelect"
+      />
     </div>
+
+    <!-- Batch action toolbar -->
+    <transition
+      enter-active-class="transition-all duration-200 ease-out"
+      leave-active-class="transition-all duration-150 ease-in"
+      enter-from-class="translate-y-full opacity-0"
+      leave-to-class="translate-y-full opacity-0"
+    >
+      <div
+        v-if="selecting && selectionCount > 0"
+        class="shrink-0 border-t border-outline-variant/30 bg-surface-container px-4 py-3 backdrop-blur-xl sm:px-6"
+      >
+        <div class="flex flex-wrap items-center justify-center gap-2">
+          <v-btn
+            size="small"
+            variant="tonal"
+            color="primary"
+            :prepend-icon="mdiHeartPlus"
+            @click="batchFavourite"
+          >
+            {{ $t('Favourite') }}
+          </v-btn>
+          <v-btn
+            size="small"
+            variant="tonal"
+            color="primary"
+            :prepend-icon="mdiBookmarkPlus"
+            @click="batchWatchlist"
+          >
+            {{ $t('Watchlist') }}
+          </v-btn>
+          <v-btn
+            size="small"
+            variant="tonal"
+            color="primary"
+            :prepend-icon="mdiCheckAll"
+            @click="batchWatched"
+          >
+            {{ $t('Watched') }}
+          </v-btn>
+          <v-btn
+            size="small"
+            variant="tonal"
+            color="error"
+            :prepend-icon="mdiClose"
+            @click="batchRemove"
+          >
+            {{ $t('Remove') }}
+          </v-btn>
+        </div>
+      </div>
+    </transition>
   </div>
 </template>

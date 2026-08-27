@@ -278,3 +278,66 @@ export function arrange(items: Media[], view: LibraryView) {
 
   return view.reverse ? shown.reverse() : shown
 }
+
+// --- Skip Intro / Credits ---------------------------------------------------
+
+export interface SkipData {
+  intro?: { start: number, end: number }
+  credits?: { start: number }
+}
+
+const SKIP_KEY = 'rivulet.skipData'
+
+function readSkipMap(): Record<string, SkipData> {
+  try {
+    return JSON.parse(localStorage.getItem(SKIP_KEY) || '{}')
+  }
+  catch {
+    return {}
+  }
+}
+
+function writeSkipMap(map: Record<string, SkipData>) {
+  localStorage.setItem(SKIP_KEY, JSON.stringify(map))
+}
+
+export function getSkipData(key: string): SkipData | null {
+  const map = readSkipMap()
+  return map[key] ?? null
+}
+
+export function saveIntro(key: string, start: number, end: number) {
+  const map = readSkipMap()
+  map[key] = { ...map[key], intro: { start, end } }
+  writeSkipMap(map)
+}
+
+export function saveCredits(key: string, start: number) {
+  const map = readSkipMap()
+  map[key] = { ...map[key], credits: { start } }
+  writeSkipMap(map)
+}
+
+export function clearSkipData(key: string) {
+  const map = readSkipMap()
+  delete map[key]
+  writeSkipMap(map)
+}
+
+/** Are we inside the intro window right now? */
+export function inIntro(key: string, position: number): { target: number } | null {
+  const data = getSkipData(key)
+  if (!data?.intro)
+    return null
+  if (position >= data.intro.start && position < data.intro.end)
+    return { target: data.intro.end }
+  return null
+}
+
+/** Are we past the credits start? */
+export function inCredits(key: string, position: number, duration: number): boolean {
+  const data = getSkipData(key)
+  if (!data?.credits || duration <= 0)
+    return false
+  return position >= data.credits.start
+}

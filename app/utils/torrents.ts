@@ -294,8 +294,12 @@ export function isAwkward(t: Release) {
  * The list, best first. `pickBest` is this plus `[0]`, and the player's server
  * and quality menus are the whole of it — so both places order candidates
  * identically by construction.
+ *
+ * When `allowTorrents` is true, torrents are preferred over direct links so the
+ * torrent engine downloads progressively while you watch (offline copy).
+ * When false (stream-only mode), only direct links are considered anyway.
  */
-export function ranked(list: Release[], maxBytes = MAX_BYTES, compatible = false): Release[] {
+export function ranked(list: Release[], maxBytes = MAX_BYTES, compatible = false, allowTorrents = false): Release[] {
   const limit = Math.min(MAX_BYTES, maxBytes)
   return [...list]
     // Neither test applies to a link: there is no swarm to have seeders, and
@@ -305,7 +309,7 @@ export function ranked(list: Release[], maxBytes = MAX_BYTES, compatible = false
       rank(a) - rank(b)
       || (compatible ? Number(isAwkward(a)) - Number(isAwkward(b)) : 0)
       || Number(isBloated(a)) - Number(isBloated(b))
-      || Number(!a.url) - Number(!b.url)
+      || (allowTorrents ? Number(!!a.url) - Number(!!b.url) : Number(!a.url) - Number(!b.url))
       || b.seeders - a.seeders)
 }
 
@@ -322,11 +326,13 @@ export function ranked(list: Release[], maxBytes = MAX_BYTES, compatible = false
  * the wrong trade now that the check is accurate, since anything it demotes is
  * something this device genuinely cannot play at any resolution.
  *
- * A direct link wins the last tiebreak before seeders: same picture, same
- * bitrate, but it starts at once and nothing has to be kept on the disk.
+ * When `allowTorrents` is true, torrents are preferred over direct links so the
+ * torrent engine downloads progressively while you watch (offline copy).
+ * When false, a direct link wins the last tiebreak before seeders: same picture,
+ * same bitrate, but it starts at once and nothing has to be kept on the disk.
  */
-export function pickBest(list: Release[], maxBytes = MAX_BYTES, compatible = false): Release | null {
-  return ranked(list, maxBytes, compatible)[0] ?? null
+export function pickBest(list: Release[], maxBytes = MAX_BYTES, compatible = false, allowTorrents = false): Release | null {
+  return ranked(list, maxBytes, compatible, allowTorrents)[0] ?? null
 }
 
 /**
@@ -350,9 +356,13 @@ export class NoServerStream extends Error {
  * Just the direct links, best first: what playback resolves through when
  * torrent downloads are switched off, and the pool the player's server and
  * quality menus draw from either way.
+ *
+ * When `allowTorrents` is true, torrents at the same quality tier are included
+ * so the failover/alternatives menus show torrents too.
  */
-export function serverCandidates(releases: Release[], maxBytes = MAX_BYTES, compatible = false): Release[] {
-  return ranked(releases.filter(t => !!t.url), maxBytes, compatible)
+export function serverCandidates(releases: Release[], maxBytes = MAX_BYTES, compatible = false, allowTorrents = false): Release[] {
+  const pool = allowTorrents ? releases : releases.filter(t => !!t.url)
+  return ranked(pool, maxBytes, compatible, allowTorrents)
 }
 
 /** Patient default; racing mode shortens it so a dead server fails over in seconds. */
@@ -555,6 +565,36 @@ export async function addTorrent(magnet: string) {
   }
   if (added.id == null)
     throw new Error($t('The torrent engine accepted the magnet but gave it no id.'))
+  return { ...added, id: added.id }
+}
+
+/**
+ * Import a raw .torrent file by sending its bytes to the engine. librqbit
+ * accepts both magnet links and raw .torrent data as the POST body.
+ */
+export async function addTorrentBytes(bytes: Uint8Array) {
+  const folder = downloadDir ? `&output_folder=${encodeURIComponent(downloadDir)}` : ''
+  let res: Response
+  const buf = new ArrayBuffer(bytes.byteLength)
+  new Uint8Array(buf).set(bytes)
+  try {
+    res = await fetch(`${ENGINE}/torrents?overwrite=true${folder}`, {
+      method: 'POST',
+      body: buf,
+      headers: { 'content-type': 'application/x-bittorrent' },
+    })
+  }
+  catch {
+    throw new Error($t('Torrent engine offline. Launch the native desktop or Android app to play torrents.'))
+  }
+  if (!res.ok)
+    throw new Error($t('Torrent engine said {status}: {reason}', { status: res.status, reason: await res.text() }))
+  const added = await res.json() as {
+    id: number | null
+    details: { name: string | null, info_hash: string, files: EngineFile[] | null }
+  }
+  if (added.id == null)
+    throw new Error($t('The torrent engine accepted the file but gave it no id.'))
   return { ...added, id: added.id }
 }
 
@@ -1096,7 +1136,7 @@ export async function startTorrent(options: {
       const found = options.fast
         ? await findReleasesFast(imdbId, options.season ?? 0, options.episode ?? 0, {
             onLate: late => {
-              const more = serverCandidates(late, options.maxBytes ?? MAX_BYTES, options.compatible ?? !hasNativePlayer())
+              const more = serverCandidates(late, options.maxBytes ?? MAX_BYTES, options.compatible ?? !hasNativePlayer(), allowTorrents)
               if (more.length)
                 options.onAlternativesLate?.(more)
             },
@@ -1106,7 +1146,7 @@ export async function startTorrent(options: {
       // Stream-only mode narrows before ranking: a torrent release is not a
       // worse pick, it is no pick at all.
       const pool = allowTorrents ? found : found.filter(t => !!t.url)
-      picked = pickBest(pool, options.maxBytes, options.compatible ?? !hasNativePlayer())
+      picked = pickBest(pool, options.maxBytes, options.compatible ?? !hasNativePlayer(), allowTorrents)
       if (!picked) {
         if (found.length && !allowTorrents) {
           // Which added servers can't serve this mode? Named on the explainer,
@@ -1122,17 +1162,35 @@ export async function startTorrent(options: {
           : $t('Your sources have nothing for this title.'))
       }
 
-      // The source resolved this one itself — there is no torrent to add.
-      if (picked.url) {
+      // If allowTorrents is true and a torrent magnet is available, use the torrent engine
+      // so it downloads to disk and shows progress in the UI and Transfers tab.
+      if (allowTorrents) {
+        const torrentRelease = picked.magnet ? picked : found.find(t => !!t.magnet)
+        if (torrentRelease) {
+          picked = torrentRelease
+          magnet = picked.magnet
+          hint = picked.fileIdx
+          // Continue to torrent engine logic below
+        }
+        else if (picked.url) {
+          return {
+            id: -1,
+            index: -1,
+            hash: '',
+            url: picked.url,
+            torrent: picked,
+            alternatives: serverCandidates(found, options.maxBytes, options.compatible ?? !hasNativePlayer(), allowTorrents),
+          }
+        }
+      }
+      else if (picked.url) {
         return {
           id: -1,
           index: -1,
           hash: '',
           url: picked.url,
           torrent: picked,
-          // The rest of what the servers answered, for the player's failover,
-          // its server menu and its quality menu.
-          alternatives: serverCandidates(found, options.maxBytes, options.compatible ?? !hasNativePlayer()),
+          alternatives: serverCandidates(found, options.maxBytes, options.compatible ?? !hasNativePlayer(), allowTorrents),
         }
       }
       magnet = picked.magnet
@@ -1150,7 +1208,17 @@ export async function startTorrent(options: {
     return playHeld(already, picked)
 
   step($t('Fetching metadata from peers…'))
-  const added = await addTorrent(magnet)
+  let added
+  try {
+    added = await addTorrent(magnet)
+  }
+  catch (engineError) {
+    // Engine offline (browser mode) — fall back to the direct URL if available.
+    const directFallback = picked?.url || options.url
+    if (directFallback)
+      return { id: -1, index: -1, hash: '', url: directFallback, torrent: picked }
+    throw engineError
+  }
   const files = added.details.files ?? []
   const index = options.fileIndex ?? pickVideoFile(files, hint, options)
   if (index == null)

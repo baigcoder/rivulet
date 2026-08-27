@@ -14,7 +14,7 @@ const { data: trending } = useAsyncData(
 /**
  * The top spotlight items.
  */
-const spotlight = computed(() => (trending.value ?? []).filter(m => m.backdrop).slice(0, 6))
+const spotlight = computed(() => (trending.value ?? []).filter(m => m.backdrop).slice(0, 10))
 
 const at = ref(0)
 const featured = computed(() => spotlight.value[Math.min(at.value, spotlight.value.length - 1)])
@@ -91,9 +91,9 @@ onUnmounted(() => {
 const rows = computed(() => {
   const day = (offset = 0) => new Date(Date.now() + offset * 864e5).toISOString().slice(0, 10)
   return [
-    { title: $t('Trending this week'), request: { path: '/trending/all/week' }, to: '/movies?cat=trending' },
-    { title: $t('Popular movies'), request: { path: '/movie/popular', type: 'movie' as const }, to: '/movies' },
-    { title: $t('Popular TV'), request: { path: '/tv/popular', type: 'tv' as const }, to: '/tv' },
+    { title: $t('Trending this week'), request: { path: '/trending/all/week' }, to: `/movies?cat=trending&label=${encodeURIComponent($t('Trending this week'))}` },
+    { title: $t('Popular movies'), request: { path: '/movie/popular', type: 'movie' as const }, to: `/movies?label=${encodeURIComponent($t('Popular movies'))}` },
+    { title: $t('Popular TV'), request: { path: '/tv/popular', type: 'tv' as const }, to: `/tv?label=${encodeURIComponent($t('Popular TV'))}` },
     {
       // Most-anticipated rather than soonest-alphabetical: popularity sorts the
       // dated window so the big releases lead the row.
@@ -103,7 +103,7 @@ const rows = computed(() => {
         type: 'movie' as const,
         params: { 'include_adult': false, 'sort_by': 'popularity.desc', 'primary_release_date.gte': day(), 'primary_release_date.lte': day(180) },
       },
-      to: '/movies?cat=upcoming',
+      to: `/movies?cat=upcoming&label=${encodeURIComponent($t('Upcoming movies'))}`,
     },
     {
       title: $t('Popular Bollywood'),
@@ -112,16 +112,7 @@ const rows = computed(() => {
         type: 'movie' as const,
         params: { include_adult: false, with_original_language: 'hi', sort_by: 'popularity.desc' },
       },
-      to: '/movies?lang=hi',
-    },
-    {
-      title: $t('Popular Bollywood series'),
-      request: {
-        path: '/discover/tv',
-        type: 'tv' as const,
-        params: { include_adult: false, with_original_language: 'hi', sort_by: 'popularity.desc' },
-      },
-      to: '/tv?lang=hi',
+      to: `/movies?lang=hi&label=${encodeURIComponent($t('Popular Bollywood'))}`,
     },
   ]
 })
@@ -133,7 +124,7 @@ const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
   <div class="h-full overflow-y-auto pb-10">
     <!-- Cover Banner Hero Section -->
     <section
-      class="group/hero relative mx-4 mt-2 h-[48vh] min-h-[380px] overflow-hidden rounded-2xl md:mx-6 md:h-[54vh]"
+      class="group/hero relative mx-4 mt-2 h-[52vh] min-h-[420px] overflow-hidden rounded-2xl md:mx-6 md:h-[58vh]"
       @mouseenter="isHovered = true"
       @mouseleave="isHovered = false"
     >
@@ -230,24 +221,25 @@ const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
 
               <v-spacer />
 
-              <!-- Animated Spotlight Thumbnails with Progress Bar -->
-              <div class="flex gap-2">
+              <!-- Animated Spotlight Thumbnails Strip (10 Banner Slides) -->
+              <div class="flex max-w-[360px] sm:max-w-[480px] md:max-w-[560px] items-center gap-2 overflow-x-auto py-1 scrollbar-none">
                 <button
                   v-for="(media, index) in spotlight"
                   :key="media.id"
                   type="button"
-                  class="group/thumb relative h-16 w-11 shrink-0 overflow-hidden rounded-lg outline-none transition-all duration-300 md:h-20 md:w-14 hover:scale-110 hover:ring-2 hover:ring-white focus-visible:ring-2 focus-visible:ring-primary"
-                  :class="index === at ? 'ring-2 ring-primary shadow-[0_0_20px_rgba(111,227,255,0.4)] opacity-100 scale-105' : 'opacity-60 hover:opacity-100'"
+                  class="group/thumb relative h-16 w-11 shrink-0 overflow-hidden rounded-xl outline-none transition-all duration-300 md:h-20 md:w-14 hover:scale-110 hover:ring-2 hover:ring-white focus-visible:ring-2 focus-visible:ring-primary"
+                  :class="index === at ? 'ring-2 ring-primary shadow-[0_0_20px_rgba(111,227,255,0.5)] opacity-100 scale-105' : 'opacity-60 hover:opacity-100'"
                   :aria-label="media.title"
                   :aria-current="index === at"
                   @click="at = index"
                   @focus="at = index"
                 >
                   <media-poster :src="posterUrl(media.poster, 'w185')" :alt="media.title" />
+                  <v-tooltip activator="parent" location="top" :text="media.title" />
 
                   <!-- Active item timer progress bar -->
-                  <div v-if="index === at" class="absolute inset-x-0 bottom-0 h-1 bg-black/60">
-                    <div class="h-full bg-primary transition-all duration-75" :style="{ width: `${progress}%` }" />
+                  <div v-if="index === at" class="absolute inset-x-0 bottom-0 h-1.5 bg-black/70">
+                    <div class="h-full bg-primary transition-all duration-75 shadow-[0_0_8px_rgba(111,227,255,0.8)]" :style="{ width: `${progress}%` }" />
                   </div>
                 </button>
               </div>
@@ -273,8 +265,9 @@ const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
           v-for="entry in library.resumeRow"
           :key="entry.key"
           :media="entry.media"
-          :to="watchLink(entry.media.type, entry.media.id, entry.season, entry.episode)"
           :detail="ui.isDetailed"
+          :resume-to="watchLink(entry.media.type, entry.media.id, entry.season, entry.episode)"
+          :on-remove="() => library.removeFromContinueWatching(entry.key)"
           class="shrink-0"
           :style="{ width: `${ui.cardWidth}px` }"
         />
@@ -286,7 +279,7 @@ const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
         :min-height="rowHeight"
         transition="fade-transition"
       >
-        <media-slider class="motion-reveal" :title="row.title" :request="row.request" />
+        <media-slider class="motion-reveal" :title="row.title" :request="row.request" :to="row.to" />
       </v-lazy>
     </div>
   </div>

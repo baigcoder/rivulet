@@ -243,6 +243,60 @@ export const useLibraryStore = defineStore('library', () => {
     watchlist.value = {}
   }
 
+  /** Remove a single entry from Continue Watching by its progress key. */
+  function removeFromContinueWatching(key: string) {
+    delete progress.value[key]
+  }
+
+  // --- Batch operations --------------------------------------------------------
+
+  function batchAddFavourite(items: Media[]) {
+    for (const m of items) {
+      const k = titleKey(m.type, m.id)
+      if (!(k in favourites.value)) {
+        favourites.value[k] = Date.now()
+        remember(m)
+      }
+    }
+  }
+
+  function batchRemoveFavourite(items: Media[]) {
+    for (const m of items)
+      delete favourites.value[titleKey(m.type, m.id)]
+  }
+
+  function batchAddWatchlist(items: Media[]) {
+    for (const m of items) {
+      const k = titleKey(m.type, m.id)
+      if (!(k in watchlist.value)) {
+        watchlist.value[k] = Date.now()
+        remember(m)
+      }
+    }
+  }
+
+  function batchRemoveWatchlist(items: Media[]) {
+    for (const m of items)
+      delete watchlist.value[titleKey(m.type, m.id)]
+  }
+
+  function batchMarkWatched(items: Media[]) {
+    for (const m of items)
+      setWatched(m, true)
+  }
+
+  function batchMarkUnwatched(items: Media[]) {
+    for (const m of items)
+      setWatched(m, false)
+  }
+
+  function batchRemoveFromContinueWatching(items: Media[]) {
+    for (const m of items) {
+      const k = progressKey(m.type, m.id)
+      delete progress.value[k]
+    }
+  }
+
   return {
     media,
     progress,
@@ -270,6 +324,14 @@ export const useLibraryStore = defineStore('library', () => {
     toggleWatched,
     toggleFavourite,
     toggleWatchlist,
+    removeFromContinueWatching,
+    batchAddFavourite,
+    batchRemoveFavourite,
+    batchAddWatchlist,
+    batchRemoveWatchlist,
+    batchMarkWatched,
+    batchMarkUnwatched,
+    batchRemoveFromContinueWatching,
     clear,
   }
 })

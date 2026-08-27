@@ -112,7 +112,7 @@ function page(direction: 1 | -1) {
          the row to it. overscroll-x-contain: reaching the end of a row must not
          hand the rest of the gesture to the page behind it. -->
     <div ref="scroller" class="overflow-x-auto scroll-px-4 overscroll-x-contain md:scroll-px-6 no-scrollbar">
-      <div ref="track" class="w-max flex gap-4 px-4 pb-1 pt-2 md:px-6" :class="{ 'pointer-events-none': gliding }">
+      <div ref="track" class="w-max flex gap-4 px-4 pb-6 pt-2 md:px-6" :class="{ 'pointer-events-none': gliding }">
         <slot />
       </div>
     </div>

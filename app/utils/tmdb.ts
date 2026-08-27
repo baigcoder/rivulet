@@ -137,6 +137,14 @@ export function episodeLink(showId: string | number, season: number, episode: nu
   return `${seasonLink(showId, season)}/episode/${episode}`
 }
 
+export function personLink(id: string | number) {
+  return localePath(`/people/${id}`)
+}
+
+export function collectionLink(id: string | number) {
+  return localePath(`/collection/${id}`)
+}
+
 /**
  * Route to the player. It takes the TMDB id rather than a magnet: the source
  * lookup (utils/torrents.ts) happens there, so every Play button in the app
@@ -318,13 +326,14 @@ export interface MediaDetail extends Media {
   episodeCount: number
   budget: number
   revenue: number
+  collection: { id: number, name: string, poster: string | null, backdrop: string | null } | null
 }
 
 // TMDB drops appends the endpoint doesn't know (content_ratings on a movie,
 // release_dates on a show), so one string covers both types in one request.
 // external_ids is how a show gets its IMDb id — only movies carry imdb_id
 // inline, and the source protocol is keyed by that id.
-const DETAIL_APPEND = 'credits,videos,images,release_dates,content_ratings,external_ids'
+const DETAIL_APPEND = 'credits,videos,images,release_dates,content_ratings,external_ids,belongs_to_collection'
 
 interface RawCredit { id: number, name: string, character?: string, job?: string, profile_path?: string | null }
 interface RawImage { file_path: string, iso_639_1: string | null }
@@ -352,6 +361,7 @@ interface RawDetail extends TmdbItem {
   release_dates?: { results: { iso_3166_1: string, release_dates: { certification: string }[] }[] }
   content_ratings?: { results: { iso_3166_1: string, rating: string }[] }
   external_ids?: { imdb_id?: string | null }
+  belongs_to_collection?: { id: number, name: string, poster_path?: string | null, backdrop_path?: string | null } | null
 }
 
 function certificationOf(raw: RawDetail) {
@@ -414,6 +424,14 @@ function toDetail(raw: RawDetail, type: MediaType): MediaDetail {
     episodeCount: raw.number_of_episodes ?? 0,
     budget: raw.budget ?? 0,
     revenue: raw.revenue ?? 0,
+    collection: raw.belongs_to_collection
+      ? {
+          id: raw.belongs_to_collection.id,
+          name: raw.belongs_to_collection.name,
+          poster: raw.belongs_to_collection.poster_path ?? null,
+          backdrop: raw.belongs_to_collection.backdrop_path ?? null,
+        }
+      : null,
   }
 }
 
@@ -495,6 +513,169 @@ export function useEpisode(
         guests: (raw.guest_stars ?? []).slice(0, 20).map(toPerson),
         directors: jobs(raw.crew ?? [], ['Director']),
         writers: jobs(raw.crew ?? [], ['Writer', 'Teleplay', 'Screenplay', 'Story']),
+      }),
+    },
+  )
+}
+
+// --- Person ------------------------------------------------------------------
+
+export interface PersonDetail {
+  id: number
+  name: string
+  biography: string
+  birthday: string | null
+  deathday: string | null
+  placeOfBirth: string
+  profile: string | null
+  knownForDepartment: string
+  alsoKnownAs: string[]
+  homepage: string | null
+  imdbId: string | null
+}
+
+interface RawPerson {
+  id: number
+  name: string
+  biography?: string
+  birthday?: string | null
+  deathday?: string | null
+  place_of_birth?: string
+  profile_path?: string | null
+  known_for_department?: string
+  also_known_as?: string[]
+  homepage?: string | null
+  imdb_id?: string | null
+}
+
+export function usePersonDetail(id: MaybeRefOrGetter<string | number>) {
+  return useAsyncData(
+    () => `person-${toValue(id)}`,
+    () => tmdb<RawPerson>(`/person/${toValue(id)}`),
+    {
+      lazy: true,
+      watch: [() => toValue(id)],
+      transform: (raw): PersonDetail => ({
+        id: raw.id,
+        name: raw.name,
+        biography: raw.biography ?? '',
+        birthday: raw.birthday ?? null,
+        deathday: raw.deathday ?? null,
+        placeOfBirth: raw.place_of_birth ?? '',
+        profile: raw.profile_path ?? null,
+        knownForDepartment: raw.known_for_department ?? 'Acting',
+        alsoKnownAs: raw.also_known_as ?? [],
+        homepage: raw.homepage ?? null,
+        imdbId: raw.imdb_id ?? null,
+      }),
+    },
+  )
+}
+
+interface RawPersonCredit {
+  id: number
+  media_type: MediaType
+  title?: string
+  name?: string
+  character?: string
+  job?: string
+  department?: string
+  release_date?: string
+  first_air_date?: string
+  poster_path?: string | null
+  backdrop_path?: string | null
+  overview?: string
+  vote_average?: number
+  vote_count?: number
+  genre_ids?: number[]
+  original_language?: string
+}
+
+interface RawPersonCredits {
+  cast: RawPersonCredit[]
+  crew: RawPersonCredit[]
+}
+
+export interface PersonCredit {
+  media: Media
+  character: string
+  job: string
+  department: string
+}
+
+export function usePersonCredits(id: MaybeRefOrGetter<string | number>) {
+  return useAsyncData(
+    () => `person-credits-${toValue(id)}`,
+    () => tmdb<RawPersonCredits>(`/person/${toValue(id)}/combined_credits`),
+    {
+      lazy: true,
+      watch: [() => toValue(id)],
+      transform: raw => {
+        const cast: PersonCredit[] = raw.cast
+          .filter(c => c.media_type === 'movie' || c.media_type === 'tv')
+          .map(c => ({
+            media: toMedia(c, c.media_type)!,
+            character: c.character ?? '',
+            job: '',
+            department: 'Acting',
+          }))
+          .filter(c => c.media)
+          .sort((a, b) => (b.media.year || '').localeCompare(a.media.year || ''))
+
+        const crew: PersonCredit[] = raw.crew
+          .filter(c => c.media_type === 'movie' || c.media_type === 'tv')
+          .map(c => ({
+            media: toMedia(c, c.media_type)!,
+            character: '',
+            job: c.job ?? '',
+            department: c.department ?? '',
+          }))
+          .filter(c => c.media)
+          .sort((a, b) => (b.media.year || '').localeCompare(a.media.year || ''))
+
+        return { cast, crew }
+      },
+    },
+  )
+}
+
+// --- Collection --------------------------------------------------------------
+
+export interface CollectionDetail {
+  id: number
+  name: string
+  overview: string
+  poster: string | null
+  backdrop: string | null
+  parts: Media[]
+}
+
+interface RawCollection {
+  id: number
+  name: string
+  overview?: string
+  poster_path?: string | null
+  backdrop_path?: string | null
+  parts?: TmdbItem[]
+}
+
+export function useCollectionDetail(id: MaybeRefOrGetter<string | number>) {
+  return useAsyncData(
+    () => `collection-${toValue(id)}`,
+    () => tmdb<RawCollection>(`/collection/${toValue(id)}`),
+    {
+      lazy: true,
+      watch: [() => toValue(id)],
+      transform: (raw): CollectionDetail => ({
+        id: raw.id,
+        name: raw.name,
+        overview: raw.overview ?? '',
+        poster: raw.poster_path ?? null,
+        backdrop: raw.backdrop_path ?? null,
+        parts: (raw.parts ?? [])
+          .map(p => toMedia({ ...p, media_type: 'movie' as const }, 'movie'))
+          .filter((m): m is Media => m != null)
+          .sort((a, b) => (a.year || '').localeCompare(b.year || '')),
       }),
     },
   )

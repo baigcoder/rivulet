@@ -8,6 +8,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import androidx.media3.common.C
+import androidx.media3.common.AudioAttributes
 import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
@@ -189,6 +190,13 @@ class RivuletPlayer(private val activity: MainActivity) {
           .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
           // Cheap TV boxes advertise decoders that then fail to initialise.
           .setEnableDecoderFallback(true),
+      )
+      .setAudioAttributes(
+        AudioAttributes.Builder()
+          .setUsage(C.USAGE_MEDIA)
+          .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+          .build(),
+        /* handleAudioFocus= */ true,
       )
       .build()
 

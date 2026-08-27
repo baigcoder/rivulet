@@ -107,7 +107,13 @@ const list = computed(() => {
 })
 
 function playLink(t: Release) {
-  const param = t.url ? `url=${encodeURIComponent(t.url)}` : `magnet=${encodeURIComponent(t.magnet)}`
+  // Toggle ON + magnet available → torrent engine downloads to disk while streaming.
+  // Toggle OFF or no magnet → direct server URL for instant playback with zero disk usage.
+  const param = (settings.allowTorrents && t.magnet)
+    ? `magnet=${encodeURIComponent(t.magnet)}`
+    : t.url
+      ? `url=${encodeURIComponent(t.url)}`
+      : `magnet=${encodeURIComponent(t.magnet)}`
   return `${watchLink(props.type, props.id, props.season, props.episode)}&${param}`
 }
 

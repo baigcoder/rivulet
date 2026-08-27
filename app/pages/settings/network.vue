@@ -91,5 +91,22 @@ function label(value: number) {
         </div>
       </div>
     </settings-section>
+
+    <settings-section :title="$t('Notifications')" :hint="$t('Show a system notification when a download finishes or fails.')">
+      <v-switch
+        v-model="settings.notifyComplete"
+        color="primary"
+        density="comfortable"
+        hide-details
+        :label="$t('Download complete')"
+      />
+      <v-switch
+        v-model="settings.notifyError"
+        color="primary"
+        density="comfortable"
+        hide-details
+        :label="$t('Download failed')"
+      />
+    </settings-section>
   </div>
 </template>

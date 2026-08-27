@@ -7,9 +7,11 @@ const props = defineProps<{
   pending: boolean
   done: boolean
   error?: string
+  selecting?: boolean
+  selected?: Set<string>
 }>()
 
-const emit = defineEmits<{ load: [] }>()
+const emit = defineEmits<{ load: [], toggleSelect: [media: Media] }>()
 
 const ui = useUiStore()
 const scroller = ref<HTMLElement | null>(null)
@@ -58,6 +60,9 @@ const loadingFirstPage = computed(() => props.pending && !props.items.length)
         :key="`${media.type}-${media.id}`"
         :media="media"
         :detail="ui.isDetailed"
+        :selectable="selecting"
+        :selected="selected?.has(`${media.type}-${media.id}`)"
+        @toggle-select="emit('toggleSelect', media)"
       />
       <div
         v-for="n in loadingFirstPage ? 18 : 0"

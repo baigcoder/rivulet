@@ -123,9 +123,10 @@ assert.equal(pickBest([sameTier!], 100), null, 'which a torrent does not get awa
 // --- Stream-only mode and the candidate list ---------------------------------
 // Torrents off, playback resolves through direct links only — and whatever the
 // sources answered becomes the player's failover chain, best first.
-const candidates = serverCandidates(links)
+const MAX_BYTES_TEST = 25 * 1024 ** 3
+const candidates = serverCandidates(links, MAX_BYTES_TEST, false, false)
 assert.deepEqual(candidates.map(t => t.url), [debrid!.url, hosted!.url], 'only links, best first')
-assert.equal(serverCandidates(parsed.filter(t => t.hash === 'aaa')).length, 0, 'a torrent is no candidate at all')
+assert.equal(serverCandidates(parsed.filter(t => t.hash === 'aaa'), MAX_BYTES_TEST, false, false).length, 0, 'a torrent is no candidate at all')
 
 // `ranked` is pickBest without the head chop: same order by construction, so a
 // menu can never disagree with what auto-play chose.

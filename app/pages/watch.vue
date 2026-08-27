@@ -286,8 +286,8 @@ const candidateMenus = computed(() => {
   const servers = candidates.value.map((r, index) => ({
     index,
     // The automatic pick is marked until a hand chooses otherwise.
-    label: `${index === 0 && !userPicked.value ? `${$t('Auto')} · ` : ''}${hostOf(r.via ?? '') || r.source}`,
-    detail: [r.quality || qualityLabel(r), r.size].filter(Boolean).join(' · '),
+    label: r.source || hostOf(r.via ?? '') || $t('Unknown source'),
+    detail: [qualityLabel(r), r.size].filter(Boolean).join(' · '),
   }))
   const seen = new Map<string, number>()
   const qualities: { index: number, label: string, detail?: string }[] = []
@@ -295,7 +295,7 @@ const candidateMenus = computed(() => {
     const label = qualityLabel(r)
     if (!seen.has(label)) {
       seen.set(label, index)
-      qualities.push({ index, label, detail: r.size })
+      qualities.push({ index, label, detail: [r.source, r.size].filter(Boolean).join(' · ') })
     }
   }
   return { servers, qualities }
@@ -472,6 +472,7 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
         :year="title?.year"
         :season="season"
         :episode="episode"
+        :quality="torrent?.quality"
         :candidates="candidateMenus"
         :active-candidate="activeCandidate"
         :osd-on-start="failoverNotice"

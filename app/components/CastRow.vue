@@ -6,7 +6,12 @@ defineProps<{ title: string, people: Person[] }>()
 
 <template>
   <scroll-row :title="title">
-    <div v-for="person in people" :key="person.id" class="w-28 shrink-0">
+    <nuxt-link
+      v-for="person in people"
+      :key="person.id"
+      :to="personLink(person.id)"
+      class="w-28 shrink-0"
+    >
       <!-- Same 2:3 frame as a poster card — profileUrl's w185 is 185x278. -->
       <div class="aspect-2/3 overflow-hidden rounded-xl bg-surface-container [&_img]:object-top">
         <media-poster :src="profileUrl(person.profile)" :alt="person.name" />
@@ -17,6 +22,6 @@ defineProps<{ title: string, people: Person[] }>()
       <div class="line-clamp-2 text-label-small opacity-55" :title="person.role">
         {{ person.role }}
       </div>
-    </div>
+    </nuxt-link>
   </scroll-row>
 </template>

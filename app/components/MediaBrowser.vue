@@ -19,11 +19,17 @@ const props = defineProps<{
   extraParams?: Record<string, unknown>
   /** Replaces the standard category row when a page has its own vocabulary. */
   categoriesOverride?: { value: string, title: string }[]
+  /** Title shown at the top of the page, e.g. "Popular TV". */
+  pageTitle?: string
 }>()
 
+const route = useRoute()
 const { lgAndUp } = useDisplay()
 
 const isMovie = props.type === 'movie'
+
+// Directly from the route — bypasses keepalive stale props
+const pageTitle = computed(() => props.pageTitle ?? (String(route.query.label ?? '') || undefined))
 
 const categories = computed(() => props.categoriesOverride ?? [
   { value: 'popular', title: $t('Popular') },
@@ -40,6 +46,11 @@ const categories = computed(() => props.categoriesOverride ?? [
 
 const category = ref(props.initialCategory ?? 'popular')
 const genre = ref<number | null>(null)
+
+// keepalive reuses the component — sync when the route changes
+watch(() => props.initialCategory, v => {
+  category.value = v ?? 'popular'
+})
 
 const { data: genres } = useGenres(props.type)
 
@@ -78,6 +89,15 @@ const request = computed(() => {
   // Comma-joined ids are an AND, so a sub-genre stacks on top of Animation.
   const genres = [...new Set([props.anime ? ANIMATION : null, genre.value].filter(g => g !== null))]
 
+  // Parental controls: filter by certification on discover endpoints (movies only;
+  // TV content ratings are per-episode and not filterable via discover).
+  const settings = useSettingsStore()
+  const parentalParams: Record<string, unknown> = {}
+  if (settings.parentalEnabled && isMovie) {
+    parentalParams.certification_country = 'US'
+    parentalParams['certification.lte'] = settings.parentalMaxRating
+  }
+
   return {
     path: `/discover/${props.type}`,
     type: props.type,
@@ -86,6 +106,7 @@ const request = computed(() => {
       with_genres: genres.join(',') || undefined,
       with_original_language: props.anime ? 'ja' : undefined,
       ...sorting[category.value],
+      ...parentalParams,
       ...props.extraParams,
     },
   }
@@ -97,34 +118,39 @@ const { items, pending, error, done, loadMore } = useMediaFeed(request)
 <template>
   <div class="flex h-full flex-col">
     <options-bar :active="filtered ? 1 : 0">
-      <!-- Chips only from lg up, where the row has room for five of them beside
-           the genre filter, poster slider and layout toggle. Below that — a
-           phone, or a desktop window in the md–lg band — they'd crowd those
-           controls off the bar, so the category collapses to a dropdown. It
-           stays on the bar either way; the genre filter beside it is the one
-           that goes behind the button once OptionsBar runs out of room. -->
-      <v-chip-group
-        v-if="lgAndUp"
-        v-model="category"
-        mandatory
-        selected-class="bg-primary text-on-primary font-medium"
-      >
-        <v-chip
-          v-for="option in categories"
-          :key="option.value"
-          :value="option.value"
-          :text="option.title"
-          size="small"
+      <div class="flex min-w-0 items-center gap-4">
+        <h1 v-if="pageTitle" class="text-title-large shrink-0 font-bold">
+          {{ pageTitle }}
+        </h1>
+        <!-- Chips only from lg up, where the row has room for five of them beside
+             the genre filter, poster slider and layout toggle. Below that — a
+             phone, or a desktop window in the md–lg band — they'd crowd those
+             controls off the bar, so the category collapses to a dropdown. It
+             stays on the bar either way; the genre filter beside it is the one
+             that goes behind the button once OptionsBar runs out of room. -->
+        <v-chip-group
+          v-if="lgAndUp"
+          v-model="category"
+          mandatory
+          selected-class="bg-primary text-on-primary font-medium"
+        >
+          <v-chip
+            v-for="option in categories"
+            :key="option.value"
+            :value="option.value"
+            :text="option.title"
+            size="small"
+          />
+        </v-chip-group>
+        <v-select
+          v-else
+          v-model="category"
+          :items="categories"
+          item-title="title"
+          item-value="value"
+          class="max-w-52 shrink-0 md:w-52 md:max-w-none"
         />
-      </v-chip-group>
-      <v-select
-        v-else
-        v-model="category"
-        :items="categories"
-        item-title="title"
-        item-value="value"
-        class="max-w-52 shrink-0 md:w-52 md:max-w-none"
-      />
+      </div>
 
       <!-- Inline while the row can hold it, in a bottom sheet when it can't.
            The `md:` widths are the bar's; in the sheet it takes the full row. -->

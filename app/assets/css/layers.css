@@ -192,6 +192,13 @@
   .no-scrollbar::-webkit-scrollbar {
     display: none;
   }
+
+  /* overscroll-behavior: prevent chain-scrolling between rows and page.
+     scroll-behavior: smooth ONLY on horizontal scroll rows — vertical page
+     scrolling must stay native for trackpad/touch momentum. */
+  .overflow-x-auto {
+    overscroll-behavior-x: contain;
+  }
 }
 
 /* The four entrances, unlayered because a `@keyframes` name is global and takes
