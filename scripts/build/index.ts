@@ -465,7 +465,7 @@ async function devAndroid(extra: string[]) {
   // against http://tauri.localhost, naming neither the address nor the port it
   // actually failed to reach. Loopback over adb has none of those moving parts
   // and works over USB with the wifi off.
-  run(['tauri', 'android', 'dev', '--host', '127.0.0.1', ...extra], env)
+  run(['tauri', 'android', 'dev', '--host', '0.0.0.0', ...extra], env)
 }
 
 function adbDevices() {

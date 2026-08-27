@@ -190,6 +190,11 @@ export default defineNuxtConfig({
       watch: {
         ignored: ['**/src-tauri/**'],
       },
+      ws: {
+        protocol: 'ws',
+        host: host || '0.0.0.0',
+        clientPort: 3000,
+      },
     },
     optimizeDeps: {
       include: ['@mdi/js'],
