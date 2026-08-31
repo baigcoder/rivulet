@@ -80,7 +80,7 @@ impl PremiumRepository {
         );
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(connection_id.to_string())];
         if let Some(cat) = cat_filter {
-            sql.push_str(" AND c.category_id = ?");
+            sql.push_str(" AND c.category_name = ?");
             params.push(Box::new(cat.to_string()));
         }
         if let Some(c) = country_filter {
@@ -123,7 +123,7 @@ impl PremiumRepository {
         let mut count_params: Vec<Box<dyn rusqlite::ToSql>> =
             vec![Box::new(connection_id.to_string())];
         if let Some(cat) = cat_filter {
-            count_sql.push_str(" AND c.category_id = ?");
+            count_sql.push_str(" AND c.category_name = ?");
             count_params.push(Box::new(cat.to_string()));
         }
         if let Some(c) = country_filter {

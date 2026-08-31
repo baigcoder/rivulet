@@ -549,12 +549,16 @@ export const useLiveTvStore = defineStore('liveTv', () => {
 
   function setCountry(country: string): void {
     selectedCountry.value = country
+    searchQuery.value = ''
+    searchDebounced.value = ''
     loadVisible({ reset: true })
   }
 
   function setCategory(category: string): void {
     selectedCategory.value = category
     view.value = 'category'
+    searchQuery.value = ''
+    searchDebounced.value = ''
     loadVisible({ reset: true })
   }
 
@@ -573,17 +577,23 @@ export const useLiveTvStore = defineStore('liveTv', () => {
     if (next !== 'category')
       selectedCategory.value = ''
     favoritesOnly.value = next === 'favorites'
+    searchQuery.value = ''
+    searchDebounced.value = ''
     if (next !== 'recent')
       loadVisible({ reset: true })
   }
 
   function setGroup(group: LiveGroup): void {
     selectedGroup.value = group
+    searchQuery.value = ''
+    searchDebounced.value = ''
     loadVisible({ reset: true })
   }
 
   function setLanguage(language: string): void {
     selectedLanguage.value = language
+    searchQuery.value = ''
+    searchDebounced.value = ''
     loadVisible({ reset: true })
   }
 

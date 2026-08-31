@@ -600,6 +600,8 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
   function setView(next: PremiumView): void {
     if (next !== 'category')
       selectedCategory.value = ''
+    searchQuery.value = ''
+    searchDebounced.value = ''
     view.value = next
     void loadChannels({ reset: true })
   }
@@ -607,6 +609,8 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
   function setCategory(name: string): void {
     selectedCategory.value = name
     view.value = name ? 'category' : 'all'
+    searchQuery.value = ''
+    searchDebounced.value = ''
     void loadChannels({ reset: true })
   }
 
