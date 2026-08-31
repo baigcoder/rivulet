@@ -39,7 +39,7 @@ use std::time::{Duration, Instant};
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use tauri::Emitter;
-use windows_sys::Win32::Foundation::{ERROR_PIPE_BUSY, HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows_sys::Win32::Foundation::{ERROR_PIPE_BUSY, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{
 	CombineRgn, CreateRectRgn, DeleteObject, GetStockObject, ScreenToClient, SetWindowRgn,
 	BLACK_BRUSH, RGN_DIFF,
@@ -49,8 +49,8 @@ use windows_sys::Win32::System::Pipes::WaitNamedPipeW;
 use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
 	CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW,
-	GetWindow, IsChild, LoadCursorW, PostMessageW, PostQuitMessage, RegisterClassExW, SetWindowPos,
-	ShowWindow, TranslateMessage, WindowFromPoint, GW_CHILD, HWND_TOP, IDC_ARROW, MSG,
+	GetWindow, GetWindowRect, LoadCursorW, PostMessageW, PostQuitMessage, RegisterClassExW,
+	SetWindowPos, ShowWindow, TranslateMessage, GW_CHILD, HWND_TOP, IDC_ARROW, MSG,
 	SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE,
 	SW_SHOWNOACTIVATE, WM_CLOSE, WM_DESTROY, WM_LBUTTONDOWN, WM_MOUSEACTIVATE, WM_MOUSEWHEEL,
 	WM_SETFOCUS, WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_EX_NOPARENTNOTIFY,
@@ -315,12 +315,17 @@ impl Embed {
 			if GetCursorPos(&mut pt) == 0 {
 				return None; // no cursor to read (locked session, secure desktop)
 			}
-			// WindowFromPoint honours window regions, so a point inside one of
-			// the control cutouts comes back as the webview rather than as us —
-			// which saves testing the point against the cutouts by hand, and
-			// stays right even while a bar is mid-slide.
-			let hit = WindowFromPoint(pt);
-			let over = hit == self.hwnd() || IsChild(self.hwnd(), hit) != 0;
+			// The bounding rect of the mpv window is the only "over" we trust:
+			// anywhere inside it is the picture except for the cutouts, and
+			// `WindowFromPoint` returns the webview over a cutout (the region
+			// punches a hole through to it), which is not the mpv HWND and not
+			// its child — so the previous `IsChild` test only matched the
+			// picture itself, not the cutouts, and the auto-hide timer hid the
+			// chrome and never brought it back. Both cases mean the user is at
+			// the screen looking at the film.
+			let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+			GetWindowRect(self.hwnd(), &mut rect);
+			let over = pt.x >= rect.left && pt.x < rect.right && pt.y >= rect.top && pt.y < rect.bottom;
 			ScreenToClient(self.hwnd(), &mut pt);
 			Some((pt.x, pt.y, over))
 		}
@@ -492,6 +497,13 @@ fn mpv_binary(app: &tauri::AppHandle) -> std::ffi::OsString {
 /// **physical** pixels, relative to the app window's client-area top-left
 /// (i.e. the webview viewport origin). The frontend keeps this in sync via
 /// `player_set_geometry` as its DOM box moves/resizes.
+///
+/// `user_agent` and `referer` are forwarded as mpv command-line flags so
+/// the IPTV proxy path's per-stream UA/Referer (parsed from
+/// `#EXTVLCOPT:http-user-agent=` and `http-referrer=` in the M3U, or
+/// derived from the Xtream provider's expectations) is honoured by mpv
+/// itself. Without these, IPTV upstreams that reject the webview's UA
+/// would also reject mpv's `User-Agent: Lavf/...` string.
 #[tauri::command]
 pub fn player_start(
 	app: tauri::AppHandle,
@@ -502,6 +514,8 @@ pub fn player_start(
 	y: i32,
 	width: u32,
 	height: u32,
+	user_agent: Option<String>,
+	referer: Option<String>,
 ) -> Result<(), String> {
 	// A degenerate box means the webview hadn't laid out yet. Embedding mpv into
 	// a 1x1 window makes it fail to bring up its video output and exit silently
@@ -527,7 +541,8 @@ pub fn player_start(
 	let log = std::env::temp_dir().join(format!("rivulet-mpv-{}.log", std::process::id()));
 	let _ = std::fs::remove_file(&log);
 
-	let spawn = std::process::Command::new(mpv_binary(&app))
+	let mut command = std::process::Command::new(mpv_binary(&app));
+	command
 		.arg(format!("--wid={}", embed.hwnd))
 		.arg("--force-window=yes")
 		.arg("--no-config") // ignore any user mpv config for predictability
@@ -550,9 +565,14 @@ pub fn player_start(
 		.arg(format!("--log-file={}", log.display()))
 		// mpv.exe is a GUI binary and would not open one anyway, but a console
 		// flashing up on every play is not worth risking.
-		.creation_flags(CREATE_NO_WINDOW)
-		.arg(&url)
-		.spawn();
+		.creation_flags(CREATE_NO_WINDOW);
+	if let Some(ua) = user_agent.filter(|s| !s.is_empty()) {
+		command.arg(format!("--user-agent={ua}"));
+	}
+	if let Some(rf) = referer.filter(|s| !s.is_empty()) {
+		command.arg(format!("--referrer={rf}"));
+	}
+	let spawn = command.arg(&url).spawn();
 
 	match spawn {
 		Ok(mpv) => {
@@ -726,7 +746,9 @@ pub fn player_status(state: tauri::State<'_, PlayerState>) -> PlayerStatus {
 			} else {
 				lines
 			};
-			tail.join("\n").chars().take(1200).collect()
+			// See player_socket::log_tail — a live stream URL has the account's
+			// password in its path and this string leaves the process.
+			crate::log_redact::redact(&tail.join("\n")).chars().take(1200).collect()
 		})
 	};
 

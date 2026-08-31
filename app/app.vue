@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { applyTheme, paintedTheme } from '~/theme/themes'
+import { pushEntitlement } from '~/utils/premiumTv'
 
 // The settings page only writes preferences; this is where the two global ones
 // take effect. It sits in app.vue rather than a plugin because `useTheme()`
@@ -144,6 +145,28 @@ if (legacyZoom) {
     },
   })
 }
+
+/**
+ * The Premium TV entitlement, pushed to the API process.
+ *
+ * The gate on the Rust side defaults to *denied*, so this is what turns
+ * Premium TV on at all — and it is a watcher rather than a call beside
+ * each place the tier is written, because the settings page is not the
+ * only writer: a restored backup carries these two keys as well. Every
+ * request the API serves re-checks its own copy, including the stream
+ * redirector, so a copy that is never pushed means a UI that says
+ * "premium" over a pipe that answers 403.
+ *
+ * `0` means "not subscribed" in the store and "no expiry" to the Rust
+ * side, so a falsy timestamp travels as `null`.
+ */
+watch(
+  () => [settings.subscriptionTier, settings.subscriptionExpiresAt] as const,
+  ([tier, expiresAt]) => {
+    void pushEntitlement(tier, expiresAt || null)
+  },
+  { immediate: true },
+)
 
 // One check a launch, for the badge in the toolbar. Deliberately not awaited and
 // never fatal: it is a GitHub request, and being offline is the ordinary case.

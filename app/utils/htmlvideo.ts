@@ -6,10 +6,11 @@
  * do. What both have is a torrent engine already serving byte ranges over http
  * on 127.0.0.1, so they can open the very URL mpv would have.
  *
- *   - `exoEngine` — Android. ExoPlayer behind a `@JavascriptInterface`, on the
- *     device's own MediaCodec decoders (see `Player.kt`). The one to use where
- *     it exists: Chromium ships with Dolby and DTS disabled whatever the
- *     hardware can do, and it hides the file's own audio and subtitle tracks.
+ *   - `vlcEngine` — Android. libVLC behind a `@JavascriptInterface`, on the
+ *     device's own decoders (see `VlcPlayer.kt`). The one to use where it
+ *     exists: libVLC ships its own FFmpeg, so it decodes E-AC-3, DTS and
+ *     TrueHD on every device, and exposes the file's own audio and
+ *     subtitle tracks.
  *   - `videoEngine` — a plain browser, which is `bun run dev`. The webview's
  *     `<video>`, with the limitations that implies: no muxed tracks (Chromium's
  *     demuxer keeps them to itself) and no codec the webview was not built
@@ -76,8 +77,8 @@ export interface PlayerEngine {
   status: () => { running: boolean, log_tail: string | null }
 }
 
-/** The bridge `MainActivity` installs on Android. See `Player.kt`. */
-interface ExoBridge {
+/** The bridge `MainActivity` installs on Android. See `VlcPlayer.kt`. */
+interface VlcBridge {
   start: (url: string) => void
   stop: () => void
   command: (json: string) => string
@@ -86,13 +87,13 @@ interface ExoBridge {
   codecs: () => string
 }
 
-function exoBridge(): ExoBridge | null {
-  return (globalThis as { RivuletPlayer?: ExoBridge }).RivuletPlayer ?? null
+function vlcBridge(): VlcBridge | null {
+  return (globalThis as { RivuletPlayer?: VlcBridge }).RivuletPlayer ?? null
 }
 
-/** Is ExoPlayer behind the controls? Android only, and only once the page is in it. */
-export function hasExoPlayer() {
-  return !!exoBridge()
+/** Is libVLC behind the controls? Android only, and only once the page is in it. */
+export function hasVlcPlayer() {
+  return !!vlcBridge()
 }
 
 let codecCache: Set<string> | null = null
@@ -108,7 +109,7 @@ let codecCache: Set<string> | null = null
 export function deviceCodecs(): Set<string> | null {
   if (codecCache)
     return codecCache
-  const bridge = exoBridge()
+  const bridge = vlcBridge()
   if (!bridge)
     return null
   try {
@@ -125,7 +126,7 @@ export function deviceCodecs(): Set<string> | null {
  * backend only has to remember what `track-list` should say and which one is
  * picked.
  *
- * Ids start above `EXTERNAL` because ExoPlayer numbers the tracks it found
+ * Ids start above `EXTERNAL` because libVLC numbers the tracks it found
  * inside the file from 1 and the two lists are shown as one menu — and because
  * which side owns an id is then a comparison rather than a lookup.
  */
@@ -175,6 +176,47 @@ function mediaError(e: MediaError | null) {
 }
 
 /**
+ * Whether the element can open an HLS playlist by itself.
+ *
+ * Safari and every iOS webview can; Chromium — which is what WebView2, WebKitGTK
+ * and the Android System WebView all are here — cannot, and hands `<video>` an
+ * `.m3u8` it treats as a corrupt file. So a live channel that plays on a Mac
+ * shows "nothing on this device can open that file" everywhere else, which is
+ * the single most common way an IPTV stream appears broken.
+ *
+ * `canPlayType` is missing on the stand-in element `check:player` drives, hence
+ * the guard rather than a bare call.
+ */
+function nativeHls(video: HTMLVideoElement): boolean {
+  if (typeof video.canPlayType !== 'function')
+    return false
+  return !!video.canPlayType('application/vnd.apple.mpegurl')
+    || !!video.canPlayType('application/x-mpegURL')
+}
+
+/**
+ * Does this URL name an HLS playlist?
+ *
+ * The extension, and then the path — a provider's live endpoint is routinely
+ * `.../live/user/pass/1234.m3u8`, but plenty answer `.../1234` with an
+ * `application/vnd.apple.mpegurl` body and no extension at all. Guessing wrong
+ * in the permissive direction costs one failed `hls.js` attach and a fall back
+ * to the element; guessing wrong the other way is a channel that never plays.
+ */
+function looksLikeHls(url: string): boolean {
+  const path = url.split(/[?#]/, 1)[0] ?? url
+  return /\.m3u8?$/i.test(path) || /[/.]m3u8?(?:[?#]|$)/i.test(url)
+}
+
+/** The slice of hls.js this module uses, so the import needs no `any`. */
+interface HlsInstance {
+  loadSource: (url: string) => void
+  attachMedia: (el: HTMLVideoElement) => void
+  destroy: () => void
+  on: (event: string, cb: (event: string, data: { fatal?: boolean, type?: string, details?: string }) => void) => void
+}
+
+/**
  * Drive `video` as if it were mpv. One engine per mounted player; the element
  * owns the listeners, so both die together.
  */
@@ -182,6 +224,63 @@ export function videoEngine(video: HTMLVideoElement): PlayerEngine {
   const ext = externalSubs()
   let running = false
   let failure = ''
+  /** The hls.js instance driving the element, where one is needed. */
+  let hls: HlsInstance | null = null
+
+  /**
+   * Let go of hls.js. Called before every `start` and on `stop`, because a
+   *  live instance left attached keeps its own loader polling the playlist.
+   */
+  function dropHls() {
+    if (!hls)
+      return
+    try {
+      hls.destroy()
+    }
+    catch { /* already torn down */ }
+    hls = null
+  }
+
+  /**
+   * Play an HLS playlist through hls.js. `false` when it could not be used, so
+   * the caller falls back to handing the URL straight to the element.
+   *
+   * The import is dynamic on purpose: hls.js is ~150KB after gzip and the
+   * overwhelming majority of what this app plays is a progressive file out of
+   * the torrent engine. Loading it only when a playlist actually turns up keeps
+   * it off the boot path of a TV that is slow to parse script as it is.
+   */
+  async function attachHls(url: string): Promise<boolean> {
+    try {
+      const mod = await import('hls.js')
+      const Hls = mod.default
+      if (!Hls?.isSupported())
+        return false
+      // A live playlist wants a short back-buffer: the default keeps
+      // everything played, which on a channel left on for an hour is hundreds
+      // of megabytes of segments a TV does not have to spare.
+      hls = new Hls({ backBufferLength: 30, enableWorker: true }) as unknown as HlsInstance
+      hls.on('hlsError', (_e, data) => {
+        // Only a fatal error is a failure. hls.js recovers from the rest on its
+        // own, and reporting those would make the player give up on a channel
+        // that is about to keep playing.
+        if (!data?.fatal || !running)
+          return
+        running = false
+        failure = $t('The live stream stopped responding.')
+      })
+      hls.loadSource(url)
+      hls.attachMedia(video)
+      return true
+    }
+    catch {
+      // No bundle (a stripped build), or the constructor threw. The element
+      // gets the URL directly, which is right on Safari and no worse than
+      // nothing anywhere else.
+      dropHls()
+      return false
+    }
+  }
 
   // `running` is what the poll's liveness check reads: false after the file
   // plays out is end-of-playback, false with a message is a failure.
@@ -262,6 +361,15 @@ export function videoEngine(video: HTMLVideoElement): PlayerEngine {
     async start(url: string) {
       failure = ''
       running = true
+      dropHls()
+      // An HLS playlist the element cannot parse goes through hls.js; anything
+      // else — a progressive file from the torrent engine, an MPEG-TS live
+      // stream, a debrid URL — goes straight to the element, which is what
+      // handles those best.
+      if (looksLikeHls(url) && !nativeHls(video) && await attachHls(url)) {
+        await video.play().catch(() => {})
+        return
+      }
       video.src = url
       video.load()
       await video.play().catch(() => {})
@@ -270,6 +378,7 @@ export function videoEngine(video: HTMLVideoElement): PlayerEngine {
     stop() {
       running = false
       video.pause()
+      dropHls()
       // Let go of the source properly: left attached, the element keeps a
       // reader open on the engine's stream endpoint for the whole session.
       video.removeAttribute('src')
@@ -302,16 +411,16 @@ export function videoEngine(video: HTMLVideoElement): PlayerEngine {
 }
 
 /**
- * Drive ExoPlayer as if it were mpv, or null where there is no bridge to drive.
+ * Drive libVLC as if it were mpv, or null where there is no bridge to drive.
  *
- * Everything real happens in `Player.kt`; this is the translation and the one
+ * Everything real happens in `VlcPlayer.kt`; this is the translation and the one
  * thing Kotlin is deliberately not told about — external subtitles, which the
  * page owns end to end. Their ids are merged into the file's own `track-list`
- * so the menu shows one list, and picking one turns ExoPlayer's text renderer
+ * so the menu shows one list, and picking one turns libVLC's text renderer
  * off so the two don't draw over each other.
  */
-export function exoEngine(): PlayerEngine | null {
-  const bridge = exoBridge()
+export function vlcEngine(): PlayerEngine | null {
+  const bridge = vlcBridge()
   if (!bridge)
     return null
 
@@ -357,7 +466,7 @@ export function exoEngine(): PlayerEngine | null {
       }
       if (Array.isArray(out['track-list']))
         out['track-list'] = [...out['track-list'], ...ext.list]
-      // ExoPlayer reports 'no' while the page is drawing one of ours, which the
+      // libVLC reports 'no' while the page is drawing one of ours, which the
       // menu would read as subtitles being off.
       if ('sid' in out && ext.sid !== 'no')
         out.sid = ext.sid

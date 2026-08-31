@@ -66,6 +66,8 @@ const ORDER: string[][] = [
   ['hulu'],
   ['amc plus', 'amc'],
   ['disney plus', 'disney+'],
+  ['crunchyroll'],
+  ['peacock'],
 ]
 
 /**

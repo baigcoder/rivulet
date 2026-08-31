@@ -197,7 +197,29 @@ export default defineNuxtConfig({
       },
     },
     optimizeDeps: {
-      include: ['@mdi/js'],
+      // The desktop WebView asks for route modules while Vite is still
+      // discovering Tauri's small ESM packages. Those packages share a
+      // generated `core-*.js` chunk; an on-demand re-optimisation replaces
+      // that chunk while the WebView is importing it, producing the missing
+      // optimized-dependency error. Pre-bundle the complete desktop bridge in
+      // one initial pass so its chunk names stay stable for the whole session.
+      include: [
+        '@mdi/js',
+        '@tauri-apps/api/app',
+        '@tauri-apps/api/core',
+        '@tauri-apps/api/event',
+        '@tauri-apps/api/path',
+        '@tauri-apps/api/webviewWindow',
+        '@tauri-apps/plugin-deep-link',
+        '@tauri-apps/plugin-dialog',
+        '@tauri-apps/plugin-fs',
+        '@tauri-apps/plugin-notification',
+        '@tauri-apps/plugin-os',
+        '@tauri-apps/plugin-process',
+        '@tauri-apps/plugin-shell',
+        '@tauri-apps/plugin-store',
+        '@tauri-apps/plugin-updater',
+      ],
     },
   },
 

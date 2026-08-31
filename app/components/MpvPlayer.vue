@@ -21,6 +21,7 @@ import {
   mdiInformationOutline,
   mdiMinus,
   mdiPause,
+  mdiPictureInPictureBottomRight,
   mdiPlay,
   mdiPlaySpeed,
   mdiPlus,
@@ -56,7 +57,7 @@ import { inCredits, inIntro, progressKey, saveCredits, saveIntro } from '~/utils
 // backend, which subtracts them from mpv's window. The page then shows through
 // those holes — clicks included — while the video window itself never resizes,
 // so nothing rescales when a bar slides in. macOS is the other way round (the
-// view is *under* WebKit, as ExoPlayer's surface is under it on Android), and
+// view is *under* WebKit, as libVLC's surface is under it on Android), and
 // there the bars are ordinary DOM over a transparent page — see `overlay`.
 //
 // The native window knows nothing about page layout, so geometry is pushed every
@@ -106,21 +107,60 @@ const props = defineProps<{
   autoOpenQuality?: boolean
   /** Quality label from the source, e.g. "4k DV | HDR". Used to detect HDR content. */
   quality?: string
+  /**
+   * Live stream mode hides the VOD-only chrome (seek bar, position,
+   * duration, chapter markers, end-of-playback countdown, "next
+   * episode" CTA). The page mounts `<live-tv-live-player-overlay>`
+   * over the player with its own transport and channel-zap buttons.
+   * Default is `'vod'`, which is what movies and TV shows use.
+   */
+  mode?: 'vod' | 'live'
+  /**
+   * IPTV streams declare their own User-Agent / Referer in the
+   * M3U's `#EXTVLCOPT:http-user-agent=` and `http-referrer=` lines
+   * (or per-channel for Xtream). When present, the native mpv
+   * child process is launched with `--user-agent=` and `--referrer=`
+   * so the upstream sees the same headers it would see through the
+   * IPTV proxy. Ignored on the webview and engine paths.
+   */
+  userAgent?: string | null
+  referer?: string | null
 }>()
 
 const emit = defineEmits<{
   /** The stream died and another candidate exists to try — the parent swaps URLs. Reason flags why, for the last-candidate message. */
-  failed: [reason?: 'stub' | 'dead']
+  failed: [reason?: 'stub' | 'dead' | 'refused']
   useCandidate: [index: number]
   /** The self-introducing Quality menu fired; the parent can stop offering it. */
   autoOpened: []
 }>()
 
 /**
- * Which backend is behind these controls. Where mpv can be embedded it is;
- * elsewhere ExoPlayer or the page's own `<video>` opens the same stream URL and
- * answers the same commands (see utils/htmlvideo.ts), so everything below this
- * line is written once.
+ * How long a stale native cursor sample keeps `cursorOverVideo` true. A second
+ * and a bit is longer than the 200ms poll interval, so a cursor that genuinely
+ * left the video window still gets a clean "no" within a beat; it is also
+ * shorter than `IDLE_MS`, so the chrome can hide after the cursor goes without
+ * first having to outwait a stale flag. Module-level so `poll()` can read it
+ * from inside the script (it is defined before any state).
+ */
+const CURSOR_STALE_MS = 1200
+/**
+ * The OS cursor is over the picture, not over a bar. The DOM can never say this
+ * on the desktop-overlay path: mpv's window sits in front of the webview and
+ * the webview sees no mouse events there. Only the Rust side (`player_pointer`)
+ * and mpv's own `mouse-pos` know, and they are the ones that flip this on and
+ * off. While it is true the chrome should stay up — the user is at the screen
+ * looking at the film — which is the whole point of the bar in the first place.
+ * The stale-sampler in `poll()` flips it off after a beat, so a cursor that has
+ * genuinely left the window still lets the chrome hide.
+ */
+const cursorOverVideo = ref(false)
+
+/**
+  * Which backend is behind these controls. Where mpv can be embedded it is;
+  * elsewhere libVLC or the page's own `<video>` opens the same stream URL and
+  * answers the same commands (see utils/htmlvideo.ts), so everything below this
+  * line is written once.
  *
  * The differences the rest of the file has to know about are exactly four: the
  * native window needs geometry and cutouts pushed at it, only mpv draws its own
@@ -137,22 +177,22 @@ const native = hasNativePlayer()
 const overlay = hasVideoOverlay()
 
 /**
- * Android's backend: ExoPlayer on the device's own decoders, behind the same
- * protocol (see utils/htmlvideo.ts and Player.kt). Not `native` — it draws
- * nothing but the picture, so the OSD, the cues and every control below are the
- * page's exactly as they are for the `<video>` path. What it does share with mpv
- * is painting *outside* the webview, so the page has to be transparent down to
- * the box for any of it to be visible.
+  * Android's backend: libVLC on the device's own decoders, behind the same
+  * protocol (see utils/htmlvideo.ts and VlcPlayer.kt). Not `native` — it draws
+  * nothing but the picture, so the OSD, the cues and every control below are the
+  * page's exactly as they are for the `<video>` path. What it does share with mpv
+  * is painting *outside* the webview, so the page has to be transparent down to
+  * the box for any of it to be visible.
  */
-const exo = hasExoPlayer()
+const vlc = hasVlcPlayer()
 
 /**
- * Is the picture painted behind the webview? ExoPlayer's surface and macOS's
+ * Is the picture painted behind the webview? libVLC's surface and macOS's
  * mpv view both are, and the page's side of that is identical for the two: it
  * has to stop painting over the box (`rivulet-video` below), and the taps land
  * on the page because there is no picture element under the finger.
  */
-const behind = exo || (native && !overlay)
+const behind = vlc || (native && !overlay)
 
 /**
  * Does play/pause live in the bottom bar rather than dead centre?
@@ -165,14 +205,29 @@ const behind = exo || (native && !overlay)
  * transport there costs nothing and stops the picture being covered by the one
  * control that is up the longest, on the one screen watched from across a room.
  */
-const barTransport = computed(() => overlay || isTv() === true)
-
 /**
  * A finger, not a pointer. Controls get thumb-sized, the volume slider goes
  * away (a phone's own buttons own volume), and a tap on the picture shows the
  * chrome rather than pausing — which is what every other player on a phone does.
  */
-const touch = useMediaQuery('(pointer: coarse)')
+// Android WebView often advertises `(pointer: fine)`, even on a phone. The
+// native platform is the reliable signal there; without it Android accidentally
+// selects the desktop control sheet, which obscures the lower half of video.
+const coarsePointer = useMediaQuery('(pointer: coarse)')
+const touch = computed(() => coarsePointer.value || isAndroid())
+
+/**
+ * Live TV mode hides the VOD-only chrome: seek bar, rewind/forward,
+ * chapter markers, end-of-playback countdown, and the "next
+ * episode" CTA. The page mounts `<live-tv-live-player-overlay>` over
+ * the player with its own transport and channel-zap buttons.
+ */
+const isLive = computed(() => props.mode === 'live')
+
+// A phone has no pointer hovering over the video, so the centre transport only
+// obscures the picture after every tap. Keep it in the compact bottom chrome
+// alongside TV and native-overlay playback.
+const barTransport = computed(() => touch.value || overlay || isTv() === true)
 
 // Every overlay surface is opaque and hairline-bordered on purpose: it sits in a
 // hole punched out of the native window, so what's behind it is the page, never
@@ -181,7 +236,14 @@ const touch = useMediaQuery('(pointer: coarse)')
 // With no hole there is no edge to be sliced at, so the bars can sit over the
 // picture the way every other player's do. No blur: a full-width backdrop
 // filter over live video is exactly the frame budget a TV box hasn't got.
-const SURFACE = computed(() => overlay ? 'bg-[#0e0f11] border-white/9' : 'bg-[#0e0f11]/85 border-white/9')
+const SURFACE = computed(() => {
+  // On a phone the native picture is behind the page, not in a cut-out window.
+  // A solid toolbar therefore hides a large strip of the film and makes the
+  // player look as if it only occupies the top half of the screen.
+  if (touch.value)
+    return 'border-transparent bg-transparent'
+  return overlay ? 'bg-[#0e0f11] border-white/9' : 'bg-[#0e0f11]/85 border-white/9'
+})
 
 /** Square icon button in the bars and the menu head. */
 const ICO = computed(() => `inline-flex items-center justify-center border-0 bg-transparent text-white opacity-86 transition-colors transition-opacity duration-120 hover:bg-white/12 hover:opacity-100 disabled:pointer-events-none disabled:opacity-30 rounded-lg ${touch.value ? 'h-11 min-w-11' : 'h-9.5 min-w-9.5'}`)
@@ -236,6 +298,7 @@ const cacheEnd = ref(0)
 const volume = ref(100)
 const muted = ref(false)
 const speed = ref(1)
+
 const scrubbing = ref(false)
 /** While the volume slider is being dragged, the poll must not fight it back. */
 const volumeHeld = ref(false)
@@ -281,6 +344,50 @@ function clearLoop() {
 // ---------------------------------------------------------------------------
 /** The stream is the local engine's, rather than a link a source resolved itself. */
 const fromEngine = computed(() => props.src.startsWith(ENGINE))
+
+/**
+ * The stream is going through the local IPTV proxy (port 3031).
+ * Live HLS streams proxied here need the same patient treatment as
+ * torrent streams: the upstream may take a moment to respond, and
+ * Range requests are often rejected (416/400) by HLS manifest servers
+ * — that is not a dead stream, it is just an HLS server.
+ */
+const PROXY = 'http://127.0.0.1:3031'
+const fromProxy = computed(() => props.src.startsWith(PROXY))
+
+/**
+ * The stream is the Premium TV redirector (port 3032), which answers a 302
+ * to the upstream after re-checking the entitlement.
+ *
+ * Deliberately not folded into `fromProxy`, because it is the same in two
+ * ways and different in a third. Same: it is a live stream on loopback, so
+ * it needs the patient first-response window, and it has a page above it
+ * that owns the failure — the premium watch page reconnects with backoff,
+ * which only it can decide to do, so a dead stream is emitted rather than
+ * drawn here. Different: the headers still have to reach mpv, because a
+ * `User-Agent` set on a 302 says nothing about the request mpv makes to
+ * the `Location` it names. So it stays inside `fromIptv` below.
+ */
+const PREMIUM_API = 'http://127.0.0.1:3032'
+const fromPremium = computed(() => props.src.startsWith(PREMIUM_API))
+
+/** One of our own loopback live servers: patient, and it tells the page. */
+const localLive = computed(() => fromProxy.value || fromPremium.value)
+
+/**
+ * The stream is an IPTV channel — Xtream `live/{user}/{pass}/{id}.m3u8`,
+ * a raw M3U playlist URL, or a Xtream catch-up `streaming/timeshift.php`
+ * URL. All of these are upstream HTTP(S) that mpv (with ffmpeg decoders)
+ * can play directly on desktop, which is what the player does here so
+ * the webview's codec limits (no AC-3/E-AC-3/DTS passthrough, weak HLS)
+ * don't pin the IPTV experience to the browser.
+ */
+const IPTV_PROTOCOLS = ['http://', 'https://', 'rtsp://', 'rtmp://', 'mms://']
+const fromIptv = computed(() => {
+  if (fromEngine.value || fromProxy.value)
+    return false
+  return IPTV_PROTOCOLS.some(p => props.src.startsWith(p))
+})
 
 const showStats = ref(false)
 const statsData = ref<{ download: string, upload: string, peers: number, progress: number } | null>(null)
@@ -342,8 +449,22 @@ async function readProps<T = Record<string, any>>(names: string[]): Promise<T | 
   }
 }
 
+/**
+ * Is the chrome up? Declared this high because both the cursor poll below and
+ * `subPos` — which measures the subtitle line against the bottom bar — read it.
+ */
+const ui = ref(true)
+/** The chrome's auto-hide, cleared from `poll` as well as from the chrome. */
+let hideTimer: ReturnType<typeof setTimeout> | null = null
+
 /** Cursor position in the video window, on the backends that can say. See `poll`. */
 interface Pointer { x: number, y: number, over: boolean }
+
+// X11/XWayland can deny cursor queries in some compositors. In that case an
+// auto-hiding control bar is worse than a persistent one: there is no gesture
+// that can bring it back. After a few failed native queries we keep it visible.
+const nativeHoverUnavailable = ref(false)
+let nativePointerMisses = 0
 
 async function readPointer(): Promise<Pointer | null> {
   // Only a surface in front of the page can swallow the cursor. A <video>, and
@@ -352,9 +473,25 @@ async function readPointer(): Promise<Pointer | null> {
   if (!overlay)
     return null
   try {
-    return await invoke<Pointer | null>('player_pointer')
+    const pointer = await invoke<Pointer | null>('player_pointer')
+    if (pointer) {
+      nativePointerMisses = 0
+      nativeHoverUnavailable.value = false
+      return pointer
+    }
+    if (++nativePointerMisses >= 3 && !nativeHoverUnavailable.value) {
+      nativeHoverUnavailable.value = true
+      ui.value = true
+      noteActivity()
+    }
+    return null
   }
   catch {
+    if (++nativePointerMisses >= 3 && !nativeHoverUnavailable.value) {
+      nativeHoverUnavailable.value = true
+      ui.value = true
+      noteActivity()
+    }
     return null
   }
 }
@@ -428,8 +565,6 @@ const menuEl = ref<HTMLElement | null>(null)
 const { height: menuHeight } = useElementSize(menuEl)
 /** Its own gap from the bottom of the frame — the bottom bar plus a little. */
 const menuBottom = computed(() => touch.value ? 112 : 106)
-/** Is the chrome up? Declared here because `subPos` measures against it. */
-const ui = ref(true)
 /**
  * Where the subtitle line goes. The bottom bar covers the bottom of the picture
  * and mpv draws underneath it, so while the chrome is up the subtitles move
@@ -460,10 +595,10 @@ watch(() => settings.subs, applySubtitleStyle, { deep: true })
 
 // The subtitles the page draws itself, wherever mpv isn't drawing them. Both
 // kinds arrive here: downloaded files as parsed cues, and a track muxed into the
-// file as text ExoPlayer decoded and handed over. The `<video>` path has only
+// file as text libVLC decoded and handed over. The `<video>` path has only
 // the first — Chromium never hands out a muxed track, which is why its menu
 // offers none.
-/** Cues from a track inside the file, which only ExoPlayer can read out. */
+/** Cues from a track inside the file, which only libVLC can read out. */
 const subText = ref('')
 const cueText = computed(() => native
   ? ''
@@ -1280,6 +1415,38 @@ function toggleFullscreen() {
   setWindowFullscreen(!windowFullscreen.value)
 }
 
+/**
+ * Picture-in-picture, which only the webview path can do at all: mpv's
+ * surface is an OS window this process parents to a box on the page, and
+ * the browser API detaches a `<video>` element. So the button exists
+ * exactly where there is a `<video>` and the platform admits to it —
+ * Android's webview and a desktop browser — rather than being drawn
+ * everywhere and doing nothing on the target most people run.
+ */
+const canPip = computed(() =>
+  !native
+  && typeof document !== 'undefined'
+  && document.pictureInPictureEnabled === true,
+)
+
+async function togglePip() {
+  const v = videoEl.value
+  if (!v)
+    return
+  try {
+    if (document.pictureInPictureElement === v)
+      await document.exitPictureInPicture()
+    else
+      await v.requestPictureInPicture()
+  }
+  catch (e) {
+    // A refusal here is the browser's ("not allowed", no video track yet),
+    // not a playback failure — say so on the OSD and leave the stream be.
+    osd($t('Picture-in-picture is not available for this stream.'))
+    console.warn('[player] picture-in-picture refused', e)
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Geometry + cutouts
 // ---------------------------------------------------------------------------
@@ -1379,9 +1546,9 @@ function frame(now: number) {
   // The <video> carries the real clock and reading it costs nothing, so its
   // position is taken rather than interpolated — the cues are drawn off this,
   // and a guess between polls would leave them up to 0.4s off the picture.
-  // ExoPlayer's clock is a bridge call away, which is too much per frame, so
+  // libVLC's clock is a bridge call away, which is too much per frame, so
   // that one runs forward and lets the poll correct it as mpv's does.
-  const clock = exo ? undefined : videoEl.value?.currentTime
+  const clock = vlc ? undefined : videoEl.value?.currentTime
   if (clock != null) {
     if (!scrubbing.value)
       position.value = clock
@@ -1475,11 +1642,15 @@ const { pause: stopPoll, resume: startPoll } = useIntervalFn(poll, 200, { immedi
  */
 async function waitForStream(url: string, timeoutMs = 60000): Promise<{ ok: boolean, status: number, unknown?: boolean, stub?: boolean }> {
   const local = url.startsWith(ENGINE)
-  const deadline = Date.now() + (local ? timeoutMs : 15000)
+  // Proxy URLs are local but serve live streams. Give them a short window
+  // (10s) — enough for a slow upstream to answer the first manifest
+  // request, but not so long the user stares at a spinner for a dead channel.
+  const proxy = url.startsWith(PROXY)
+  const deadline = Date.now() + (local ? timeoutMs : proxy ? 10000 : 15000)
   let status = 0
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(url, { headers: { Range: 'bytes=0-0' } })
+      const res = await fetch(url, proxy ? undefined : { headers: { Range: 'bytes=0-0' } })
       status = res.status
       // Release the connection so librqbit isn't left holding a reader.
       await res.arrayBuffer().catch(() => {})
@@ -1494,10 +1665,28 @@ async function waitForStream(url: string, timeoutMs = 60000): Promise<{ ok: bool
           || (Number.isFinite(total) && total > 0 && total < 3 * 1024 ** 2)
         return { ok: true, status, stub: stubLike }
       }
+      // HLS manifest servers commonly reject Range requests with 416
+      // (Range Not Satisfiable) or 400 (Bad Request) — they serve the
+      // whole manifest or nothing. That is not a dead stream; treat it
+      // as "ok to open" and let the <video> element be the real judge.
+      if (proxy && (status === 416 || status === 400)) {
+        return { ok: true, status }
+      }
+      // A 502 from the proxy means the upstream stream URL is dead —
+      // the proxy reached out and got nothing back. Report it as a dead
+      // stream immediately rather than retrying. Live channels frequently
+      // have dead stream URLs; the player will auto-advance to the next
+      // channel in the zap list.
+      // Also fast-fail 500 (upstream error), 503 (overloaded), and 404
+      // (channel removed) — these won't self-heal and waiting 10s just
+      // makes the app feel stuck.
+      if (proxy && (status === 502 || status === 500 || status === 503 || status === 404)) {
+        return { ok: false, status }
+      }
       // An explicit status from a remote host is final — waiting out a 404
       // only delays the failover. The local engine is different: statuses
       // while it warms up are just "not yet".
-      if (!local && status >= 400)
+      if (!local && !proxy && status >= 400)
         return { ok: false, status }
       if (local && status >= 400 && status < 500)
         return { ok: false, status }
@@ -1545,19 +1734,36 @@ async function startPlayer() {
       return
     }
 
-    // Never hand mpv a URL that isn't serving yet — it exits instantly on a 500.
-    // A torrent stream gets the patient window (peers need time to appear); a
-    // direct link is a server that answers or doesn't — six seconds and the
-    // candidate list moves on.
-    waiting.value = true
-    let probe = await waitForStream(props.src, fromEngine.value ? 60_000 : 6_000)
-    waiting.value = false
-    // A stub clip is a *verdict* — quota gone or key rejected. Fail over like
-    // any dead server, and remember why for the last-one-standing message.
-    if (probe.ok && probe.stub && !fromEngine.value) {
-      const stubbed = { ...probe, ok: false, stub: true, unknown: false, status: probe.status }
-      probe = stubbed
-      stubSeen.value = true
+    // IPTV streams carry the user's Xtream credentials in the URL path
+    // and the upstream never has our webview's origin in CORS headers,
+    // so a `fetch()` probe would always fail (or, worse, leak the
+    // password in the request URL). Native mpv has no CORS constraint
+    // and is the one that opens the stream — let it be the verdict.
+    interface Probe { ok: boolean, status: number, unknown?: boolean, stub?: boolean }
+    let probe: Probe
+    if (fromIptv.value) {
+      probe = { ok: true, status: 0, unknown: true }
+    }
+    else {
+      // Never hand mpv a URL that isn't serving yet — it exits instantly on a 500.
+      // A torrent stream gets the patient window (peers need time to appear);
+      // a proxied live stream gets a medium window (upstream may be slow to
+      // answer the first HLS manifest request); a direct debrid/server link
+      // is a server that answers or doesn't — six seconds and the candidate
+      // list moves on.
+      waiting.value = true
+      probe = await waitForStream(
+        props.src,
+        fromEngine.value ? 60_000 : localLive.value ? 10_000 : 6_000,
+      )
+      waiting.value = false
+      // A stub clip is a *verdict* — quota gone or key rejected. Fail over like
+      // any dead server, and remember why for the last-one-standing message.
+      if (probe.ok && probe.stub && !fromEngine.value) {
+        const stubbed = { ...probe, ok: false, stub: true, unknown: false, status: probe.status }
+        probe = stubbed
+        stubSeen.value = true
+      }
     }
     // `unknown` (the probe was CORS-blocked from even asking) falls through to
     // the opener: media elements don't need the permission fetch wants, so the
@@ -1567,6 +1773,17 @@ async function startPlayer() {
         errorMsg.value = probe.status
           ? $t('The torrent stream isn\'t ready yet (engine replied HTTP {status}). It may still be fetching metadata from peers.', { status: probe.status })
           : $t('Could not reach the torrent engine on 127.0.0.1:3030.')
+      }
+      else if (localLive.value) {
+        // A dead proxy stream means the upstream channel URL is down.
+        // Emit `failed` so the live TV watch page can auto-advance to
+        // the next channel in the zap list — the same mechanism used
+        // for debrid failover. The watch page decides what to show.
+        if (!streamDied()) {
+          errorMsg.value = probe.status
+            ? `${$t('This channel\'s stream is not available')} (HTTP ${probe.status}). ${$t('Try another channel.')}`
+            : $t('This channel\'s stream is not available. Try another channel.')
+        }
       }
       else {
         // Debrid links are minted per request and go stale; searching again is
@@ -1589,6 +1806,16 @@ async function startPlayer() {
       const b = boxEl.value!.getBoundingClientRect()
       measurePx()
       const dpr = pxRatio
+      // IPTV streams carry their own User-Agent / Referer (parsed from
+      // the M3U's #EXTVLCOPT or set per-stream by the Xtream provider).
+      // Without these, mpv's default `Lavf/...` UA gets rejected by
+      // upstreams that whitelist only specific clients.
+      const iptvHeaders = fromIptv.value
+        ? {
+            userAgent: props.userAgent ?? undefined,
+            referer: props.referer ?? undefined,
+          }
+        : {}
       await invoke('player_start', {
         url: props.src,
         ...viewport(dpr),
@@ -1596,10 +1823,11 @@ async function startPlayer() {
         y: Math.round(b.top * dpr),
         width: Math.max(1, Math.round(b.width * dpr)),
         height: Math.max(1, Math.round(b.height * dpr)),
+        ...iptvHeaders,
       })
     }
     else {
-      engine ??= exoEngine() ?? videoEngine(videoEl.value!)
+      engine ??= vlcEngine() ?? videoEngine(videoEl.value!)
       await engine.start(props.src)
     }
 
@@ -1664,8 +1892,22 @@ async function startPlayer() {
  * The current stream just proved unusable. With other servers queued, say so
  * and let the parent advance; its return answers whether anyone is left.
  */
-function streamDied(reason?: 'stub' | 'dead') {
-  if (!hasCandidates.value)
+/**
+ * Did the upstream *refuse* us, as opposed to going away?
+ *
+ * mpv reports an HTTP status and nothing else, so this is the only place
+ * the difference is visible: a 401/403 on a live stream is an
+ * authorization answer (a provider at its simultaneous-connection limit
+ * answers exactly this), and retrying it on a timer is pointless in a way
+ * that retrying a timeout is not. The log tail is already
+ * credential-redacted on the Rust side.
+ */
+function refusal(tail: string): boolean {
+  return /\b(?:401|403)\b|unauthori[sz]ed|forbidden/i.test(tail)
+}
+
+function streamDied(reason?: 'stub' | 'dead' | 'refused') {
+  if (!hasCandidates.value && !localLive.value)
     return false
   emit('failed', reason)
   return true
@@ -1691,15 +1933,37 @@ async function restart() {
   await startPlayer()
 }
 
+/**
+ * Swap the current stream for a new one without remounting the
+ * component. Used by the live TV zap list so channel-up / channel-down
+ * is a fast in-process swap rather than a full route navigation that
+ * tears down the player and rebuilds it from scratch.
+ *
+ * The parent's `src` prop is what the player reads at every start, so
+ * the parent has already updated its `:src` binding before calling
+ * this. The function only does the tear-down + bring-up.
+ */
+async function zapTo() {
+  if (!started.value && !busy.value)
+    return startPlayer()
+  await restart()
+}
+
+// `ui` is exposed because a page-level HUD (Live TV) cannot compute it itself:
+// where mpv paints over the page no mousemove ever reaches the DOM, and this
+// flag is the one fed by the native pointer poll.
+defineExpose({ osd, zapTo, togglePlay, toggleMute, setVolume, paused, volume, muted, started, buffering, ui })
+
 // ---------------------------------------------------------------------------
 // Polling: playback props, plus a liveness check so a dead mpv reports itself
 // instead of leaving a black rectangle behind.
 // ---------------------------------------------------------------------------
 const POLLED = ['pause', 'paused-for-cache', 'duration', 'time-pos', 'demuxer-cache-time', 'volume', 'mute', 'speed', 'mouse-pos', 'sub-text']
-
 let tick = 0
 let lastMouse = ''
 let lastCursor = ''
+/** Wallclock of the most recent native-cursor report, for the stale sampler. */
+let lastCursorAt = 0
 
 async function poll() {
   if (!started.value)
@@ -1722,20 +1986,21 @@ async function poll() {
           library.finish(props.media, props.season, props.episode)
       }
       else {
-        errorMsg.value = st.log_tail?.trim() || (native ? $t('mpv exited unexpectedly.') : $t('Playback stopped unexpectedly.'))
+        const tail = st.log_tail?.trim() || ''
+        errorMsg.value = tail || (native ? $t('mpv exited unexpectedly.') : $t('Playback stopped unexpectedly.'))
         // A server stream that stops mid-film is the server dying, not the
         // film ending — same failover as a link that never opened.
         if (!fromEngine.value)
-          streamDied(stubSeen.value ? 'stub' : undefined)
+          streamDied(stubSeen.value ? 'stub' : refusal(tail) ? 'refused' : undefined)
       }
       return
     }
 
     // A picture with no sound is a codec the device lacks, and it looks exactly
     // like a muted TV until something says so. See `silent` in htmlvideo.ts —
-    // only the `<video>` path can be caught out this way, since ExoPlayer says
+    // only the `<video>` path can be caught out this way, since libVLC says
     // outright when it has no decoder.
-    if (!native && !exo && !silentSaid && position.value > 5) {
+    if (!native && !vlc && !silentSaid && position.value > 5) {
       silentSaid = !!(await readProps<{ silent: boolean }>(['silent']))?.silent
       if (silentSaid) {
         osd($t('No sound — this device can\'t decode this release\'s audio (Dolby or DTS). A release with AAC audio will play.'), 7000)
@@ -1753,8 +2018,10 @@ async function poll() {
   // which mpv's does not there, leaving the controls unable to un-hide again.
   if (cursor?.over) {
     noteVideoHover()
+    ui.value = true
+    lastCursorAt = performance.now()
     const key = `${cursor.x},${cursor.y}`
-    if (lastCursor && key !== lastCursor)
+    if (!lastCursor || key !== lastCursor)
       noteActivity()
     lastCursor = key
   }
@@ -1800,12 +2067,34 @@ async function poll() {
     // Every bar is a hole cut out of mpv's window, so a cursor mpv can see is a
     // cursor that is not on a bar. Trust that over `pointerleave`, which the
     // webview never gets for a pointer crossing into the native window.
-    if (m.hover)
+    if (m.hover) {
       noteVideoHover()
+      ui.value = true
+    }
+    if (m.hover)
+      lastCursorAt = performance.now()
     const key = `${m.x},${m.y}`
-    if (lastMouse && key !== lastMouse)
+    if (!lastMouse || key !== lastMouse)
       noteActivity()
     lastMouse = key
+  }
+
+  // If the native cursor source has gone quiet for a beat, the user has left
+  // the picture and the chrome is allowed to hide. Without this, a single
+  // early sample pins `cursorOverVideo` true until the film ends.
+  if (cursorOverVideo.value && lastCursorAt && performance.now() - lastCursorAt > CURSOR_STALE_MS)
+    cursorOverVideo.value = false
+
+  // Aggressive safety net: on Wayland (nativeHoverUnavailable) or whenever the
+  // cursor is over video, force the chrome visible every single poll. The watch
+  // + gate in `noteActivity` should be enough, but on some compositors the hide
+  // timer manages to slip through and leave the user with no controls at all.
+  if (nativeHoverUnavailable.value || cursorOverVideo.value) {
+    ui.value = true
+    if (hideTimer) {
+      clearTimeout(hideTimer)
+      hideTimer = null
+    }
   }
 
   // A-B loop: when reaching B, jump back to A.
@@ -1891,7 +2180,7 @@ const volumeIcon = computed(() => {
 // no swarm to take anything from, so those aren't gated at all.
 //
 // ffmpeg does the decoding, which is the same line `syncable` draws: the <video>
-// and ExoPlayer builds have no way to run it.
+// and libVLC builds have no way to run it.
 /**
  * Long enough to coalesce a sweep across the bar, short enough to disappear into
  * the ~75ms the decode itself costs. Nearly all of that is fixed — spawning
@@ -2059,7 +2348,9 @@ async function warm() {
  * going away mid-aim on a television is what makes one feel broken, so a set
  * gets more than twice as long.
  */
-const IDLE_MS = isTv() ? 6500 : 2800
+// Touch chrome is deliberately brief: it is an overlay over video, not a
+// permanent control panel. A tap brings it straight back when it is needed.
+const IDLE_MS = touch.value ? 1500 : isTv() ? 6500 : 2800
 const hovering = ref(false)
 /**
  * Is there a pointer that can hover at all? A television answers `hover: none`,
@@ -2072,7 +2363,6 @@ const hovering = ref(false)
 const hoverable = useMediaQuery('(hover: hover)')
 /** A control in the chrome holds keyboard focus — someone is driving with a remote. */
 const focused = ref(false)
-let hideTimer: ReturnType<typeof setTimeout> | null = null
 
 /**
  * A mouse click focuses the button it lands on too, and nothing ever takes that
@@ -2091,9 +2381,12 @@ function onFocusIn(e: FocusEvent) {
   }
 }
 
-/** mpv can only see the cursor where no bar is cut out of its window. */
+/** The OS cursor is over the picture, where the DOM can't see it. */
 function noteVideoHover() {
-  hovering.value = false
+  cursorOverVideo.value = true
+  hovering.value = true
+  ui.value = true
+  noteActivity()
 }
 
 /**
@@ -2128,12 +2421,27 @@ function noteActivity() {
   // Keep them up while paused, stopped, hovered, or reading a menu — hiding only
   // makes sense mid-playback. Focus does *not* keep them up: on a TV every press
   // leaves something focused, which pinned the bars over the film for good.
-  if (started.value && !paused.value && !menu.value && !(hovering.value && hoverable.value))
+  // `cursorOverVideo` is the only signal we get on the desktop-overlay path:
+  // there, the picture is a separate OS window in front of the webview and no
+  // DOM mousemove ever reaches the root while the cursor is on the film, so
+  // without this guard the bars would hide on the first idle and never come back.
+  // On desktop overlay (linux/windows) cursorOverVideo is sufficient — the
+  // hoverable+hovering pair is unreliable there because mpv's window sits in
+  // front of the webview and the root never gets pointerenter.
+  if (started.value && !paused.value && !menu.value && !nativeHoverUnavailable.value && !cursorOverVideo.value && !(hovering.value && (hoverable.value || overlay)))
     hideTimer = setTimeout(hideChrome, IDLE_MS)
 }
 
 // Not `focused`: the blur `hideChrome` does would fire this straight back.
-watch([started, paused, menu, hovering], noteActivity)
+// `cursorOverVideo` is in here too: when the native cursor leaves the picture
+// the stale sampler in `poll()` will flip it off, and that needs to re-arm the
+// hide timer immediately rather than waiting for the next mousemove.
+// `nativeHoverUnavailable` is the load-bearing one for Wayland: after three
+// failed `player_pointer` polls it flips true, the gate stops arming the
+// timer, but the bars have already auto-hidden in that 600ms window and
+// nothing else can wake them — the watch has to fire here so `noteActivity`
+// restores `ui` once and pins the chrome visible.
+watch([started, paused, menu, hovering, cursorOverVideo, nativeHoverUnavailable], noteActivity)
 
 // The bar appearing is the only notice anyone gives that a scrub may be coming.
 // `duration` is in there because it lands a beat after playback starts, and a
@@ -2293,6 +2601,13 @@ let nativeMouse: (() => void)[] = []
 let live = true
 
 function onNativeClick() {
+  // The first click after auto-hide is for finding the controls. This mirrors
+  // fullscreen desktop players and prevents an accidental pause while trying
+  // to make the bar visible again.
+  if (!ui.value) {
+    noteActivity()
+    return
+  }
   noteActivity()
   // Clicking off an open menu dismisses it rather than pausing, the same as
   // clicking outside any other popup.
@@ -2340,6 +2655,19 @@ function toggleChrome() {
   else {
     noteActivity()
   }
+}
+
+/**
+ * Child-element pointerleave guard: on overlay platforms (linux/windows) the
+ * mpv window sits in front of the page, so a pointer leaving a header/bar onto
+ * the video area never re-enters the root element's DOM. Keep `hovering` on in
+ * that case so the auto-hide gate still sees activity; otherwise let the
+ * standard leave clear it.
+ */
+function onChildPointerLeave(_e: PointerEvent) {
+  if (overlay && cursorOverVideo.value)
+    return
+  hovering.value = false
 }
 
 /**
@@ -2425,7 +2753,7 @@ watch(() => props.src, src => {
 })
 
 /**
- * ExoPlayer and macOS's mpv both paint below the webview, so while a film is up
+ * libVLC and macOS's mpv both paint below the webview, so while a film is up
  * the page has to stop painting over it — the whole chain from <html> down to
  * the box, which is why this is a class on the document and not something
  * scoped to this component. Every other screen keeps its own background.
@@ -2442,9 +2770,14 @@ onMounted(() => {
     measurePx()
   rafId = requestAnimationFrame(frame)
   listenToNativeMouse()
-  if (props.fullscreen)
-    setWindowFullscreen(true)
-  startPlayer()
+  // Let the native desktop window finish resizing before we measure the mpv
+  // surface. Starting both at once could open a small player, then visibly
+  // stretch it to fullscreen a moment later.
+  void (async () => {
+    if (props.fullscreen)
+      await setWindowFullscreen(true)
+    startPlayer()
+  })()
 })
 
 onBeforeUnmount(() => {
@@ -2482,8 +2815,6 @@ function fmt(s: number) {
 }
 
 const remaining = computed(() => duration.value ? `-${fmt((duration.value - position.value) / speed.value)}` : '')
-
-defineExpose({ osd })
 </script>
 
 <template>
@@ -2496,10 +2827,12 @@ defineExpose({ osd })
     @pointerdown="noteActivity"
     @focusin="onFocusIn"
     @focusout="focused = false"
+    @pointerenter="hovering = true; noteActivity()"
+    @pointerleave="hovering = false"
   >
     <!-- The rectangle mpv paints into. Everything below is punched out of it —
          or, with no native window, the box the <video> fills and the bars
-         simply stack over. On Android it is a hole in the page: ExoPlayer's
+         simply stack over. On Android it is a hole in the page: libVLC's
          SurfaceView is behind the whole webview, so the taps land here rather
          than on a picture element that isn't there. -->
     <div ref="boxEl" data-video-hole class="absolute inset-0">
@@ -2507,15 +2840,16 @@ defineExpose({ osd })
            player full screen, taking the controls, the subtitles and the
            watch history with it. -->
       <video
-        v-if="!native && !exo"
+        v-if="!native && !vlc"
         ref="videoEl"
         class="h-full w-full bg-black"
         playsinline
         @pointerdown.stop="tapVideo"
       />
-      <!-- A picture painted behind the whole webview (ExoPlayer, and mpv on
-           macOS) leaves no element under the finger. This is what the taps land
-           on instead — transparent, or it would be the thing covering it. -->
+      <!-- A picture painted behind the whole webview (libVLC on Android, and
+           mpv on macOS) leaves no element under the finger. This is what the
+           taps land on instead — transparent, or it would be the thing
+           covering it. -->
       <div v-else-if="behind" class="h-full w-full" @pointerdown.stop="tapVideo" />
     </div>
 
@@ -2597,12 +2931,12 @@ defineExpose({ osd })
       leave-to-class="-translate-y-full"
     >
       <header
-        v-show="ui"
+        v-show="ui && !isLive"
         data-cut
         class="absolute inset-x-0 top-0 h-14 flex items-center gap-2 border-b px-3"
-        :class="SURFACE"
+        :class="[SURFACE, touch && 'border-transparent bg-gradient-to-b from-black/78 via-black/35 to-transparent']"
         @pointerenter="hovering = true"
-        @pointerleave="hovering = false"
+        @pointerleave="onChildPointerLeave"
       >
         <slot name="start" />
         <div class="min-w-0 flex-1">
@@ -2620,22 +2954,14 @@ defineExpose({ osd })
       </header>
     </transition>
 
-    <!-- The transport, dead centre, up with the rest of the chrome: where a
-         d-pad lands (see `focusChrome`) and where a thumb already is, so a tap
-         in the middle of the picture with the bars up pauses rather than doing
-         nothing. Hidden behind the centre notices below, which own the same
-         patch of screen.
-
-         Only where the page draws over the picture and there is a thumb to draw
-         it for — see `barTransport` for the two that keep it in the bottom bar
-         instead. No transition for the same reason the bars slide rather than
-         fade: there is nothing behind this to fade against. -->
+    <!-- The transport, dead centre -->
     <div
       v-if="!barTransport"
-      v-show="ui && started && !centre"
+      v-show="ui && started && !centre && !isLive"
+      data-cut
       class="absolute left-1/2 top-1/2 flex items-center gap-3 rounded-full border border-white/9 bg-[#0e0f11]/70 px-3 py-3 -translate-x-1/2 -translate-y-1/2"
       @pointerenter="hovering = true"
-      @pointerleave="hovering = false"
+      @pointerleave="onChildPointerLeave"
     >
       <button v-tooltip:top="$t('Back 10s (j)')" :class="SEEK_BTN" :disabled="!started" @click="seekBy(-10)">
         <v-icon :icon="mdiRewind10" size="26" />
@@ -2678,7 +3004,7 @@ defineExpose({ osd })
         </button>
       </template>
 
-      <template v-else-if="centre === 'ended'">
+      <template v-else-if="centre === 'ended' && !isLive">
         <div class="text-title-small">
           {{ $t('Playback finished') }}
         </div>
@@ -2707,6 +3033,17 @@ defineExpose({ osd })
         <div class="text-title-small">
           {{ waiting ? $t('Waiting for the torrent stream…') : native ? $t('Starting mpv…') : $t('Opening the stream…') }}
         </div>
+        <!-- The first source is selected by the release ranker (1080p first
+             for streaming). Showing it here makes a slow provider response
+             understandable without putting a persistent menu over the film. -->
+        <div
+          v-if="activeQuality || activeServer || quality"
+          class="flex max-w-full items-center gap-1.5 rounded-full bg-white/8 px-3 py-1 text-label-small text-white/70"
+        >
+          <span class="truncate">{{ activeQuality?.label ?? quality }}</span>
+          <span v-if="activeServer" class="opacity-45">·</span>
+          <span v-if="activeServer" class="truncate">{{ activeServer.label }}</span>
+        </div>
         <div v-if="status" class="text-body-small opacity-60">
           {{ status }}
         </div>
@@ -2734,7 +3071,7 @@ defineExpose({ osd })
         :class="SURFACE"
         :style="{ bottom: `${menuBottom}px` }"
         @pointerenter="hovering = true"
-        @pointerleave="hovering = false"
+        @pointerleave="onChildPointerLeave"
       >
         <header class="flex items-center justify-between border-b border-white/9 py-2 pl-3.5 pr-2 text-title-small">
           <span>{{ menuTitle }}</span>
@@ -3140,17 +3477,24 @@ defineExpose({ osd })
       enter-from-class="translate-y-[115%]"
       leave-to-class="translate-y-[115%]"
     >
-      <!-- h-24 = 22 (top pad) + 16 (seek) + 8 (gap) + 38 (controls) + 12, and
-           h-25.5 the same sum with the 44px touch buttons. -->
+      <!-- Touch controls stay compact and use a transparent gradient. The
+           video remains visible behind them instead of ending at a solid
+           black control sheet halfway down the Android player. -->
       <footer
-        v-show="ui"
+        v-show="ui && !isLive"
         data-cut
         class="absolute inset-x-0 bottom-0 border-t px-5 pb-3 pt-5.5"
-        :class="[SURFACE, touch ? 'h-25.5' : 'h-24']"
+        :class="[
+          SURFACE,
+          touch
+            ? 'min-h-19 border-transparent bg-gradient-to-t from-black/82 via-black/42 to-transparent px-3 pb-2 pt-4'
+            : 'h-24',
+        ]"
         @pointerenter="hovering = true"
-        @pointerleave="hovering = false"
+        @pointerleave="onChildPointerLeave"
       >
         <player-slider
+          v-if="!isLive"
           :model-value="position"
           :max="duration || 1"
           :buffered="cacheEnd"
@@ -3180,14 +3524,14 @@ defineExpose({ osd })
             >
               <v-icon :icon="paused ? mdiPlay : mdiPause" size="26" />
             </button>
-            <button v-tooltip:top="$t('Back 10s (j)')" :class="ICO" :disabled="!started" @click="seekBy(-10)">
+            <button v-tooltip:top="$t('Back 10s (j)')" :class="ICO" :disabled="!started || isLive" @click="seekBy(-10)">
               <v-icon :icon="mdiRewind10" size="22" />
             </button>
-            <button v-tooltip:top="$t('Forward 10s (l)')" :class="ICO" :disabled="!started" @click="seekBy(10)">
+            <button v-tooltip:top="$t('Forward 10s (l)')" :class="ICO" :disabled="!started || isLive" @click="seekBy(10)">
               <v-icon :icon="mdiFastForward10" size="22" />
             </button>
             <button
-              v-if="paused"
+              v-if="paused && !isLive"
               v-tooltip:top="$t('Frame forward (.)')"
               :class="ICO"
               :disabled="!started"
@@ -3292,6 +3636,15 @@ defineExpose({ osd })
             <v-icon :icon="mdiCog" size="22" />
           </button>
           <button
+            v-if="canPip"
+            v-tooltip:top="$t('Picture-in-picture')"
+            :class="ICO"
+            :disabled="!started"
+            @click="togglePip"
+          >
+            <v-icon :icon="mdiPictureInPictureBottomRight" size="22" />
+          </button>
+          <button
             v-tooltip:top="windowFullscreen ? $t('Exit fullscreen (f)') : $t('Fullscreen (f)')"
             :class="ICO"
             @click="toggleFullscreen"
@@ -3322,7 +3675,7 @@ defineExpose({ osd })
 </template>
 
 <style>
-/* ExoPlayer's picture is a SurfaceView behind the whole webview (Player.kt), so
+/* libVLC's picture is a SurfaceView behind the whole webview (VlcPlayer.kt), so
    while a film is up every layer between it and the eye has to be see-through.
    The chain starts at <html>, well above anything this component renders, hence
    a document class rather than scoped styles — and hence `!important`, since
@@ -3333,8 +3686,12 @@ defineExpose({ osd })
    .v-main, …) would be a guess about someone else's markup that fails as a
    black screen with working controls over it. */
 html.rivulet-video,
+html.rivulet-video body,
+html.rivulet-video body > div,
+html.rivulet-video #__nuxt,
 html.rivulet-video :has([data-video-hole]),
 html.rivulet-video [data-video-hole] {
   background: transparent !important;
+  background-image: none !important;
 }
 </style>

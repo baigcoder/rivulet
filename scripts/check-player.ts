@@ -1,5 +1,5 @@
 import assert from 'node:assert'
-import { deviceCodecs, exoEngine, hasNativePlayer, hasVideoOverlay, videoEngine } from '../app/utils/htmlvideo'
+import { deviceCodecs, hasNativePlayer, hasVideoOverlay, videoEngine, vlcEngine } from '../app/utils/htmlvideo'
 import { nearestFrame, walkOrder } from '../app/utils/thumbs'
 // Self-check for the <video> player backend: `bun scripts/check-player.ts`.
 //
@@ -53,7 +53,7 @@ const player = videoEngine(video as any)
 // Out here there is no Tauri at all, which is the same answer a browser gives
 // and the reason `bun run dev` gets a working player.
 assert.equal(hasNativePlayer(), false)
-assert.equal(exoEngine(), null, 'and no Android bridge, so no ExoPlayer either')
+assert.equal(vlcEngine(), null, 'and no Android bridge, so no libVLC either')
 // Nor a surface in front of the page: both platform questions have to answer no
 // off Tauri, or the browser build punches holes for a window that isn't there.
 assert.equal(hasVideoOverlay(), false)
@@ -129,7 +129,7 @@ assert.doesNotThrow(() => player.command(['show-text', 'hello', 1200, 0]))
 // --- Subtitles ------------------------------------------------------------------
 // `sub-add` adds *and* selects, which is what mpv does and what the menu counts
 // on: picking a language has to switch to it in one step.
-// Ids start above 1000 so they can never collide with a track ExoPlayer found
+// Ids start above 1000 so they can never collide with a track libVLC found
 // inside the file, which the other backend merges into the same menu.
 const first = player.command(['sub-add', 'https://subs/a.srt', 'cached', 'English', 'eng'])
 assert.equal(first, 1001)
@@ -164,9 +164,9 @@ assert.equal(video.src, '', 'the reader on the engine is let go of')
 video.emit('error')
 assert.equal(player.status().running, false)
 
-// --- ExoPlayer, on Android --------------------------------------------------------
+// --- libVLC, on Android --------------------------------------------------------
 // The same protocol over a @JavascriptInterface instead of a DOM element, so
-// most of it is Kotlin's problem (Player.kt) and untestable from here. What is
+// most of it is Kotlin's problem (VlcPlayer.kt) and untestable from here. What is
 // worth pinning down is the half Kotlin is deliberately *not* told about:
 // external subtitles belong to the page, so their ids have to survive the round
 // trip and can never be confused with a track found inside the file.
@@ -202,26 +202,26 @@ const bridge = {
 }
 ;(globalThis as any).RivuletPlayer = bridge
 
-const exo = exoEngine()!
-assert.ok(exo, 'the bridge being there is what decides, not the platform')
+const vlc = vlcEngine()!
+assert.ok(vlc, 'the bridge being there is what decides, not the platform')
 
-// A track inside the file is ExoPlayer's to select, and goes through untouched.
-exo.command(['set_property', 'aid', 1])
+// A track inside the file is libVLC's to select, and goes through untouched.
+vlc.command(['set_property', 'aid', 1])
 assert.deepEqual(sent.at(-1), ['set_property', 'aid', 1])
 
-// A downloaded one is not: the page draws it, so ExoPlayer's own text renderer
+// A downloaded one is not: the page draws it, so libVLC's own text renderer
 // has to go off or the two would draw over each other.
-assert.equal(exo.command(['sub-add', 'https://subs/a.srt', 'cached', 'English', 'eng']), 1001)
+assert.equal(vlc.command(['sub-add', 'https://subs/a.srt', 'cached', 'English', 'eng']), 1001)
 assert.deepEqual(sent.at(-1), ['set_property', 'sid', 'no'])
-assert.equal(exo.props(['sid']).sid, 1001, 'which ExoPlayer would otherwise report as off')
+assert.equal(vlc.props(['sid']).sid, 1001, 'which libVLC would otherwise report as off')
 
-const merged = exo.props(['track-list'])['track-list'] as { id: number }[]
+const merged = vlc.props(['track-list'])['track-list'] as { id: number }[]
 assert.deepEqual(merged.map(t => t.id), [1, 2, 1001], 'one menu, and no id used twice')
 
-// Picking one of the file's own hands selection back to ExoPlayer.
-exo.command(['set_property', 'sid', 2])
+// Picking one of the file's own hands selection back to libVLC.
+vlc.command(['set_property', 'sid', 2])
 assert.deepEqual(sent.at(-1), ['set_property', 'sid', 2])
-assert.equal(exo.props(['sid']).sid, 2)
+assert.equal(vlc.props(['sid']).sid, 2)
 
 // What `isAwkward` asks before demoting a release for a codec this device may
 // well have — the whole reason a TV box stops being handed the x264 copy.
@@ -279,6 +279,41 @@ assert.match(tooltipCss, /\.v-tooltip\n\s+> \.v-overlay__content/, 'vuetify stil
 const mpv = await Bun.file('app/components/MpvPlayer.vue').text()
 assert.match(mpv, /const CUT = '\[data-cut\], \.v-tooltip > \.v-overlay__content'/, 'and the tracker still looks for it')
 assert.ok(!mpv.includes('rootEl.value?.querySelectorAll'), 'scoped to the player, a teleported tooltip is never found')
+
+// --- HLS: the one thing a live channel needs and a torrent stream never does ---
+// Chromium hands `<video>` an `.m3u8` and reports a corrupt file, so every live
+// playlist has to go through hls.js there — and must NOT on Safari, which plays
+// it natively and buffers it better than any JS demuxer can. The branch is the
+// whole of it, so both directions are pinned.
+{
+  const safari = fakeVideo() as ReturnType<typeof fakeVideo> & { canPlayType: (t: string) => string }
+  safari.canPlayType = t => (t.toLowerCase().includes('mpegurl') ? 'maybe' : '')
+  const engine = videoEngine(safari as any)
+  await engine.start('http://127.0.0.1:3032/premium-stream/tok.m3u8')
+  assert.equal(
+    safari.src,
+    'http://127.0.0.1:3032/premium-stream/tok.m3u8',
+    'native HLS goes straight to the element - no hls.js in front of it',
+  )
+
+  const chromium = fakeVideo() as ReturnType<typeof fakeVideo> & { canPlayType: (t: string) => string }
+  chromium.canPlayType = () => ''
+  const engine2 = videoEngine(chromium as any)
+  // Under bun there is no MediaSource, so `Hls.isSupported()` is false and the
+  // attach declines. What matters is that declining still plays: the element
+  // gets the URL rather than the engine giving up.
+  await engine2.start('http://127.0.0.1:3032/premium-stream/tok.m3u8')
+  assert.equal(chromium.src, 'http://127.0.0.1:3032/premium-stream/tok.m3u8', 'a failed attach still hands the element the URL')
+  assert.equal(engine2.status().running, true)
+
+  // And a progressive file is never routed through the playlist path, whatever
+  // the webview says about HLS.
+  const plain = fakeVideo() as ReturnType<typeof fakeVideo> & { canPlayType: (t: string) => string }
+  plain.canPlayType = () => ''
+  const engine3 = videoEngine(plain as any)
+  await engine3.start('http://127.0.0.1:3030/torrents/1/stream/0')
+  assert.equal(plain.src, 'http://127.0.0.1:3030/torrents/1/stream/0')
+}
 
 // eslint-disable-next-line no-console
 console.log('player: ok')

@@ -110,9 +110,30 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.10.1")
     implementation("com.google.android.material:material:1.12.0")
     // Playback, because the system webview's <video> refuses Dolby and DTS
-    // whatever the device can actually decode. See Player.kt.
-    implementation("androidx.media3:media3-exoplayer:1.8.0")
-    implementation("androidx.media3:media3-ui:1.8.0")
+    // whatever the device can actually decode. libVLC bundles its own FFmpeg,
+    // so it decodes E-AC-3, DTS and TrueHD on every device without needing a
+    // transcode proxy. The `libvlc-all` variant on Maven Central ships one AAR
+    // with every ABI's .so files inside, which is what the universal APK
+    // bundles. See VlcPlayer.kt.
+    //
+    // 3.4.0 is the last version on Maven Central where the libVLC AAR is
+    // published as a complete, internally-consistent package (Java classes +
+    // matching `libvlcjni.so`). Versions 3.6.x and 3.7.x exist on Maven
+    // Central too, but their `libvlcjni.so` calls FindClass for an inner
+    // class that the bundled Java side no longer exports; the JNI_OnLoad
+    // returns `JNI_ERR` and the process exits. The proguard rules keep the
+    // whole `org.videolan.libvlc` package, otherwise R8 strips the inner
+    // classes JNI needs at load time. See VlcPlayer.kt.
+    implementation("org.videolan.android:libvlc-all:3.4.0")
+    // Premium TV: Media3 ExoPlayer for HLS. The native webview's
+    // <video> is fine for HLS, but the front-end uses one
+    // component for both web and Android via the
+    // `RivuletPremiumPlayer` @JavascriptInterface. The HLS
+    // implementation is bundled in Media3; the rest is just
+    // the standard ExoPlayer core. See RivuletPremiumPlayer.kt.
+    implementation("androidx.media3:media3-exoplayer:1.4.1")
+    implementation("androidx.media3:media3-exoplayer-hls:1.4.1")
+    implementation("androidx.media3:media3-datasource:1.4.1")
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.4")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.0")

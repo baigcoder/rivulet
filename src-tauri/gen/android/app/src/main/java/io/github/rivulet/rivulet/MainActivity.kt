@@ -14,6 +14,7 @@ import android.os.StatFs
 import android.os.storage.StorageManager
 import android.provider.Settings
 import android.view.KeyEvent
+import android.view.View
 import android.view.WindowManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -28,6 +29,7 @@ import org.json.JSONObject
 class MainActivity : TauriActivity() {
   private var web: WebView? = null
   private var player: RivuletPlayer? = null
+  private var premiumPlayer: RivuletPremiumPlayer? = null
 
   companion object {
     /** Largest file FAT32 can address: 4 GiB, less one byte. */
@@ -78,17 +80,20 @@ class MainActivity : TauriActivity() {
   override fun onWebViewCreate(webView: WebView) {
     web = webView
 
-    // Playback is ExoPlayer (Player.kt), but the <video> element is still the
+    // Playback is libVLC (VlcPlayer.kt), but the <video> element is still the
     // fallback if that bridge ever fails to come up. The webview won't start one
     // with sound until it has seen a gesture *it* handled, and every gesture on
     // the way to a film — a card, a menu row, the play button — is one the page
     // handled, so none of them count. Without this a film opens and sits paused.
     webView.settings.mediaPlaybackRequiresUserGesture = false
 
-    // ExoPlayer's picture is a SurfaceView underneath this webview, so the page
-    // has to be able to show through to it. Only the player route ever makes
-    // itself transparent (see MpvPlayer.vue); every other screen paints its own
-    // background as before, so nothing else changes.
+    // libVLC's picture is a TextureView underneath this webview. TextureView
+    // is a regular view in the same window as the WebView (not a separate
+    // window layer like SurfaceView), so the page's transparent background
+    // shows the video through, and the WebView's HTML OSD draws on top
+    // of it the same way it does on a desktop player. Only the player route
+    // ever makes itself transparent (see MpvPlayer.vue); every other screen
+    // paints its own background as before, so nothing else changes.
     webView.setBackgroundColor(Color.TRANSPARENT)
 
     // A TV reports a 960dp-wide display (1080p at density 2), so the page lays
@@ -109,6 +114,27 @@ class MainActivity : TauriActivity() {
 
     webView.addJavascriptInterface(Screen(), "RivuletScreen")
     player = RivuletPlayer(this).also { webView.addJavascriptInterface(it, "RivuletPlayer") }
+    // Premium TV: Media3 ExoPlayer, same @JavascriptInterface
+    // shape as the libVLC player so the front-end drives one
+    // component for both. The page picks which to use based on
+    // `window.__useNativePlayer` and the player name; the two
+    // never run at the same time.
+    premiumPlayer = RivuletPremiumPlayer(this)
+      .also { webView.addJavascriptInterface(it, "RivuletPremiumPlayer") }
+  }
+
+  /**
+   * Keep WebView hardware accelerated while libVLC plays. Switching it to a
+   * software layer copies every video-sized frame through the CPU, which is
+   * exactly the stutter seen when the controls appear on Android. The player
+   * route handles transparency in CSS; this only restores the compositor after
+   * a previous player session.
+   */
+  fun setVlcVideoMode(@Suppress("UNUSED_PARAMETER") active: Boolean) {
+    val webView = web ?: return
+    webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+    webView.setBackgroundColor(Color.TRANSPARENT)
+    webView.invalidate()
   }
 
   /** Is this a television rather than a phone? Android's own answer, not a guess. */
@@ -119,6 +145,8 @@ class MainActivity : TauriActivity() {
   override fun onDestroy() {
     player?.release()
     player = null
+    premiumPlayer?.release()
+    premiumPlayer = null
     // Closing the app stops its downloads; backgrounding it does not. The other
     // way round leaves a notification the user has no way to get rid of, and the
     // engine resumes every torrent where it left off on the next launch anyway.

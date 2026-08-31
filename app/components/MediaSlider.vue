@@ -30,15 +30,17 @@ const hasMore = computed(() => items.value.length > MAX_SLIDER_ITEMS || !pending
       class="animate-pulse aspect-2/3 shrink-0 rounded-xl bg-surface-container/60"
       :style="{ width: `${ui.cardWidth}px` }"
     />
-    <!-- Show More card: always at the end of the row -->
-    <nuxt-link
+    <!-- Show More card. Plain <a> with :href (for right-click) AND @click
+         (as a fallback if navigation is flaky). -->
+    <a
       v-if="to"
-      :to="to"
-      class="shrink-0 flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-outline-variant/40 bg-surface-container/30 transition-all duration-200 hover:border-primary/60 hover:bg-surface-container/60 hover:shadow-lg hover:shadow-primary/5"
+      :href="localePath(to)"
+      class="flex shrink-0 cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-outline-variant/40 bg-surface-container/30 transition-all duration-200 hover:border-primary/60 hover:bg-surface-container/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
       :style="{ width: `${ui.cardWidth}px`, minHeight: `${Math.round(ui.cardWidth * 1.5) + 40}px` }"
+      @click.stop.prevent="navigateTo(localePath(to))"
     >
       <v-icon :icon="mdiArrowRight" size="32" class="text-primary opacity-70" />
-      <span class="text-label-medium font-medium text-primary opacity-80">{{ $t('Show all') }} {{ title }}</span>
-    </nuxt-link>
+      <span class="text-label-medium font-medium text-primary opacity-80">{{ $t('See all {title}', { title }) }}</span>
+    </a>
   </scroll-row>
 </template>

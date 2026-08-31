@@ -28,6 +28,13 @@ const SECRET = new Set([
   `${PREFIX}trakt`,
   `${PREFIX}tmdbKey`,
   `${PREFIX}parentalPin`,
+  // The IPTV login form pre-fills the last server URL and username
+  // so the user only types the password on re-connect. These two
+  // don't include the password, but the username is a piece of PII
+  // on its own and the M3U URL the user pasted (which contains
+  // credentials in its query string) lives in lastServerUrl.
+  `${PREFIX}iptv.lastServerUrl`,
+  `${PREFIX}iptv.lastUsername`,
 ])
 
 export interface Backup {

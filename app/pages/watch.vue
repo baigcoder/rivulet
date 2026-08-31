@@ -171,7 +171,11 @@ async function start() {
     // the failover below walk this list.
     candidates.value = started.alternatives ?? []
     activeCandidate.value = 0
-    qualityPromptPending.value = candidates.value.length > 0
+    // `serverCandidates` already ranks 1080p first (ahead of 4K, which is
+    // slower to start and more likely to buffer). Keep that automatic choice
+    // visible in the player pill, rather than opening a quality menu over the
+    // movie and preventing the desktop controls from fading away.
+    qualityPromptPending.value = false
 
     // A hand-picked link (the release picker's play button) arrives without its
     // siblings: the picker navigated straight here, so no ranking ever ran. Ask
@@ -246,7 +250,7 @@ async function fetchCandidates(playingUrl: string) {
       : { name: '', hash: '', url: playingUrl, fileIdx: null, file: null, seeders: 0, size: '', bytes: 0, source: '', quality: '', magnet: '' }
     candidates.value = [current, ...rest]
     activeCandidate.value = 0
-    qualityPromptPending.value = candidates.value.length > 1
+    qualityPromptPending.value = false
   }
   catch {
     // Thinner menus are the whole cost; playback itself is already running.
@@ -477,7 +481,6 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
         :active-candidate="activeCandidate"
         :osd-on-start="failoverNotice"
         :auto-open-quality="qualityPromptPending && !userPicked"
-        fullscreen
         @failed="onPlaybackFailed"
         @use-candidate="(i: number) => useCandidate(i)"
         @auto-opened="qualityPromptPending = false"

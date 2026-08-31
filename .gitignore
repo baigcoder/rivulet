@@ -15,6 +15,10 @@ src-tauri/mpv
 # Created by build.rs, filled by scripts/build/macos/bundle-dylib.ts, bundled into the macOS .app.
 src-tauri/dylibs
 
+# A stray dev database: the real ones live in the app's data directory
+# (see `lib.rs`), so anything here is a leftover from a local run.
+src-tauri/*.db
+
 # Local editor/agent state.
 .claude/settings.local.json
 

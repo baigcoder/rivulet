@@ -136,6 +136,9 @@ impl Player {
 /// webview viewport's top-left, and `view_w`/`view_h` the size of that viewport
 /// — the pair is what lets the surface be placed by ratio instead of by a guess
 /// at the display's backing scale.
+///
+/// `user_agent` and `referer` are forwarded as libmpv properties so the
+/// upstream sees the same headers it would see through the IPTV proxy.
 #[tauri::command]
 pub fn player_start(
 	app: tauri::AppHandle,
@@ -148,6 +151,8 @@ pub fn player_start(
 	height: u32,
 	view_w: u32,
 	view_h: u32,
+	user_agent: Option<String>,
+	referer: Option<String>,
 ) -> Result<(), String> {
 	// A degenerate box means the webview hadn't laid out yet; the caller retries.
 	if width < 16 || height < 16 {
@@ -165,6 +170,8 @@ pub fn player_start(
 
 	let ipc_arg = ipc.display().to_string();
 	let log_arg = log.display().to_string();
+	let ua_arg = user_agent.filter(|s| !s.is_empty());
+	let ref_arg = referer.filter(|s| !s.is_empty());
 	let mpv = Mpv::with_initializer(move |init| {
 		// Best effort throughout: a libmpv built without Lua has no `osc`
 		// property at all, and one missing option is not worth refusing to play
@@ -203,6 +210,14 @@ pub fn player_start(
 		set("cache", "yes");
 		set("stream-lavf-o", "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5");
 		set("keep-open", "no");
+		// Per-stream User-Agent / Referer so the upstream sees the same
+		// headers it would see through the IPTV proxy.
+		if let Some(ua) = &ua_arg {
+			set("user-agent", ua);
+		}
+		if let Some(rf) = &ref_arg {
+			set("referrer", rf);
+		}
 		Ok(())
 	})
 	.map_err(|e| format!("libmpv would not start: {e:?}"))?;

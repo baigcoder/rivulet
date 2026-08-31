@@ -98,6 +98,9 @@ pub fn log_tail(path: &Path) -> Option<String> {
 		let lines: Vec<&str> =
 			s.lines().filter(|l| l.contains("][e]") || l.contains("][fatal]")).collect();
 		let tail = if lines.is_empty() { s.lines().rev().take(8).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>() } else { lines };
-		tail.join("\n").chars().take(1200).collect()
+		// Redacted here rather than at the display: a live stream URL has
+		// the account's password in its path, and this string is sent to the
+		// frontend and pasted into bug reports.
+		crate::log_redact::redact(&tail.join("\n")).chars().take(1200).collect()
 	})
 }

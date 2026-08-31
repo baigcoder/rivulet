@@ -46,25 +46,28 @@ export function useMediaFeed(request: MaybeRefOrGetter<FeedRequest | null>) {
     error.value = undefined
 
     try {
-      const data = await tmdb<TmdbPage>(request_.path, { ...request_.params, page: page.value + 1 })
+      const nextPage = page.value + 1
+      const { results, total_pages } = await tmdb<TmdbPage>(request_.path, {
+        ...request_.params,
+        page: nextPage,
+      })
+
       if (mine !== generation)
         return
 
-      page.value = data.page
-      // TMDB rejects page > 500 whatever total_pages claims.
-      totalPages.value = Math.min(data.total_pages, 500)
+      page.value = nextPage
+      totalPages.value = total_pages
 
-      for (const result of data.results) {
-        if (seen.has(result.id))
-          continue
-        seen.add(result.id)
-        const media = toMedia(result, request_.type)
-        if (!media)
-          continue
-        if (request_.keepGenre != null && !media.genreIds.includes(request_.keepGenre))
-          continue
-        items.value.push(media)
-      }
+      const mapped = results
+        .map(item => toMedia(item, request_.type))
+        .filter((m): m is Media => m != null)
+        .filter(m => !seen.has(m.id))
+        .filter(m => request_.keepGenre ? m.genreIds.includes(request_.keepGenre) : true)
+
+      for (const m of mapped)
+        seen.add(m.id)
+
+      items.value.push(...mapped)
     }
     catch (e) {
       if (mine === generation)

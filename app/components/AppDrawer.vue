@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { mdiAccountCircleOutline, mdiAnimationPlayOutline, mdiBookmarkOutline, mdiCogOutline, mdiFilmstrip, mdiFolderPlayOutline, mdiHeartOutline, mdiHistory, mdiHomeOutline, mdiTelevisionClassic, mdiTrayArrowDown } from '@mdi/js'
+import { mdiAccountCircleOutline, mdiAnimationPlayOutline, mdiBookmarkOutline, mdiCogOutline, mdiFilmstrip, mdiFolderPlayOutline, mdiHeartOutline, mdiHistory, mdiHomeOutline, mdiTelevision, mdiTelevisionClassic, mdiTrayArrowDown } from '@mdi/js'
 
 const ui = useUiStore()
 const downloads = useDownloadsStore()
@@ -29,6 +29,7 @@ const links = computed(() => [
   { title: $t('Movies'), icon: mdiFilmstrip, to: localePath('/movies') },
   { title: $t('TV Shows'), icon: mdiTelevisionClassic, to: localePath('/tv') },
   { title: $t('Anime'), icon: mdiAnimationPlayOutline, to: localePath('/anime') },
+  { title: $t('Live TV'), icon: mdiTelevision, to: localePath('/live-tv') },
   { title: $t('Library'), icon: mdiFolderPlayOutline, to: localePath('/library') },
 ])
 

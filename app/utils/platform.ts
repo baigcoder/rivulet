@@ -111,6 +111,22 @@ export function isDesktop() {
 }
 
 /**
+ * Is this the installed Android application?
+ *
+ * Do not use CSS pointer media queries for this. Android WebView can report a
+ * fine pointer even on a touch-only phone, which would make the player select
+ * its desktop controls and cover half of the picture with a control sheet.
+ */
+export function isAndroid() {
+  try {
+    return platform() === 'android'
+  }
+  catch {
+    return false
+  }
+}
+
+/**
  * Can this OS show a folder in a file manager?
  *
  * Android can't, twice over: downloads land in a folder only this app is

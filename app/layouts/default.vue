@@ -1,3 +1,7 @@
+<script setup lang="ts">
+const liveTv = useLiveTvStore()
+</script>
+
 <template>
   <v-app>
     <app-background />
@@ -12,10 +16,18 @@
         <app-bar />
         <!-- data-dpad-start: where a remote picks up focus after a navigation,
              so it lands on the page instead of the toolbar above it. -->
-        <div data-dpad-start class="min-h-0 flex-1">
+        <div data-dpad-start class="min-h-0 flex-1 overflow-y-auto">
           <slot />
         </div>
       </div>
     </v-main>
+
+    <!-- Mini player (floating over everything) -->
+    <live-tv-live-mini-player
+      :channel="liveTv.miniChannel"
+      :stream-url="liveTv.miniStreamUrl"
+      @close="liveTv.hideMiniPlayer()"
+      @expand="liveTv.expandMiniPlayer()"
+    />
   </v-app>
 </template>

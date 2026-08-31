@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { mdiChevronLeft, mdiChevronRight } from '@mdi/js'
+import { mdiArrowRight, mdiChevronLeft, mdiChevronRight } from '@mdi/js'
 
 /**
  * A titled horizontal strip. The arrows page it; a wheel with Shift held, or a
  * trackpad sideways, scrolls it natively — there is no scrollbar to grab.
  */
-const props = defineProps<{ title: string, canLoad?: boolean, /** Deep link for the header's 'See all' chip. */ to?: string }>()
+const props = defineProps<{ title: string, count?: number, canLoad?: boolean, /** Deep link for the header's 'See all' chip. */ to?: string }>()
 
 const emit = defineEmits<{ end: [] }>()
 
@@ -78,31 +78,57 @@ function page(direction: 1 | -1) {
 
 <template>
   <section class="group/row">
-    <div class="flex items-center gap-2 px-4 md:px-6">
-      <h2 class="text-title-large">
-        {{ title }}
-      </h2>
-      <!-- Always visible but quiet: the affordance should be findable without
-           hunting, unlike the paging arrows which are hover-only by design. -->
-      <nuxt-link
+    <div class="mx-4 flex items-center gap-3 px-1 pb-3 pt-1 md:mx-6">
+      <div class="min-w-0 flex-1">
+        <div class="flex items-center gap-2">
+          <h2 class="truncate text-title-large font-bold tracking-tight">
+            {{ title }}
+          </h2>
+          <span
+            v-if="count !== undefined"
+            class="rounded-full bg-white/8 px-2 py-0.5 text-label-small font-semibold text-white/55 ring-1 ring-white/8"
+          >
+            {{ count.toLocaleString() }}
+          </span>
+        </div>
+        <p class="mt-0.5 text-label-small font-medium uppercase tracking-[0.13em] text-primary/60">
+          {{ $t('Live Channels') }}
+        </p>
+      </div>
+
+      <!-- Paging arrows — visible on hover/focus, always shown on keyboard nav -->
+      <div
+        v-if="overflows"
+        class="hidden items-center gap-0.5 opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 md:flex"
+      >
+        <button
+          tabindex="-1"
+          :disabled="atStart"
+          class="grid size-8 place-items-center rounded-lg text-white/50 transition-colors hover:bg-white/8 hover:text-white disabled:pointer-events-none disabled:opacity-25"
+          @click="page(-1)"
+        >
+          <v-icon :icon="mdiChevronLeft" size="20" />
+        </button>
+        <button
+          tabindex="-1"
+          :disabled="atEnd"
+          class="grid size-8 place-items-center rounded-lg text-white/50 transition-colors hover:bg-white/8 hover:text-white disabled:pointer-events-none disabled:opacity-25"
+          @click="page(1)"
+        >
+          <v-icon :icon="mdiChevronRight" size="20" />
+        </button>
+      </div>
+
+      <!-- "See all" link -->
+      <a
         v-if="to"
-        :to="to"
-        class="text-label-large opacity-55 transition-opacity hover:text-primary hover:opacity-100 focus-visible:text-primary focus-visible:opacity-100"
+        :href="localePath(to)"
+        class="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-white/10 bg-white/6 px-3 py-1.5 text-label-medium font-semibold text-white/80 transition-all hover:border-primary/40 hover:bg-primary/12 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        @click.stop.prevent="navigateTo(localePath(to))"
       >
         {{ $t('See all') }}
-      </nuxt-link>
-      <v-spacer />
-      <!-- Shown while anything in the row has focus too, so a remote can see how
-           far the row goes. tabindex="-1" keeps them out of the d-pad's way:
-           arrowing along the row already scrolls it. -->
-      <div v-if="overflows" class="flex gap-1 opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100">
-        <v-btn icon size="small" variant="text" color="on-surface" tabindex="-1" :disabled="atStart" @click="page(-1)">
-          <v-icon :icon="mdiChevronLeft" />
-        </v-btn>
-        <v-btn icon size="small" variant="text" color="on-surface" tabindex="-1" :disabled="atEnd" @click="page(1)">
-          <v-icon :icon="mdiChevronRight" />
-        </v-btn>
-      </div>
+        <v-icon :icon="mdiArrowRight" size="15" />
+      </a>
     </div>
 
     <!-- No scroll-snap. It re-animates after every wheel notch and again each
@@ -112,7 +138,7 @@ function page(direction: 1 | -1) {
          the row to it. overscroll-x-contain: reaching the end of a row must not
          hand the rest of the gesture to the page behind it. -->
     <div ref="scroller" class="overflow-x-auto scroll-px-4 overscroll-x-contain md:scroll-px-6 no-scrollbar">
-      <div ref="track" class="w-max flex gap-4 px-4 pb-6 pt-2 md:px-6" :class="{ 'pointer-events-none': gliding }">
+      <div ref="track" class="w-max flex gap-3 px-4 pb-5 pt-3 md:px-6" :class="{ 'pointer-events-none': gliding }">
         <slot />
       </div>
     </div>

@@ -91,16 +91,50 @@ struct Embed {
 	xlib: x11_dl::xlib::Xlib,
 	display: *mut x11_dl::xlib::Display,
 	window: x11_dl::xlib::Window,
+	width: u32,
+	height: u32,
 }
 // The display connection is only ever touched under `PlayerState`'s mutex, and
 // we call XInitThreads() at startup, so serialised cross-thread use is sound.
 unsafe impl Send for Embed {}
 
 impl Embed {
-	fn move_resize(&self, x: i32, y: i32, w: u32, h: u32) {
+	fn move_resize(&mut self, x: i32, y: i32, w: u32, h: u32) {
 		unsafe {
 			(self.xlib.XMoveResizeWindow)(self.display, self.window, x, y, w.max(1), h.max(1));
 			(self.xlib.XFlush)(self.display);
+		}
+		self.width = w.max(1);
+		self.height = h.max(1);
+	}
+
+	/// Cursor coordinates relative to the native video surface. `mpv`'s
+	/// `mouse-pos` stops updating for some embedded X11 fullscreen windows, so
+	/// ask X11 directly just as the Windows backend asks Win32.
+	fn pointer(&self) -> Option<(i32, i32, bool)> {
+		unsafe {
+			let mut root = 0;
+			let mut child = 0;
+			let mut root_x = 0;
+			let mut root_y = 0;
+			let mut x = 0;
+			let mut y = 0;
+			let mut mask = 0;
+			if (self.xlib.XQueryPointer)(
+				self.display,
+				self.window,
+				&mut root,
+				&mut child,
+				&mut root_x,
+				&mut root_y,
+				&mut x,
+				&mut y,
+				&mut mask,
+			) == 0 {
+				return None;
+			}
+			let over = x >= 0 && y >= 0 && x < self.width as i32 && y < self.height as i32;
+			Some((x, y, over))
 		}
 	}
 
@@ -182,6 +216,15 @@ pub struct PlayerStatus {
 	log_tail: Option<String>,
 }
 
+/// Pointer position returned to the web player while the embedded mpv child
+/// window owns the cursor.
+#[derive(serde::Serialize)]
+pub struct Pointer {
+	x: i32,
+	y: i32,
+	over: bool,
+}
+
 #[derive(Default)]
 pub struct PlayerState(Mutex<Player>);
 
@@ -257,6 +300,13 @@ fn mpv_binary(app: &tauri::AppHandle) -> std::ffi::OsString {
 /// **physical** pixels, relative to the app window's client-area top-left
 /// (i.e. the webview viewport origin). The frontend keeps this in sync via
 /// `player_set_geometry` as its DOM box moves/resizes.
+///
+/// `user_agent` and `referer` are forwarded as mpv command-line flags so
+/// the IPTV proxy path's per-stream UA/Referer (parsed from
+/// `#EXTVLCOPT:http-user-agent=` and `http-referrer=` in the M3U, or
+/// derived from the Xtream provider's expectations) is honoured by mpv
+/// itself. Without these, IPTV upstreams that reject the webview's UA
+/// would also reject mpv's `User-Agent: Lavf/...` string.
 #[tauri::command]
 pub fn player_start(
 	app: tauri::AppHandle,
@@ -267,6 +317,8 @@ pub fn player_start(
 	y: i32,
 	width: u32,
 	height: u32,
+	user_agent: Option<String>,
+	referer: Option<String>,
 ) -> Result<(), String> {
 	// A degenerate box means the webview hadn't laid out yet. Embedding mpv into
 	// a 1x1 window makes it fail to bring up its video output and exit silently
@@ -298,13 +350,14 @@ pub fn player_start(
 		(xlib.XFlush)(display);
 		w
 	};
-	let embed = Embed { xlib, display, window: child };
+	let embed = Embed { xlib, display, window: child, width: width.max(1), height: height.max(1) };
 
 	// mpv writes its own diagnostics to the log so `player_status` can report
 	// *why* it died rather than leaving the user staring at a black box.
 	let (ipc, log) = player_socket::paths();
 
-	let spawn = std::process::Command::new(mpv_binary(&app))
+	let mut command = std::process::Command::new(mpv_binary(&app));
+	command
 		.arg(format!("--wid={child}"))
 		.arg("--force-window=yes")
 		.arg("--no-config") // ignore user's ~/.config/mpv for predictability
@@ -337,9 +390,16 @@ pub fn player_start(
 		// than the machine's — in front of everything on LD_LIBRARY_PATH. mpv is
 		// the *system's*, and inheriting that kills it on the first symbol its
 		// own dependencies have and the bundle's copies don't.
-		.env_remove("LD_LIBRARY_PATH")
-		.arg(&url)
-		.spawn();
+		.env_remove("LD_LIBRARY_PATH");
+	// Per-stream User-Agent / Referer, forwarded as mpv flags so the
+	// upstream sees the same headers it would see through the IPTV proxy.
+	if let Some(ua) = user_agent.filter(|s| !s.is_empty()) {
+		command.arg(format!("--user-agent={ua}"));
+	}
+	if let Some(rf) = referer.filter(|s| !s.is_empty()) {
+		command.arg(format!("--referrer={rf}"));
+	}
+	let spawn = command.arg(&url).spawn();
 
 	match spawn {
 		Ok(mpv) => {
@@ -393,8 +453,8 @@ pub fn player_set_geometry(
 	visible: bool,
 	cutouts: Vec<Cutout>,
 ) {
-	let player = state.0.lock().unwrap();
-	if let Some(embed) = player.embed.as_ref() {
+	let mut player = state.0.lock().unwrap();
+	if let Some(embed) = player.embed.as_mut() {
 		if visible {
 			embed.move_resize(x, y, width, height);
 			embed.set_shape(width, height, &cutouts);
@@ -403,17 +463,16 @@ pub fn player_set_geometry(
 	}
 }
 
-/// Where the mouse is — a question this backend does not have to answer.
+/// Where the mouse is relative to the embedded native video window.
 ///
-/// The webview never sees a pointer over the native surface, so the frontend has
-/// to ask someone where it is. Under X11 mpv's own `mouse-pos` property stays
-/// correct for the whole film and is already read alongside the playback
-/// properties, so answering `null` here keeps that to one round trip. The
-/// Windows backend implements it for real, because an embedded mpv there does
-/// not report the cursor dependably and the controls could not un-hide.
+/// The webview cannot receive movement over the video child window. Query X11
+/// directly because mpv's `mouse-pos` is not dependable after a fullscreen
+/// resize, leaving the desktop controls hidden forever.
 #[tauri::command]
-pub fn player_pointer() -> Option<()> {
-	None
+pub fn player_pointer(state: tauri::State<'_, PlayerState>) -> Option<Pointer> {
+	let player = state.0.lock().ok()?;
+	let (x, y, over) = player.embed.as_ref()?.pointer()?;
+	Some(Pointer { x, y, over })
 }
 
 /// Is mpv still alive? If not, hand back the tail of its log so the frontend can

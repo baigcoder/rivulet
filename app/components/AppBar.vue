@@ -12,6 +12,11 @@ const { mobile } = useDisplay()
 // the prefix ever comes back — see localePath in app/utils/i18n.ts.
 const routeName = useRouteBaseName()
 
+const isLiveTv = computed(() => {
+  const name = routeName(route)
+  return name === 'live-tv' || name === 'live-tv-free'
+})
+
 const query = ref((route.query.q as string) ?? '')
 
 function search(replace = true) {
@@ -60,6 +65,7 @@ function toggleNav() {
          soaks up the slack — a spacer here would split the row and leave the box
          half-width with dead space beside it. -->
     <search-field
+      v-if="!isLiveTv"
       v-model="query"
       :placeholder="mobile ? $t('Search') : $t('Search movies and shows')"
       :density="mobile ? 'default' : 'compact'"

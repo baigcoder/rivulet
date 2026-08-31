@@ -142,6 +142,16 @@
     text-decoration: none;
   }
 
+  button {
+    background-color: transparent;
+    color: inherit;
+    border: none;
+    font: inherit;
+    cursor: pointer;
+    padding: 0;
+    margin: 0;
+  }
+
   /* Headings are here for semantics/screen readers; the look comes from the
      .text-h* class on them, which sits in a later layer and so wins. */
   h1,

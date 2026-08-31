@@ -20,6 +20,18 @@
 # service that keeps the in-process torrent engine alive when the app is backgrounded.
 -keep class io.github.rivulet.rivulet.DownloadService { *; }
 
+# libVLC's JNI looks up inner classes of `IMedia` (e.g. `IMedia$Track`,
+# `IMedia$AudioTrack`, `IMedia$VideoTrack`, `IMedia$SubtitleTrack`, …) at
+# `JNI_OnLoad` via `FindClass`. R8 sees no Java caller and strips them; the
+# JNI returns `JNI_ERR`; the process exits with `System.exit(1)`. The whole
+# `org.videolan.libvlc` package has to survive shrinking — keep every class
+# and every member, including synthetic ones R8 would otherwise drop.
+-keep class org.videolan.libvlc.** { *; }
+-keep class org.videolan.libvlc.interfaces.** { *; }
+-keepclassmembers class org.videolan.libvlc.** {
+    native <methods>;
+}
+
 # Uncomment this to preserve the line number information for
 # debugging stack traces.
 #-keepattributes SourceFile,LineNumberTable

@@ -1,6 +1,7 @@
 import type { SubtitleStyle } from '~/utils/subtitles'
 import {
   mdiAccountCircleOutline,
+  mdiCastConnected,
   mdiFolderOutline,
   mdiInformationOutline,
   mdiPaletteOutline,
@@ -13,7 +14,7 @@ import {
 import { key } from '~/brand'
 import { DEFAULT_SOURCE } from '~/theme/presets'
 
-export type SectionKey = 'appearance' | 'language' | 'sources' | 'subtitles' | 'network' | 'storage' | 'account' | 'about' | 'parental'
+export type SectionKey = 'appearance' | 'language' | 'sources' | 'subtitles' | 'network' | 'storage' | 'account' | 'about' | 'parental' | 'premium-tv'
 
 /**
  * The sidebar of the settings layout, in the order it lists them. A `value` is
@@ -29,6 +30,7 @@ export const SECTIONS: { value: SectionKey, title: () => string, icon: string }[
   { value: 'appearance', title: () => $t('Appearance'), icon: mdiPaletteOutline },
   { value: 'language', title: () => $t('Language'), icon: mdiTranslate },
   { value: 'sources', title: () => $t('Sources'), icon: mdiPowerPlugOutline },
+  { value: 'premium-tv', title: () => $t('Premium TV'), icon: mdiCastConnected },
   { value: 'subtitles', title: () => $t('Subtitles'), icon: mdiSubtitlesOutline },
   { value: 'network', title: () => $t('Network'), icon: mdiWifi },
   { value: 'storage', title: () => $t('Storage'), icon: mdiFolderOutline },
@@ -204,5 +206,20 @@ export const useSettingsStore = defineStore('settings', () => {
   const parentalMaxRating = useLocalStorage(key('parentalMaxRating'), 'R')
   const parentalPin = useLocalStorage(key('parentalPin'), '')
 
-  return { locale, theme, source, themeFromArt, colourFromPicture, customCss, uiScale, reduceEffects, motion, effectiveMotion, sources, allowTorrents, watchRegion, tmdbKey, downLimit, upLimit, wifiOnly, downloadDir, subs, resetSubs, notifyComplete, notifyError, parentalEnabled, parentalMaxRating, parentalPin }
+  // --- Subscription ---
+  /**
+   * Local-only feature flag. The app has no user auth, no account model, no
+   * server: who has Premium is a single localStorage value the user (or an
+   * installer) sets. The Rust Premium API server reads the same two fields
+   * on startup to decide whether the :3032 API comes up at all.
+   */
+  const subscriptionTier = useLocalStorage(key('subscriptionTier'), 'free')
+  /** Unix epoch milliseconds. 0 = no expiry (treated as expired). */
+  const subscriptionExpiresAt = useLocalStorage(key('subscriptionExpiresAt'), 0)
+  const isPremium = computed(() =>
+    subscriptionTier.value === 'premium'
+    && subscriptionExpiresAt.value > Date.now(),
+  )
+
+  return { locale, theme, source, themeFromArt, colourFromPicture, customCss, uiScale, reduceEffects, motion, effectiveMotion, sources, allowTorrents, watchRegion, tmdbKey, downLimit, upLimit, wifiOnly, downloadDir, subs, resetSubs, notifyComplete, notifyError, parentalEnabled, parentalMaxRating, parentalPin, subscriptionTier, subscriptionExpiresAt, isPremium }
 })

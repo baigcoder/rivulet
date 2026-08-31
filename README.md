@@ -61,6 +61,7 @@ https://github.com/user-attachments/assets/2d0bd58f-c838-43e2-a0ce-e503f9317aa8
   - [Built for a remote](#built-for-a-remote)
 - [Sources](#sources)
   - [Adding a source by link](#adding-a-source-by-link)
+- [Live TV](#live-tv)
 - [Your library](#your-library)
 - [Privacy](#privacy)
 - [Install](#install)
@@ -132,6 +133,14 @@ selection, seeding, speed limits, a disk budget that evicts oldest-watched first
 Wi-Fi-only switch.
 
 </td>
+<td width="33%" valign="top">
+
+**Live TV**
+
+Free channels via iptv-org, or connect your own IPTV provider (Xtream Codes or M3U link) for
+Premium TV with EPG, categories, favourites and recent channels.
+
+</td>
 </tr>
 </table>
 
@@ -174,6 +183,7 @@ poster size, app scale and a global CSS box.</sub>
 | **Favourites** / **Watchlist** / **History** | The three local lists |
 | **Detail** | Backdrop, synopsis, cast, trailer, seasons and episodes with per-episode state |
 | **Downloads** | The engine's UI — add, pick files, pause, seed, limit, evict |
+| **Live TV** | Free channels via iptv-org, or connect a Premium IPTV provider (Xtream / M3U) with EPG, categories and favourites |
 | **Settings** | Appearance, Sources, Subtitles, Network, Storage, Account, About |
 
 <p align="right"><a href="#readme-top">&#9650; back to top</a></p>
@@ -366,6 +376,34 @@ bundle's `Info.plist` and can't change it at runtime, so the `stremio://` switch
 
 <p align="right"><a href="#readme-top">&#9650; back to top</a></p>
 
+## Live TV
+
+Rivulet includes a built-in live TV player with two modes:
+
+**Free TV** uses the [iptv-org](https://github.com/iptv-org/iptv) public channel list — no
+account, no configuration. Browse by country, search by name, star your favourites, and check
+what's on with the electronic programme guide. Free TV channels are imported automatically on first
+open.
+
+**Premium TV** connects to your own IPTV provider. Paste a provider link (Xtream Codes panel URL
+or M3U playlist) under *Settings → Premium TV → Login via IPTV*, and Rivulet imports the live
+channels with full EPG, categories and account status. Providers that speak the Xtream Codes
+panel API get automatic expiry tracking and connection-limit warnings.
+
+| Feature | Free TV | Premium TV |
+| --- | --- | --- |
+| **Source** | iptv-org public list | Your own IPTV provider |
+| **Setup** | Automatic | Settings → Premium TV → Login via IPTV |
+| **EPG** | iptv-org programme guide | Provider's own EPG |
+| **Favourites** | Yes | Yes |
+| **Categories** | By country | Provider's categories |
+| **Account info** | N/A | Expiry, active connections |
+
+Both modes play through the same player component, and both are reachable from the *Live TV* room
+in the sidebar.
+
+<p align="right"><a href="#readme-top">&#9650; back to top</a></p>
+
 ## Your library
 
 Watch history, progress, favourites, the watchlist and every preference on the settings page live
@@ -412,13 +450,14 @@ that carry none, as every torrent client does.
 
 ## Install
 
-Grab the latest build from the [Releases page][releases].
+Grab the latest build from the [Releases page][releases], or download the [Android APK
+directly](https://github.com/baigcoder/rivulet/releases/latest/download/rivulet-universal.apk).
 
 | Platform | Format | Notes |
 | --- | --- | --- |
 | **Linux** | `.deb`, `.rpm`, `.AppImage` | Needs `mpv` and `ffmpeg` from your package manager |
 | **Windows** | `.msi`, `.exe` (NSIS) | Ships its own mpv and ffmpeg; WebView2 comes with Windows 11 and updated Windows 10 |
-| **Android / Android TV** | `.apk` | Sideload; also the phone build |
+| **Android / Android TV** | [`.apk`](https://github.com/baigcoder/rivulet/releases/latest/download/rivulet-universal.apk) | Sideload; also the phone build |
 | **macOS** | `.app`, `.dmg` | Apple Silicon; carries its own libmpv, so nothing to install first. Unsigned — [one command before the first launch](#opening-it-on-macos) |
 
 First run has no sources and searches nothing. Add one under *Settings → Sources*, or skip that
