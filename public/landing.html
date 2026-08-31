@@ -748,6 +748,7 @@
   <div class="nav-links">
     <a href="#why">Why</a>
     <a href="#modes">Modes</a>
+    <a href="#live-tv">Live TV</a>
     <a href="#player">Player</a>
     <a href="#downloads">Downloads</a>
     <a href="#sources">Sources</a>
@@ -1056,7 +1057,7 @@
     <div class="sec-head reveal">
       <hr class="trace" />
       <span class="label">The app</span>
-      <h2 class="h2">Eight rooms, and TMDB metadata through all of them</h2>
+      <h2 class="h2">Nine rooms, and TMDB metadata through all of them</h2>
       <p class="lede measure">
         Posters, backdrops, cast, ratings, per-episode watched state and resume points —
         with favourites, a watchlist and history kept on the device.
@@ -1072,7 +1073,60 @@
       <li class="reveal" style="--i: 1"><span class="n">06</span><h4>History</h4><p>What you watched and where you stopped, per episode</p></li>
       <li class="reveal" style="--i: 2"><span class="n">07</span><h4>Detail</h4><p>Backdrop, synopsis, cast, trailer, seasons and per-episode state</p></li>
       <li class="reveal" style="--i: 3"><span class="n">08</span><h4>Settings</h4><p>Appearance, sources, subtitles, network, storage, account, about</p></li>
+      <li class="reveal" style="--i: 0"><span class="n">09</span><h4>Live TV</h4><p>Free IPTV via iptv-org, Premium TV via Xtream/M3U login, EPG and favourites</p></li>
     </ul>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ LIVE TV ════════════════════════════ -->
+<section class="pad" id="live-tv">
+  <div class="wrap">
+    <div class="split">
+      <div class="split-text reveal">
+        <span class="label" style="color: var(--warm);">Live TV</span>
+        <h2 class="h2">Free and premium channels, built in</h2>
+        <p class="lede">
+          Two IPTV backends run inside the same app — a free tier powered by the community
+          iptv-org channel list, and a premium tier that connects to your own Xtream-Codes
+          or M3U provider account. Both share the same EPG, favourites and playback chrome.
+        </p>
+        <ul class="points points-red" style="margin-top: 24px">
+          <li><strong>Free TV</strong> — 8 000+ channels from iptv-org, grouped by country and language, no account needed</li>
+          <li><strong>Premium TV</strong> — login via Xtream-Codes username/password or an M3U playlist URL, categories and channel count from your provider</li>
+          <li>Electronic Programme Guide (EPG) with current and next programme on every channel</li>
+          <li>Favourite channels across both tiers, persisted on the device</li>
+          <li>Country, language, and category filters on both Free and Premium</li>
+          <li>Search across all loaded channels in one keystroke</li>
+        </ul>
+        <div class="chips" style="margin-top: 24px">
+          <span class="chip-teal">Xtream-Codes</span>
+          <span class="chip-teal">M3U / M3U8</span>
+          <span class="chip-teal">EPG (XMLTV)</span>
+          <span class="chip-teal">iptv-org</span>
+          <span class="chip-teal">Favourites</span>
+        </div>
+      </div>
+      <div class="split-media reveal" style="--i: 1">
+        <div style="background: var(--surface); border: 1px solid var(--rule); border-radius: var(--r-lg); padding: 24px; font-family: var(--mono); font-size: .8125rem; color: var(--on-muted); line-height: 1.8;">
+          <div style="color: var(--on-dim); font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 12px;">Settings → Live TV</div>
+          <div style="margin-bottom: 16px;">
+            <span style="color: var(--accent);">Free TV</span><br/>
+            <span style="color: var(--on-dim);">Source: iptv-org · 8 000+ channels</span><br/>
+            <span style="color: var(--on-dim);">Filter: Country · Language · Category</span>
+          </div>
+          <div style="border-top: 1px solid var(--rule-soft); padding-top: 16px; margin-bottom: 16px;">
+            <span style="color: var(--warm);">Premium TV</span><br/>
+            <span style="color: var(--on-dim);">Provider: Xtream-Codes · 12 000 channels</span><br/>
+            <span style="color: var(--on-dim);">Account status: Active until 2026-12-31</span>
+          </div>
+          <div style="border-top: 1px solid var(--rule-soft); padding-top: 16px;">
+            <span style="color: var(--on-ground);">EPG</span><br/>
+            <span style="color: var(--accent);">BBC One · 20:00 – 21:00</span><br/>
+            <span style="color: var(--on-dim);">EastEnders · Series 38, Episode 142</span>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -1601,26 +1655,28 @@
   /* ── Platform detection & download buttons ──────────────────────────────
      Wrapped, because a missing element here must not cost anyone the page. */
   try {
+    var RELEASES = 'https://github.com/baigcoder/rivulet/releases';
+    var DL = 'https://github.com/baigcoder/rivulet/releases/latest/download/';
     var P = {
+      linux: {
+        name: 'Linux',
+        icon: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.345 1.884 1.345.358 0 .733-.132 1.073-.396.34-.265.64-.66.914-1.132.229-.4.487-.672.752-.955.132-.142.263-.283.382-.465.117-.18.22-.39.247-.581.056-.392-.058-.78-.36-1.09-.36-.36-.75-.54-1.037-.81-.287-.27-.481-.694-.681-1.012a12.502 12.502 0 01-.764-1.467c-.094-.198-.143-.334-.16-.469-.019-.134-.006-.268-.014-.465-.011-.199-.03-.465-.091-.695-.04-.158-.087-.264-.167-.399.019-.047.037-.093.053-.14.673-1.77.8-3.679.32-5.332-.48-1.656-1.4-3.006-2.664-3.676C14.067.263 13.282 0 12.504 0z"/></svg>',
+        href: DL + 'Rivulet.AppImage',
+      },
+      android: {
+        name: 'Android',
+        icon: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 18c0 .55.45 1 1 1h10c.55 0 1-.45 1-1V8H6v10zm9-16H6c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 16H6V4h12v14z"/></svg>',
+        href: DL + 'Rivulet.apk',
+      },
       windows: {
         name: 'Windows',
         icon: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>',
-        file: 'Rivulet_Setup.exe',
+        href: RELEASES,
       },
       macos: {
         name: 'macOS',
         icon: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>',
-        file: 'Rivulet.dmg',
-      },
-      linux: {
-        name: 'Linux',
-        icon: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.345 1.884 1.345.358 0 .733-.132 1.073-.396.34-.265.64-.66.914-1.132.229-.4.487-.672.752-.955.132-.142.263-.283.382-.465.117-.18.22-.39.247-.581.056-.392-.058-.78-.36-1.09-.36-.36-.75-.54-1.037-.81-.287-.27-.481-.694-.681-1.012a12.502 12.502 0 01-.764-1.467c-.094-.198-.143-.334-.16-.469-.019-.134-.006-.268-.014-.465-.011-.199-.03-.465-.091-.695-.04-.158-.087-.264-.167-.399.019-.047.037-.093.053-.14.673-1.77.8-3.679.32-5.332-.48-1.656-1.4-3.006-2.664-3.676C14.067.263 13.282 0 12.504 0z"/></svg>',
-        file: 'Rivulet.AppImage',
-      },
-      android: {
-        name: 'Android TV',
-        icon: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 18c0 .55.45 1 1 1h10c.55 0 1-.45 1-1V8H6v10zm9-16H6c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 16H6V4h12v14z"/></svg>',
-        file: 'Rivulet.apk',
+        href: RELEASES,
       },
     };
 
@@ -1628,18 +1684,18 @@
     var det = 'linux';
     if (ua.indexOf('win') !== -1) det = 'windows';
     else if (ua.indexOf('mac') !== -1) det = 'macos';
+    else if (ua.indexOf('android') !== -1) det = 'android';
 
     var label = document.getElementById('detected-os');
     if (label) label.textContent = P[det].name;
 
     var order = [det].concat(Object.keys(P).filter(function (k) { return k !== det; }));
-    var base = 'https://github.com/baigcoder/rivulet/releases/latest/download/';
 
     var btnBox = document.getElementById('dl-buttons');
     if (btnBox) {
       order.forEach(function (k, i) {
         var a = document.createElement('a');
-        a.href = base + P[k].file;
+        a.href = P[k].href;
         a.className = i === 0 ? 'btn btn-primary' : 'btn btn-ghost';
         a.innerHTML = P[k].icon + (i === 0 ? ' Download for ' + P[k].name : ' ' + P[k].name);
         btnBox.appendChild(a);
@@ -1649,7 +1705,7 @@
     var alt = document.getElementById('alt-platforms');
     if (alt) {
       alt.innerHTML = order.slice(1).map(function (k) {
-        return '<a href="' + base + P[k].file + '">' + P[k].name + '</a>';
+        return '<a href="' + P[k].href + '">' + P[k].name + '</a>';
       }).join('<span class="dl-sep">·</span>');
     }
   }
