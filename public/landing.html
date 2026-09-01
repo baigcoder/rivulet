@@ -904,59 +904,6 @@
         </div>
       </div>
     </div>
-
-    <!-- Comparison Table -->
-    <div class="table-scroll reveal" style="--i: 2; margin-top: 48px;">
-      <table class="table">
-        <thead>
-          <tr>
-            <th scope="col"></th>
-            <th scope="col">ON — Best available</th>
-            <th scope="col">OFF — Instant playback</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>Engine used</td>
-            <td class="player">Local torrent engine (librqbit + mpv/ExoPlayer)</td>
-            <td>Direct HTTP stream (webview / ExoPlayer)</td>
-          </tr>
-          <tr>
-            <td>Start time</td>
-            <td>~5–30 s (metadata + first peers)</td>
-            <td class="player">~1–3 s (server response)</td>
-          </tr>
-          <tr>
-            <td>Disk usage</td>
-            <td>Video + subtitles downloaded progressively</td>
-            <td class="player">Zero (transient stream)</td>
-          </tr>
-          <tr>
-            <td>Offline replay</td>
-            <td class="player">Yes — full file on disk</td>
-            <td>No</td>
-          </tr>
-          <tr>
-            <td>Network</td>
-            <td>P2P swarm + trackers</td>
-            <td class="player">Single HTTP source</td>
-          </tr>
-          <tr>
-            <td>Seeding</td>
-            <td class="player">On by default (upload limits apply)</td>
-            <td>N/A</td>
-          </tr>
-          <tr>
-            <td>Mid-playback toggle</td>
-            <td colspan="2" style="text-align: center; color: var(--accent);">Instant re-resolve — flip and it switches without leaving the title</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <p class="reveal measure" style="--i: 3; margin-top: 32px; text-align: center; color: var(--on-muted);">
-      <strong>Default is ON.</strong> You choose per device — a TV with storage might want offline copies; a phone on mobile data might prefer instant streams.
-    </p>
   </div>
 </section>
 
