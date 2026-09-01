@@ -82,6 +82,7 @@ export default {
   "Blur": "Blur",
   "Blur and tint": "Blur and tint",
   "Bold": "Bold",
+  "Bollywood Trending": "Bollywood Trending",
   "Born": "Born",
   "Browse Free TV": "Browse Free TV",
   "Browse live channels and guides": "Browse live channels and guides",

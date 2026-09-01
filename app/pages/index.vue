@@ -136,6 +136,11 @@ const rows = computed(() => {
     { title: $t('Trending this week'), request: { path: '/trending/all/week' }, to: `/movies?cat=trending&label=${encodeURIComponent($t('Trending this week'))}` },
     { title: $t('Popular movies'), request: { path: '/movie/popular', type: 'movie' as const }, to: `/movies?label=${encodeURIComponent($t('Popular movies'))}` },
     { title: $t('Popular TV'), request: { path: '/tv/popular', type: 'tv' as const }, to: `/tv?label=${encodeURIComponent($t('Popular TV'))}` },
+    {
+      title: $t('Bollywood Trending'),
+      request: { path: '/discover/movie', type: 'movie' as const, params: { with_original_language: 'hi', sort_by: 'popularity.desc' } },
+      to: `/movies?label=${encodeURIComponent($t('Bollywood Trending'))}`,
+    },
     { title: $t('Top rated'), request: { path: '/movie/top_rated', type: 'movie' as const }, to: `/movies?cat=top&label=${encodeURIComponent($t('Top rated'))}` },
     { title: $t('Now playing'), request: { path: '/movie/now_playing', type: 'movie' as const }, to: `/movies?cat=now&label=${encodeURIComponent($t('Now playing'))}` },
     {

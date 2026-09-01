@@ -82,6 +82,7 @@ export default {
   "Blur": "மங்கல்",
   "Blur and tint": "மங்கலும் சாயலும்",
   "Bold": "தடிமன்",
+  "Bollywood Trending": "TODO_TRANSLATION: Bollywood Trending",
   "Born": "TODO_TRANSLATION: Born",
   "Browse Free TV": "TODO_TRANSLATION: Browse Free TV",
   "Browse live channels and guides": "TODO_TRANSLATION: Browse live channels and guides",

@@ -82,6 +82,7 @@ export default {
   "Blur": "Làm mờ",
   "Blur and tint": "Làm mờ và phủ màu",
   "Bold": "Đậm",
+  "Bollywood Trending": "TODO_TRANSLATION: Bollywood Trending",
   "Born": "TODO_TRANSLATION: Born",
   "Browse Free TV": "TODO_TRANSLATION: Browse Free TV",
   "Browse live channels and guides": "TODO_TRANSLATION: Browse live channels and guides",

@@ -82,6 +82,7 @@ export default {
   "Blur": "흐림",
   "Blur and tint": "흐림과 색조",
   "Bold": "굵게",
+  "Bollywood Trending": "TODO_TRANSLATION: Bollywood Trending",
   "Born": "TODO_TRANSLATION: Born",
   "Browse Free TV": "TODO_TRANSLATION: Browse Free TV",
   "Browse live channels and guides": "TODO_TRANSLATION: Browse live channels and guides",

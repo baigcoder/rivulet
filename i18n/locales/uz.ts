@@ -82,6 +82,7 @@ export default {
   "Blur": "Xiralik",
   "Blur and tint": "Xiralik va rang tusi",
   "Bold": "Qalin",
+  "Bollywood Trending": "TODO_TRANSLATION: Bollywood Trending",
   "Born": "TODO_TRANSLATION: Born",
   "Browse Free TV": "TODO_TRANSLATION: Browse Free TV",
   "Browse live channels and guides": "TODO_TRANSLATION: Browse live channels and guides",
