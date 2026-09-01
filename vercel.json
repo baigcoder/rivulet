@@ -1,9 +1,7 @@
 {
-  "installCommand": "echo skip",
-  "buildCommand": "echo skip",
-  "outputDirectory": "public",
   "rewrites": [
-    { "source": "/", "destination": "/landing.html" }
+    { "source": "/", "destination": "/public/landing.html" },
+    { "source": "/(.+)", "destination": "/public/$1" }
   ],
   "headers": [
     {
