@@ -443,7 +443,7 @@ export const useLiveTvStore = defineStore('liveTv', () => {
       await liveClearRecent(id)
       recentChannelIds.value = []
       if (dashboard.value)
-        dashboard.value.recentPreviews = []
+        dashboard.value = { ...dashboard.value, recentPreviews: [] }
     }
     catch { /* ignore */ }
   }
