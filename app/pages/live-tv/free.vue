@@ -224,7 +224,7 @@ watch(() => route.query.category, category => {
           v-if="liveTv.view === 'recent' && liveTv.recentChannels.length"
           :icon="mdiDeleteSweepOutline"
           variant="text"
-          size="x-small"
+          size="small"
           class="shrink-0"
           :aria-label="$t('Clear recently watched')"
           :title="$t('Clear recently watched')"
