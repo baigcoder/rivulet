@@ -21,7 +21,7 @@ const pressed = ref(false)
 <template>
   <nuxt-link
     :to="mediaLink(media)"
-    class="group flex select-none items-center gap-3 rounded-xl px-3 py-2 outline-none transition-all duration-200 odd:bg-surface-container/30 hover:bg-surface-container-high/70 focus-visible:ring-2 focus-visible:ring-primary"
+    class="group flex select-none items-center gap-3 rounded-xl px-3 py-2 outline-none transition-colors duration-200 odd:bg-surface-container/30 hover:bg-surface-container-high/70 focus-visible:ring-2 focus-visible:ring-primary"
     :style="{ transform: pressed ? 'scale(0.98)' : 'scale(1)' }"
     @mouseenter="hover = true; ui.preview(media)"
     @mouseleave="hover = false; pressed = false"

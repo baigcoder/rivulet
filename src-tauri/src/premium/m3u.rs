@@ -105,9 +105,12 @@ impl PendingEntry {
         // the URL's *host*, never the URL: an Xtream-flavoured playlist
         // carries the account's username and password in the path, and
         // a name is written to the database and rendered on a card.
-        let name = self
+        let raw_name = self
             .name
             .as_deref()
+            .or_else(|| self.tvg_name.as_deref());
+        let quality = raw_name.and_then(names::detect_quality);
+        let name = raw_name
             .and_then(names::clean_channel_name)
             .or_else(|| self.tvg_name.as_deref().and_then(names::clean_channel_name))
             .or_else(|| host_of(&url))?;
@@ -121,6 +124,7 @@ impl PendingEntry {
             // The same stream listed twice. Keep the first.
             return None;
         }
+        let is_adult = self.group.as_deref().map(names::is_adult_category).unwrap_or(false);
         Some(IPTVChannel {
             id,
             name,
@@ -134,6 +138,8 @@ impl PendingEntry {
             user_agent: self.user_agent,
             referer: self.referer,
             stream_url: Some(url),
+            quality,
+            is_adult,
             is_favorite: false,
         })
     }

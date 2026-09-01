@@ -38,7 +38,7 @@ function next() {
       >
         <button
           type="button"
-          class="shrink-0 rounded-full border px-3 py-1 text-body-small transition-all"
+          class="shrink-0 rounded-full border px-3 py-1 text-body-small transition-colors"
           :class="selected === '' ? 'border-primary bg-primary text-on-primary' : 'border-white/10 bg-surface-container-high hover:bg-surface-container'"
           @click="emit('select', '')"
         >
@@ -48,7 +48,7 @@ function next() {
           v-for="country in countries"
           :key="country"
           type="button"
-          class="shrink-0 rounded-full border px-3 py-1 text-body-small transition-all"
+          class="shrink-0 rounded-full border px-3 py-1 text-body-small transition-colors"
           :class="selected === country ? 'border-primary bg-primary text-on-primary' : 'border-white/10 bg-surface-container-high hover:bg-surface-container'"
           @click="emit('select', country)"
         >

@@ -713,6 +713,7 @@ pub fn run() {
             player::player_set_geometry,
             player::player_pointer,
             player::player_status,
+            player::player_screenshot,
             audio_envelope,
             thumbnail,
             deep_link_fix_handler,

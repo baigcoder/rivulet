@@ -23,7 +23,7 @@ const emit = defineEmits<{
         v-for="ch in channels"
         :key="ch.id"
         type="button"
-        class="group flex w-28 shrink-0 cursor-pointer flex-col overflow-hidden rounded-xl border border-white/5 bg-surface-container-high transition-all hover:border-primary/40 hover:shadow-lg hover:shadow-primary/10 focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:w-32"
+        class="group flex w-28 shrink-0 cursor-pointer flex-col overflow-hidden rounded-xl border border-white/5 bg-surface-container-high transition-[border-color,box-shadow] hover:border-primary/40 hover:shadow-lg hover:shadow-primary/10 focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:w-32"
         @click="emit('play', ch)"
       >
         <div class="relative aspect-square w-full overflow-hidden bg-surface-container">
@@ -38,7 +38,7 @@ const emit = defineEmits<{
           <div v-else class="grid size-full place-items-center">
             <v-icon :icon="mdiTelevision" size="24" class="opacity-15" />
           </div>
-          <div class="absolute inset-0 grid place-items-center bg-black/0 opacity-0 transition-all group-hover:bg-black/30 group-hover:opacity-100">
+          <div class="absolute inset-0 grid place-items-center bg-black/0 opacity-0 transition-[opacity,background-color] group-hover:bg-black/30 group-hover:opacity-100">
             <div class="size-8 place-items-center rounded-full bg-primary/90 text-white shadow-lg grid opacity-0 group-hover:grid group-hover:opacity-100">
               <v-icon :icon="mdiPlay" size="16" class="ml-0.5" />
             </div>

@@ -34,7 +34,7 @@ const epgProgress = computed(() => {
 
 <template>
   <div
-    class="group flex h-14 cursor-pointer items-center gap-3 rounded-lg border border-white/5 bg-surface-container-high px-3 transition-all duration-200 hover:border-primary/40 hover:bg-surface-container-highest focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+    class="group flex h-14 cursor-pointer items-center gap-3 rounded-lg border border-white/5 bg-surface-container-high px-3 transition-colors duration-200 hover:border-primary/40 hover:bg-surface-container-highest focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
     tabindex="0"
     role="button"
     @click="emit('play', channel)"
@@ -67,7 +67,13 @@ const epgProgress = computed(() => {
 
     <div v-if="nowProgram" class="hidden w-24 shrink-0 sm:block">
       <div class="h-1 w-full overflow-hidden rounded-full bg-white/10">
-        <div class="h-full rounded-full bg-primary transition-all" :style="{ width: `${epgProgress}%` }" />
+        <!-- scaleX, not width: the EPG bar crawls once a second per visible row,
+             and a width tween is layout — every card on the list relayouts with
+             it. Scale is the compositor's, and the pill looks the same. -->
+        <div
+          class="h-full w-full origin-left rounded-full bg-primary transition-transform duration-1000 ease-linear"
+          :style="{ transform: `scaleX(${epgProgress / 100})` }"
+        />
       </div>
     </div>
 

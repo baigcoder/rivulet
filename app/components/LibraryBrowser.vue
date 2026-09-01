@@ -268,8 +268,8 @@ const selectionCount = computed(() => selected.value.size)
 
     <!-- Batch action toolbar -->
     <transition
-      enter-active-class="transition-all duration-200 ease-out"
-      leave-active-class="transition-all duration-150 ease-in"
+      enter-active-class="transition-[opacity,transform] duration-200 ease-out"
+      leave-active-class="transition-[opacity,transform] duration-150 ease-in"
       enter-from-class="translate-y-full opacity-0"
       leave-to-class="translate-y-full opacity-0"
     >

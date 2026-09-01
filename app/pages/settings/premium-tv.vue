@@ -4,6 +4,7 @@ import {
   mdiClockOutline,
   mdiLogout,
   mdiShieldCheckOutline,
+  mdiShieldOffOutline,
 } from '@mdi/js'
 import { pushEntitlement } from '~/utils/premiumTv'
 
@@ -237,6 +238,36 @@ function formatExpiry(ms: number): string {
           {{ $t('Open Premium TV') }}
         </v-btn>
       </div>
+    </settings-section>
+
+    <!-- Content filtering -->
+    <settings-section
+      v-if="premium.connected"
+      :title="$t('Content')"
+      :hint="$t('Filter channels from your provider by content type.')"
+    >
+      <v-card rounded="xl" class="panel p-6">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <v-icon :icon="mdiShieldOffOutline" size="24" class="opacity-60" />
+            <div>
+              <p class="text-body-medium font-medium">
+                {{ $t('Hide adult channels') }}
+              </p>
+              <p class="text-body-small opacity-60">
+                {{ $t('Channels marked as 18+ by the provider or detected by category name will be hidden.') }}
+              </p>
+            </div>
+          </div>
+          <v-switch
+            v-model="settings.hideAdultChannels"
+            color="primary"
+            density="compact"
+            hide-details
+            :aria-label="$t('Hide adult channels')"
+          />
+        </div>
+      </v-card>
     </settings-section>
   </div>
 </template>

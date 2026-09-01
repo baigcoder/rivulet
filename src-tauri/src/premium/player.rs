@@ -104,5 +104,6 @@ pub fn build_source(
         expires_at: Some(redirect.expires_at),
         user_agent: row.user_agent,
         referer: row.referer,
+        quality: row.quality,
     })
 }

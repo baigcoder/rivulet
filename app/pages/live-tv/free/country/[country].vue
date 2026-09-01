@@ -230,7 +230,7 @@ const filteredChannels = computed(() => {
     <div v-if="countryCategories.length" class="mt-3 flex gap-2 overflow-x-auto px-4 pb-1 scrollbar-none md:px-6">
       <button
         type="button"
-        class="flex shrink-0 items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-body-small font-medium transition-all"
+        class="flex shrink-0 items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-body-small font-medium transition-colors"
         :class="!selectedCategory
           ? 'border-primary bg-primary/20 text-primary font-semibold ring-1 ring-primary/40'
           : 'border-white/10 bg-surface-container-high text-white/70 hover:bg-surface-container hover:text-white'"
@@ -244,7 +244,7 @@ const filteredChannels = computed(() => {
         v-for="cat in countryCategories"
         :key="cat.name"
         type="button"
-        class="flex shrink-0 items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-body-small font-medium transition-all"
+        class="flex shrink-0 items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-body-small font-medium transition-colors"
         :class="selectedCategory === cat.name
           ? 'border-primary bg-primary/20 text-primary font-semibold ring-1 ring-primary/40'
           : 'border-white/10 bg-surface-container-high text-white/70 hover:bg-surface-container hover:text-white'"

@@ -196,6 +196,8 @@ pub fn player_start(
 		set("osd-level", "0");
 		set("force-window", "no");
 		set("hwdec", "videotoolbox-copy");
+		// Multi-threaded decoding — critical for 4K HEVC.
+		set("vd-lavc-threads", "0");
 		// libmpv wakes the render callback ahead of the frame's presentation
 		// time and blocks inside render() until it comes round. That wait is on
 		// the main thread, which is also WebKit's, so the whole UI would stutter
@@ -312,4 +314,19 @@ pub fn player_status(state: tauri::State<'_, PlayerState>) -> PlayerStatus {
 
 	let log_tail = if running { None } else { player.log.as_deref().and_then(player_socket::log_tail) };
 	PlayerStatus { running, log_tail }
+}
+
+/// Capture the current video frame as a JPEG data-URL via mpv's `screenshot-to-file`.
+#[tauri::command]
+pub fn player_screenshot(state: tauri::State<'_, PlayerState>) -> Result<String, String> {
+	let path = state.0.lock().unwrap().ipc.clone().ok_or("player not running")?;
+	let tmp = std::env::temp_dir().join(format!("rivulet-screenshot-{}.jpg", std::process::id()));
+	let cmd = serde_json::json!({
+		"command": ["screenshot-to-file", tmp.to_string_lossy(), "video"]
+	}).to_string();
+	player_socket::command(&path, &cmd)?;
+	let bytes = std::fs::read(&tmp).map_err(|e| e.to_string())?;
+	let _ = std::fs::remove_file(&tmp);
+	use base64::Engine;
+	Ok(format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(&bytes)))
 }

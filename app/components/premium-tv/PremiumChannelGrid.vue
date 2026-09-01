@@ -132,7 +132,7 @@ const virtualizer = useVirtualizer(computed(() => ({
   // row is remeasured once it mounts. The numbers are the card's own
   // fixed logo box plus its text block plus the row gap — a card is a
   // fixed height now, so these are close rather than a guess.
-  estimateSize: () => props.density === 'compact' ? 116 : 144,
+  estimateSize: () => props.density === 'compact' ? 160 : 200,
   overscan: 4,
 })))
 

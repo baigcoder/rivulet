@@ -321,7 +321,7 @@ const playLabel = computed(() => [
         <div class="absolute right-4 top-4 z-10 flex items-center gap-2">
           <button
             v-tooltip:bottom="heroMuted ? $t('Sound on') : $t('Sound off')"
-            class="grid size-10 place-items-center rounded-full border border-white/20 bg-black/60 text-white opacity-95 backdrop-blur-md transition-all hover:scale-110 hover:bg-black/80 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary"
+            class="grid size-10 place-items-center rounded-full border border-white/20 bg-black/60 text-white opacity-95 backdrop-blur-md transition-[transform,background-color] hover:scale-110 hover:bg-black/80 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary"
             :aria-label="heroMuted ? $t('Sound on') : $t('Sound off')"
             @click="toggleHeroSound"
           >
@@ -329,7 +329,7 @@ const playLabel = computed(() => [
           </button>
           <button
             v-tooltip:bottom="$t('Hide video')"
-            class="grid size-10 place-items-center rounded-full border border-white/20 bg-black/60 text-white opacity-95 backdrop-blur-md transition-all hover:scale-110 hover:bg-black/80 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary"
+            class="grid size-10 place-items-center rounded-full border border-white/20 bg-black/60 text-white opacity-95 backdrop-blur-md transition-[transform,background-color] hover:scale-110 hover:bg-black/80 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary"
             :aria-label="$t('Hide video')"
             @click="videoHidden = true"
           >

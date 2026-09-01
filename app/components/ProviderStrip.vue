@@ -68,6 +68,7 @@ const ORDER: string[][] = [
   ['disney plus', 'disney+'],
   ['crunchyroll'],
   ['peacock'],
+  ['lionsgate plus', 'lionsgate+'],
 ]
 
 /**
@@ -96,6 +97,17 @@ const providers = computed(() => {
     if (!seen.has(at) || rank(seen.get(at)!) > at)
       seen.set(at, p)
   }
+
+  // Lionsgate+ (provider_id 1790) may not appear for every region.  Inject
+  // a static stub when it is missing so the icon is always reachable.
+  if (!seen.has(ORDER.findIndex(a => a[0] === 'lionsgate plus'))) {
+    seen.set(ORDER.findIndex(a => a[0] === 'lionsgate plus'), {
+      provider_id: 1790,
+      provider_name: 'Lionsgate+',
+      logo_path: null,
+    })
+  }
+
   return [...seen.values()].sort((a, b) => rank(a) - rank(b))
 })
 
@@ -130,7 +142,7 @@ function to(p: Provider) {
         v-for="p in providers"
         :key="p.provider_id"
         :to="to(p)"
-        class="provider-card group relative aspect-square w-full overflow-hidden rounded-2xl border border-white/10 bg-surface-container-high shadow-md transition-all duration-300 hover:scale-[1.06] hover:border-primary/60 hover:shadow-xl hover:shadow-primary/20 focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        class="provider-card group relative aspect-square w-full overflow-hidden rounded-2xl border border-white/10 bg-surface-container-high shadow-md transition-[transform,border-color] duration-300 hover:scale-[1.06] hover:border-primary/60 hover:shadow-xl hover:shadow-primary/20 focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
         :aria-label="$t('Browse {provider}', { provider: p.provider_name })"
       >
         <img

@@ -157,6 +157,12 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
     void loadChannels({ reset: true })
   })
 
+  // Re-fetch the channel list and categories when the adult content toggle changes.
+  watch(() => useSettingsStore().hideAdultChannels, () => {
+    void loadCategoryCounts()
+    void loadChannels({ reset: true })
+  })
+
   /** What the player walks with channel up/down: the list as displayed. */
   const zapList = computed<ZapChannel[]>(() =>
     channels.value.map(c => ({ id: c.id, name: c.name, logoUrl: c.logoUrl })),
@@ -375,7 +381,9 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
 
   async function loadCategoryCounts(): Promise<void> {
     try {
-      categoryCounts.value = await premiumApi.categoryCounts()
+      categoryCounts.value = await premiumApi.categoryCounts({
+        hideAdult: useSettingsStore().hideAdultChannels || undefined,
+      })
     }
     catch (e) {
       error.value = message(e)
@@ -424,6 +432,7 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
         category: view.value === 'category' ? (selectedCategory.value || undefined) : undefined,
         search: searchDebounced.value || undefined,
         favoritesOnly: view.value === 'favorites' || undefined,
+        hideAdult: useSettingsStore().hideAdultChannels || undefined,
         limit: PAGE_SIZE,
         signal: controller.signal,
       })

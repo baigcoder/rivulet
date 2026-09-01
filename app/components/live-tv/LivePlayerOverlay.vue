@@ -36,6 +36,7 @@ import {
   mdiFullscreen,
   mdiFullscreenExit,
   mdiMagnify,
+  mdiMonitor,
   mdiPause,
   mdiPlay,
   mdiReload,
@@ -57,6 +58,7 @@ export interface ChannelEntry {
   logoUrl?: string | null
   streamUrl?: string | null
   group?: string
+  quality?: string | null
 }
 
 const props = withDefaults(
@@ -77,6 +79,14 @@ const props = withDefaults(
     isFavorite?: boolean
     isFullscreen?: boolean
     error?: string
+    /** Decoded video resolution label from mpv (e.g. "4K UHD", "1080p"). */
+    resolutionLabel?: string
+    /** Quality label from the channel name (e.g. "4K", "FHD"). */
+    sourceQuality?: string | null
+    /** Available quality variants for the current channel. */
+    qualityVariants?: ChannelEntry[]
+    /** True while quality variants are being fetched. */
+    qualityLoading?: boolean
   }>(),
   {
     chromeUp: false,
@@ -89,6 +99,10 @@ const props = withDefaults(
     isFavorite: false,
     isFullscreen: false,
     error: '',
+    resolutionLabel: '',
+    sourceQuality: null,
+    qualityVariants: () => [],
+    qualityLoading: false,
   },
 )
 
@@ -103,10 +117,17 @@ const emit = defineEmits<{
   zapTo: [index: number]
   toggleFavorite: []
   toggleFullscreen: []
+  showQualityPicker: []
 }>()
 
 /** Is mpv's picture in front of the page? Then holes to punch, and opaque bars. */
 const overlay = hasVideoOverlay()
+
+// ── Quality display ──────────────────────────────────────────────────
+/** The decoded resolution from mpv, or the source quality label, for the badge. */
+const qualityBadge = computed(() => props.resolutionLabel || props.sourceQuality || '')
+/** Whether there are alternative quality variants to offer. */
+const hasQualityVariants = computed(() => props.qualityVariants.length > 0)
 
 // ── Touch vs pointer detection (mirrors MpvPlayer's approach) ─────────
 const coarsePointer = useMediaQuery('(pointer: coarse)')
@@ -376,7 +397,7 @@ defineExpose({ show, hide, visible })
     <!-- TOP HEADER: channel identity. Opaque, because it sits in a hole. -->
     <header
       data-cut
-      class="pointer-events-auto flex items-center justify-between px-8 py-5 transition-all duration-300"
+      class="pointer-events-auto flex items-center justify-between px-8 py-5 transition-transform duration-300"
       :class="[
         overlay ? 'hud-solid-top' : 'hud-blur-top',
         visible ? 'translate-y-0 opacity-100' : '-translate-y-full opacity-0',
@@ -412,6 +433,17 @@ defineExpose({ show, hide, visible })
               <span class="size-2 rounded-full bg-red-500 animate-pulse" />
               <span class="text-[10px] font-extrabold tracking-wider text-red-400 uppercase">{{ $t('LIVE') }}</span>
             </div>
+
+            <!-- Resolution / Quality Badge -->
+            <span
+              v-if="qualityBadge"
+              class="px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wide border"
+              :class="qualityBadge.includes('4K')
+                ? 'bg-amber-950 border-amber-500/50 text-amber-400'
+                : 'bg-white/10 border-white/10 text-gray-300'"
+            >
+              {{ qualityBadge }}
+            </span>
 
             <!-- Channel Number -->
             <span v-if="channelTotal > 0" class="text-xs font-semibold text-gray-300 bg-white/10 px-2 py-0.5 rounded-md border border-white/10">
@@ -505,7 +537,7 @@ defineExpose({ show, hide, visible })
           <div class="flex items-center gap-3 pt-2">
             <button
               type="button"
-              class="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 focus-visible:bg-red-500 text-white text-xs font-bold transition-all shadow-md flex items-center gap-1.5"
+              class="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 focus-visible:bg-red-500 text-white text-xs font-bold transition-colors shadow-md flex items-center gap-1.5"
               @click.stop="emit('retry')"
             >
               <v-icon :icon="mdiReload" size="14" />
@@ -514,14 +546,14 @@ defineExpose({ show, hide, visible })
             <button
               v-if="hasNext"
               type="button"
-              class="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 focus-visible:bg-white/20 text-white text-xs font-semibold transition-all border border-white/10"
+              class="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 focus-visible:bg-white/20 text-white text-xs font-semibold transition-colors border border-white/10"
               @click.stop="emit('next')"
             >
               {{ $t('Next channel') }}
             </button>
             <button
               type="button"
-              class="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 focus-visible:bg-white/10 text-gray-300 text-xs font-semibold transition-all border border-white/5"
+              class="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 focus-visible:bg-white/10 text-gray-300 text-xs font-semibold transition-colors border border-white/5"
               @click.stop="emit('back')"
             >
               {{ $t('Back') }}
@@ -576,7 +608,7 @@ defineExpose({ show, hide, visible })
             v-for="ch in filteredChannels"
             :key="ch.id"
             type="button"
-            class="w-full flex items-center gap-3 p-2.5 rounded-xl border text-left transition-all group hover:bg-white/10 focus-visible:bg-white/10"
+            class="w-full flex items-center gap-3 p-2.5 rounded-xl border text-left transition-colors group hover:bg-white/10 focus-visible:bg-white/10"
             :class="ch.originalIndex === channelIndex
               ? 'bg-red-600/20 border-red-500/50 text-white border-l-4 border-l-red-500'
               : 'bg-white/5 border-white/5 text-gray-300 hover:text-white focus-visible:text-white'"
@@ -602,7 +634,7 @@ defineExpose({ show, hide, visible })
          carry no EPG to draw a programme against. -->
     <footer
       data-cut
-      class="pointer-events-auto px-8 pb-7 pt-12 transition-all duration-300 flex flex-col gap-4"
+      class="pointer-events-auto px-8 pb-7 pt-12 transition-transform duration-300 flex flex-col gap-4"
       :class="[
         overlay ? 'hud-solid-bottom' : 'hud-blur-bottom',
         visible ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0',
@@ -617,7 +649,7 @@ defineExpose({ show, hide, visible })
           <!-- Large Accent Play/Pause Glass Button -->
           <button
             type="button"
-            class="size-12 rounded-full bg-red-600 hover:bg-red-500 focus-visible:bg-red-500 text-white grid place-items-center transition-all transform hover:scale-105 focus-visible:scale-105 active:scale-95"
+            class="size-12 rounded-full bg-red-600 hover:bg-red-500 focus-visible:bg-red-500 text-white grid place-items-center transition-[transform,background-color] transform hover:scale-105 focus-visible:scale-105 active:scale-95"
             :title="playing ? $t('Pause') : $t('Play')"
             @click.stop="emit('togglePlay')"
           >
@@ -688,6 +720,18 @@ defineExpose({ show, hide, visible })
             <v-icon :icon="mdiFormatListBulleted" size="20" />
           </button>
 
+          <!-- Quality Picker (only when variants exist) -->
+          <button
+            v-if="hasQualityVariants"
+            type="button"
+            class="glass-icon-btn"
+            :title="$t('Quality')"
+            :aria-label="$t('Quality')"
+            @click.stop="emit('showQualityPicker')"
+          >
+            <v-icon :icon="mdiMonitor" size="20" />
+          </button>
+
           <!-- Favorite Star Toggle -->
           <button
             type="button"
@@ -749,7 +793,7 @@ defineExpose({ show, hide, visible })
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.12);
   color: #f3f4f6;
-  transition: all 180ms ease;
+  transition: transform 180ms ease, opacity 180ms ease;
   cursor: pointer;
 }
 

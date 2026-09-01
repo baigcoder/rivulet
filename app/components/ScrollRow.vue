@@ -91,9 +91,6 @@ function page(direction: 1 | -1) {
             {{ count.toLocaleString() }}
           </span>
         </div>
-        <p class="mt-0.5 text-label-small font-medium uppercase tracking-[0.13em] text-primary/60">
-          {{ $t('Live Channels') }}
-        </p>
       </div>
 
       <!-- Paging arrows — visible on hover/focus, always shown on keyboard nav -->
@@ -123,7 +120,7 @@ function page(direction: 1 | -1) {
       <a
         v-if="to"
         :href="localePath(to)"
-        class="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-white/10 bg-white/6 px-3 py-1.5 text-label-medium font-semibold text-white/80 transition-all hover:border-primary/40 hover:bg-primary/12 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        class="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-white/10 bg-white/6 px-3 py-1.5 text-label-medium font-semibold text-white/80 transition-colors hover:border-primary/40 hover:bg-primary/12 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
         @click.stop.prevent="navigateTo(localePath(to))"
       >
         {{ $t('See all') }}

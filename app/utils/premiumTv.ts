@@ -231,8 +231,12 @@ export const premiumApi = {
    * sidebar renders — `/categories` includes a provider's empty groups
    * and `/dashboard` orders by size, and neither is navigable.
    */
-  categoryCounts(): Promise<CategoryCount[]> {
-    return request('GET', '/api/premium-tv/categories/counts')
+  categoryCounts(args: { hideAdult?: boolean } = {}): Promise<CategoryCount[]> {
+    const params = new URLSearchParams()
+    if (args.hideAdult)
+      params.set('hideAdult', 'true')
+    const qs = params.toString()
+    return request('GET', `/api/premium-tv/categories/counts${qs ? `?${qs}` : ''}`)
   },
 
   channels(args: {
@@ -241,6 +245,7 @@ export const premiumApi = {
     country?: string
     search?: string
     favoritesOnly?: boolean
+    hideAdult?: boolean
     limit?: number
     signal?: AbortSignal
   } = {}): Promise<IPTVChannelPage> {
@@ -255,6 +260,8 @@ export const premiumApi = {
       params.set('search', args.search)
     if (args.favoritesOnly)
       params.set('favoritesOnly', 'true')
+    if (args.hideAdult)
+      params.set('hideAdult', 'true')
     if (args.limit)
       params.set('limit', String(args.limit))
     const qs = params.toString()
@@ -301,6 +308,15 @@ export const premiumApi = {
 
   addRecent(channelId: string): Promise<void> {
     return request<void>('POST', '/api/premium-tv/recent', { body: { channelId } })
+  },
+
+  /**
+   * Find quality variants for a channel — channels with a similar base
+   * name but different quality labels (e.g. "Sky Sports HD" and "Sky
+   * Sports 4K"). Used by the premium watch page to offer a quality picker.
+   */
+  qualityVariants(channelId: string, signal?: AbortSignal): Promise<IPTVChannel[]> {
+    return request('GET', `/api/premium-tv/channels/${encodeURIComponent(channelId)}/qualities`, { signal })
   },
 }
 

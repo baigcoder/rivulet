@@ -117,8 +117,8 @@ const upcomingPrograms = computed(() =>
               </div>
               <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
                 <div
-                  class="h-full rounded-full bg-primary transition-all duration-300"
-                  :style="{ width: `${programProgress(currentProgram)}%` }"
+                  class="h-full w-full origin-left rounded-full bg-primary transition-transform duration-300 ease-linear"
+                  :style="{ transform: `scaleX(${programProgress(currentProgram) / 100})` }"
                 />
               </div>
             </div>

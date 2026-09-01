@@ -60,7 +60,7 @@ function fmt(n: number): string {
     <div class="flex flex-col gap-1.5">
       <button
         type="button"
-        class="flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-start text-sm transition-all duration-150 border"
+        class="flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-start text-sm transition-colors duration-150 border"
         :class="view === 'all'
           ? 'bg-primary/20 border-primary/40 text-primary font-bold shadow-md shadow-primary/10'
           : 'bg-white/5 border-white/5 text-gray-300 hover:bg-white/10 hover:text-white'"
@@ -74,7 +74,7 @@ function fmt(n: number): string {
 
       <button
         type="button"
-        class="flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-start text-sm transition-all duration-150 border"
+        class="flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-start text-sm transition-colors duration-150 border"
         :class="view === 'favorites'
           ? 'bg-amber-500/20 border-amber-500/40 text-amber-300 font-bold shadow-md shadow-amber-500/10'
           : 'bg-white/5 border-white/5 text-gray-300 hover:bg-white/10 hover:text-white'"
@@ -88,7 +88,7 @@ function fmt(n: number): string {
 
       <button
         type="button"
-        class="flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-start text-sm transition-all duration-150 border"
+        class="flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-start text-sm transition-colors duration-150 border"
         :class="view === 'recent'
           ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300 font-bold shadow-md shadow-cyan-500/10'
           : 'bg-white/5 border-white/5 text-gray-300 hover:bg-white/10 hover:text-white'"
@@ -131,7 +131,7 @@ function fmt(n: number): string {
             <li v-for="cat in shown" :key="cat.name">
               <button
                 type="button"
-                class="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-start text-xs transition-all border"
+                class="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-start text-xs transition-colors border"
                 :class="isActive(cat.name)
                   ? 'bg-primary/20 border-primary/40 text-white font-bold border-l-4 border-l-primary'
                   : 'bg-white/5 border-white/5 text-gray-300 hover:bg-white/10 hover:text-white'"

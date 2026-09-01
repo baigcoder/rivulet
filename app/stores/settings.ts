@@ -206,6 +206,10 @@ export const useSettingsStore = defineStore('settings', () => {
   const parentalMaxRating = useLocalStorage(key('parentalMaxRating'), 'R')
   const parentalPin = useLocalStorage(key('parentalPin'), '')
 
+  // --- Premium TV ---
+  /** Hide adult (18+) channels from the Premium TV channel list. */
+  const hideAdultChannels = useLocalStorage(key('hideAdultChannels'), false)
+
   // --- Subscription ---
   /**
    * Local-only feature flag. The app has no user auth, no account model, no
@@ -221,5 +225,5 @@ export const useSettingsStore = defineStore('settings', () => {
     && subscriptionExpiresAt.value > Date.now(),
   )
 
-  return { locale, theme, source, themeFromArt, colourFromPicture, customCss, uiScale, reduceEffects, motion, effectiveMotion, sources, allowTorrents, watchRegion, tmdbKey, downLimit, upLimit, wifiOnly, downloadDir, subs, resetSubs, notifyComplete, notifyError, parentalEnabled, parentalMaxRating, parentalPin, subscriptionTier, subscriptionExpiresAt, isPremium }
+  return { locale, theme, source, themeFromArt, colourFromPicture, customCss, uiScale, reduceEffects, motion, effectiveMotion, sources, allowTorrents, watchRegion, tmdbKey, downLimit, upLimit, wifiOnly, downloadDir, subs, resetSubs, notifyComplete, notifyError, parentalEnabled, parentalMaxRating, parentalPin, hideAdultChannels, subscriptionTier, subscriptionExpiresAt, isPremium }
 })

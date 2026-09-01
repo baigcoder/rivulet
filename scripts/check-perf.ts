@@ -111,6 +111,29 @@ assert.doesNotMatch(
 // mounts — both arrows came up disabled and stayed there until it was dragged.
 assert.match(row, /useResizeObserver\(\[scroller, track\], measure\)/, 'the arrows must re-measure as cards arrive')
 
+// --- The episode list ---
+
+// A thousand-episode season is a real thing (anime), and a row apiece — a
+// Vuetify button, a tooltip and a watched dialog each — froze the page on
+// open and left three thousand focusables for the d-pad to measure a press.
+// The window is bounded by the viewport instead, as the live-tv grids do it.
+const seasonPage = read('app/pages/tv/[id]/season/[season]/index.vue')
+assert.match(
+  seasonPage,
+  /useVirtualizer/,
+  'the episode list must be virtualized: mounting every row is what froze a 1000-episode season',
+)
+assert.match(
+  seasonPage,
+  /measureElement/,
+  'rows are measured as they mount, or estimates drift and the scrollbar jumps',
+)
+assert.match(
+  seasonPage,
+  /scrollMargin/,
+  'the header scrolls with the list, so the virtualizer needs to know where the list starts',
+)
+
 // --- Wiring: a setting nothing reads is a setting that does nothing ---
 
 // The key is built by `key()` from app/brand now rather than spelled out, so the

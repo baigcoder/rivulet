@@ -32,7 +32,7 @@ const emit = defineEmits<{
       <!-- All button -->
       <button
         type="button"
-        class="flex shrink-0 items-center gap-2 rounded-full border px-4 py-2 text-body-small font-medium transition-all"
+        class="flex shrink-0 items-center gap-2 rounded-full border px-4 py-2 text-body-small font-medium transition-colors"
         :class="!selected ? 'border-primary bg-primary/15 text-primary' : 'border-white/10 bg-surface-container-high text-white/70 hover:bg-surface-container'"
         @click="emit('select', '')"
       >
@@ -45,7 +45,7 @@ const emit = defineEmits<{
         v-for="c in countries"
         :key="c.name"
         type="button"
-        class="flex shrink-0 items-center gap-2 rounded-full border px-4 py-2 text-body-small font-medium transition-all"
+        class="flex shrink-0 items-center gap-2 rounded-full border px-4 py-2 text-body-small font-medium transition-colors"
         :class="selected === c.name ? 'border-primary bg-primary/15 text-primary' : 'border-white/10 bg-surface-container-high text-white/70 hover:bg-surface-container'"
         @click="emit('select', c.name === selected ? '' : c.name)"
       >

@@ -133,6 +133,60 @@ pub fn clean_channel_name(raw: &str) -> Option<String> {
     Some(out.to_string())
 }
 
+/// Detect the quality label from a channel name.
+///
+/// Returns `None` when no recognisable quality token is present. The
+/// returned value is always uppercase and uses a standard form: "4K UHD"
+/// for UHD/2160p, "4K" for bare 4K, "FHD" for 1080p, "HD" for 720p,
+/// and "SD" for standard definition.
+pub fn detect_quality(raw: &str) -> Option<String> {
+    let upper = raw.to_uppercase();
+    // Order matters: "4K UHD" before "4K", "FHD" before "HD".
+    if upper.contains("4K") && (upper.contains("UHD") || upper.contains("2160")) {
+        Some("4K UHD".to_string())
+    } else if upper.contains("4K") {
+        Some("4K".to_string())
+    } else if upper.contains("2160P") {
+        Some("4K".to_string())
+    } else if upper.contains("FHD") || upper.contains("1080P") {
+        Some("FHD".to_string())
+    } else if upper.contains("HD") || upper.contains("720P") {
+        Some("HD".to_string())
+    } else if upper.contains("SD") || upper.contains("480P") {
+        Some("SD".to_string())
+    } else if upper.contains("HEVC") || upper.contains("H265") || upper.contains("H.265") {
+        Some("HEVC".to_string())
+    } else {
+        None
+    }
+}
+
+/// Detect whether a category name indicates adult content.
+///
+/// Matches common patterns found across Xtream panels: "Adult (18+)",
+/// "XXX Channels", "Porn movies", "Erotic", etc. The match is
+/// case-insensitive and requires the *word* to stand on its own —
+/// "Adult Swim Kids" must not trigger.
+pub fn is_adult_category(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    let tokens = ["18+", "xxx", "adult", "porn", "erotic", "nsfw"];
+    for token in &tokens {
+        if lower.contains(token) {
+            // "Adult Swim Kids" or "Adult Swim" are not adult content.
+            // The token must not be followed by common non-adult words.
+            if *token == "adult" {
+                let rest = lower.split("adult").nth(1).unwrap_or("");
+                let rest = rest.trim_start();
+                if rest.starts_with("swim") || rest.starts_with("cartoon") {
+                    continue;
+                }
+            }
+            return true;
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -244,5 +298,36 @@ mod tests {
         assert_eq!(clean_channel_name("  Sky   Sports \t 1 \n").as_deref(), Some("Sky Sports 1"));
         assert_eq!(clean_channel_name("Sky\u{0000}Sports").as_deref(), Some("Sky Sports"));
         assert_eq!(clean_channel_name("Sky \u{fffd} Sports").as_deref(), Some("Sky Sports"));
+    }
+
+    #[test]
+    fn detect_quality_labels() {
+        assert_eq!(detect_quality("Sky Sport 4K UHD").as_deref(), Some("4K UHD"));
+        assert_eq!(detect_quality("DAZN 1 4K").as_deref(), Some("4K"));
+        assert_eq!(detect_quality("Channel 2160p").as_deref(), Some("4K"));
+        assert_eq!(detect_quality("beIN SPORTS 1 FHD").as_deref(), Some("FHD"));
+        assert_eq!(detect_quality("Channel 1080p").as_deref(), Some("FHD"));
+        assert_eq!(detect_quality("BBC One HD").as_deref(), Some("HD"));
+        assert_eq!(detect_quality("Channel 720p").as_deref(), Some("HD"));
+        assert_eq!(detect_quality("MTV SD").as_deref(), Some("SD"));
+        assert_eq!(detect_quality("Channel 480p").as_deref(), Some("SD"));
+        assert_eq!(detect_quality("RTL HEVC DE").as_deref(), Some("HEVC"));
+        assert_eq!(detect_quality("BBC One"), None);
+        assert_eq!(detect_quality("Sky Sports 1"), None);
+    }
+
+    #[test]
+    fn detect_adult_categories() {
+        assert!(is_adult_category("Adult (18+)"));
+        assert!(is_adult_category("XXX Channels"));
+        assert!(is_adult_category("Porn movies"));
+        assert!(is_adult_category("Erotic HD"));
+        assert!(is_adult_category("Adult VOD"));
+        assert!(is_adult_category("ALL ADULT"));
+        assert!(is_adult_category("18+"));
+        assert!(!is_adult_category("Kids"));
+        assert!(!is_adult_category("Sports"));
+        assert!(!is_adult_category("News 24"));
+        assert!(!is_adult_category("Adult Swim Kids"));
     }
 }

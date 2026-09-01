@@ -72,8 +72,8 @@ function syncPlayerState() {
     resolveError.value = ''
     playerCatchError.value = ''
     statusLine.value = ''
-    if ((p.catchError as any)?.value != null)
-      p.catchError.value = ''
+    if (p.catchError?.value != null)
+      p.catchError!.value = ''
   }
 }
 
@@ -109,6 +109,7 @@ interface ZapEntry {
 }
 const channelList = ref<ZapEntry[]>([])
 const channelIndex = ref(-1)
+const channelTotal = computed(() => channelList.value.length)
 
 const channelName = computed(() => {
   const queryTitle = String(route.query.title ?? '').trim()

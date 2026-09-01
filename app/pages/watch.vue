@@ -50,6 +50,7 @@ const errorMsg = ref('')
 const torrent = ref<Release | null>(null)
 const torrentId = ref<number | null>(null)
 const src = ref('')
+const resolving = ref(false)
 
 /**
  * The server streams the sources answered with, best first, and which one is
@@ -105,9 +106,11 @@ let generation = 0
 
 async function start() {
   const mine = ++generation
+  const startedAt = Date.now()
   errorMsg.value = ''
   noServerStream.value = false
   src.value = ''
+  resolving.value = true
   torrent.value = null
   candidates.value = []
   activeCandidate.value = 0
@@ -162,8 +165,10 @@ async function start() {
 
     // Pause everything else before the stream starts, so the first buffer gets
     // the whole connection. Nothing to pause for a finished torrent — see `focus`.
-    await downloads.focus(started.id)
+    // Non-blocking: the player starts immediately while focus catches up.
+    void downloads.focus(started.id)
 
+    resolving.value = false
     step.value = $t('Buffering…')
     src.value = started.url || streamUrl(started.id, started.index)
 
@@ -189,6 +194,17 @@ async function start() {
       return
     noServerStream.value = e instanceof NoServerStream
     errorMsg.value = e instanceof Error ? e.message : String(e)
+    // Keep the loading spinner visible for at least 400ms so the user sees
+    // that something was attempted, rather than a flash of spinner → error
+    // that looks like a crash. If the search already took longer, clear
+    // immediately.
+    const elapsed = Date.now() - startedAt
+    const minDisplay = 400
+    if (elapsed < minDisplay)
+      await new Promise(r => setTimeout(r, minDisplay - elapsed))
+    if (mine !== generation)
+      return
+    resolving.value = false
   }
 }
 
@@ -287,11 +303,13 @@ function qualityLabel(r: Release) {
 const candidateMenus = computed(() => {
   if (!candidates.value.length)
     return null
+  const detail = (r: typeof candidates.value[number]) =>
+    [r.source !== 'unknown' ? r.source : '', r.size].filter(Boolean).join(' · ')
   const servers = candidates.value.map((r, index) => ({
     index,
     // The automatic pick is marked until a hand chooses otherwise.
-    label: r.source || hostOf(r.via ?? '') || $t('Unknown source'),
-    detail: [qualityLabel(r), r.size].filter(Boolean).join(' · '),
+    label: (r.source !== 'unknown' ? r.source : '') || hostOf(r.via ?? '') || $t('Server {n}', { n: index + 1 }),
+    detail: detail(r),
   }))
   const seen = new Map<string, number>()
   const qualities: { index: number, label: string, detail?: string }[] = []
@@ -299,7 +317,7 @@ const candidateMenus = computed(() => {
     const label = qualityLabel(r)
     if (!seen.has(label)) {
       seen.set(label, index)
-      qualities.push({ index, label, detail: [r.source, r.size].filter(Boolean).join(' · ') })
+      qualities.push({ index, label, detail: detail(r) })
     }
   }
   return { servers, qualities }
@@ -385,95 +403,19 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
 <template>
   <v-app>
     <v-main class="h-dvh overflow-hidden bg-black text-white">
-      <!-- Everything before mpv has a stream to open. -->
-      <div v-if="!src" class="relative grid h-full place-items-center">
-        <img
-          v-if="backdrop"
-          :src="backdrop"
-          alt=""
-          class="absolute inset-0 h-full w-full object-cover opacity-20 blur-2xl"
-        >
-
-        <div class="relative flex max-w-xl flex-col items-center gap-3 px-6 text-center">
-          <template v-if="failure">
-            <v-icon :icon="mdiAlertCircleOutline" color="error" size="40" />
-            <div class="text-title-large">
-              {{ noServerStream ? $t('Your sources only provide downloads') : $t('Nothing to play') }}
-            </div>
-            <p class="text-body-medium opacity-70">
-              {{ failure }}
-            </p>
-            <!-- Stream-only mode's fixes sit right here: add a server that does
-                 carry the title, or let torrents back in — either restarts. -->
-            <div v-if="noServerStream" class="mt-2 flex flex-wrap justify-center gap-2">
-              <v-btn
-                variant="tonal"
-                color="primary"
-                :prepend-icon="mdiPowerPlugOutline"
-                @click="goToSources"
-              >
-                {{ $t('Add a source') }}
-              </v-btn>
-              <v-btn
-                variant="tonal"
-                :prepend-icon="mdiDownload"
-                @click="settings.allowTorrents = true; start()"
-              >
-                {{ $t('Use Best available') }}
-              </v-btn>
-              <v-btn variant="text" :prepend-icon="mdiArrowLeft" @click="leave">
-                {{ $t('Back') }}
-              </v-btn>
-            </div>
-            <div v-else class="mt-2 flex gap-2">
-              <v-btn variant="tonal" :prepend-icon="mdiReload" @click="start">
-                {{ $t('Try again') }}
-              </v-btn>
-              <v-btn variant="text" :prepend-icon="mdiArrowLeft" @click="leave">
-                {{ $t('Back') }}
-              </v-btn>
-            </div>
-          </template>
-
-          <template v-else>
-            <v-progress-circular indeterminate color="primary" size="40" />
-            <div class="text-title-large">
-              {{ heading }}
-            </div>
-            <div class="text-body-medium opacity-70">
-              {{ step }}
-            </div>
-            <div v-if="torrent" class="text-body-small opacity-50">
-              {{ torrent.quality }} · {{ torrent.size }}
-              <template v-if="torrent.url">
-                · {{ $t('direct link') }}
-              </template>
-              <template v-else>
-                · {{ $t('{count} seeders', { count: torrent.seeders }) }}
-              </template>
-              · {{ torrent.source }}
-              <div class="mt-1 truncate">
-                {{ torrent.name }}
-              </div>
-            </div>
-            <v-btn class="mt-2" variant="text" size="small" :prepend-icon="mdiArrowLeft" @click="leave">
-              {{ $t('Back') }}
-            </v-btn>
-          </template>
-        </div>
-      </div>
-
-      <!-- :key so picking a different file/torrent/server gets a fresh mpv process. -->
+      <!-- Always mounted — shows resolving/loading overlay while src is empty. -->
       <mpv-player
-        v-else
-        :key="src"
+        :key="src || 'idle'"
         :src="src"
+        :resolving="resolving"
+        :step="step"
         :status="statusLine"
         :media="title"
         :next="next"
         :imdb-id="media?.imdbId"
         :title="title?.title ?? String(route.query.title ?? '')"
         :year="title?.year"
+        :logo="media?.logo ?? null"
         :season="season"
         :episode="episode"
         :quality="torrent?.quality"
@@ -484,6 +426,7 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
         @failed="onPlaybackFailed"
         @use-candidate="(i: number) => useCandidate(i)"
         @auto-opened="qualityPromptPending = false"
+        @back="leave"
       >
         <template #start>
           <v-btn icon variant="text" density="comfortable" :title="$t('Back (Esc)')" @click="leave">
@@ -523,6 +466,62 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
           </div>
         </template>
       </mpv-player>
+
+      <!-- Error overlay: sits on top of the player when source resolution failed.
+           The `!resolving` guard keeps it hidden while sources are still being
+           searched — the player's own loading overlay is what the user should
+           see during that window. -->
+      <v-overlay
+        v-if="failure && !src && !resolving"
+        class="place-items-center"
+        persistent
+      >
+        <img
+          v-if="backdrop"
+          :src="backdrop"
+          alt=""
+          class="absolute inset-0 h-full w-full object-cover opacity-20 blur-2xl"
+        >
+
+        <div class="relative flex max-w-xl flex-col items-center gap-3 px-6 text-center">
+          <v-icon :icon="mdiAlertCircleOutline" color="error" size="40" />
+          <div class="text-title-large">
+            {{ noServerStream ? $t('Your sources only provide downloads') : $t('Nothing to play') }}
+          </div>
+          <p class="text-body-medium opacity-70">
+            {{ failure }}
+          </p>
+          <!-- Stream-only mode's fixes: add a streaming source, or let torrents back in. -->
+          <div v-if="noServerStream" class="mt-2 flex flex-wrap justify-center gap-2">
+            <v-btn
+              variant="tonal"
+              color="primary"
+              :prepend-icon="mdiPowerPlugOutline"
+              @click="goToSources"
+            >
+              {{ $t('Add a source') }}
+            </v-btn>
+            <v-btn
+              variant="tonal"
+              :prepend-icon="mdiDownload"
+              @click="settings.allowTorrents = true; start()"
+            >
+              {{ $t('Use Best available') }}
+            </v-btn>
+            <v-btn variant="text" :prepend-icon="mdiArrowLeft" @click="leave">
+              {{ $t('Back') }}
+            </v-btn>
+          </div>
+          <div v-else class="mt-2 flex gap-2">
+            <v-btn variant="tonal" :prepend-icon="mdiReload" @click="start">
+              {{ $t('Try again') }}
+            </v-btn>
+            <v-btn variant="text" :prepend-icon="mdiArrowLeft" @click="leave">
+              {{ $t('Back') }}
+            </v-btn>
+          </div>
+        </div>
+      </v-overlay>
     </v-main>
   </v-app>
 </template>

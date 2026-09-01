@@ -1130,18 +1130,46 @@ export async function startTorrent(options: {
       if (!imdbId)
         throw new Error($t('TMDB has no IMDb id for this title, so there is nothing to look it up with.'))
 
-      step($t('Searching your sources…'))
       // Fast mode races the sources: playback starts on the first healthy
       // answer and slower servers flow into the candidate list as they land.
-      const found = options.fast
-        ? await findReleasesFast(imdbId, options.season ?? 0, options.episode ?? 0, {
-            onLate: late => {
-              const more = serverCandidates(late, options.maxBytes ?? MAX_BYTES, options.compatible ?? !hasNativePlayer(), allowTorrents)
-              if (more.length)
-                options.onAlternativesLate?.(more)
-            },
-          })
-        : await findReleases(imdbId, options.season, options.episode)
+      // Sources can be slow to warm up on the first request (DNS, TLS, cold
+      // caches). A generous grace on the first attempt catches the second
+      // and third source answering a beat after the first; retries shrink
+      // the window because the sources are warm by then.
+      let found: Release[] = []
+      const MAX_SEARCH_ATTEMPTS = 3
+      for (let attempt = 1; attempt <= MAX_SEARCH_ATTEMPTS; attempt++) {
+        step(attempt === 1 ? $t('Searching your sources…') : $t('Retrying sources…'))
+        try {
+          found = options.fast
+            ? await findReleasesFast(imdbId, options.season ?? 0, options.episode ?? 0, {
+                // First attempt: long grace so cold sources can answer.
+                // Retries: short grace, sources are already warm.
+                graceMs: attempt === 1 ? 2_000 : 300,
+                onLate: late => {
+                  const more = serverCandidates(late, options.maxBytes ?? MAX_BYTES, options.compatible ?? !hasNativePlayer(), allowTorrents)
+                  if (more.length)
+                    options.onAlternativesLate?.(more)
+                },
+              })
+            : await findReleases(imdbId, options.season, options.episode)
+        }
+        catch (searchError) {
+          if (attempt < MAX_SEARCH_ATTEMPTS) {
+            await new Promise(r => setTimeout(r, 600))
+            continue
+          }
+          throw searchError
+        }
+        // Got results — stop unless the pool is empty and we have retries
+        // left.  An empty pool often means the source was cold or slow on
+        // the first request; a second or third shot frequently finds what
+        // the first missed.
+        if (found.length || attempt >= MAX_SEARCH_ATTEMPTS)
+          break
+        if (attempt < MAX_SEARCH_ATTEMPTS)
+          await new Promise(r => setTimeout(r, 600))
+      }
 
       // Stream-only mode narrows before ranking: a torrent release is not a
       // worse pick, it is no pick at all.

@@ -462,7 +462,7 @@
         content: "•";
         position: absolute;
         left: 0;
-        top: 0;
+        top: 13px;
         color: var(--accent);
         font-size: 1.25rem;
         line-height: 1.4;
@@ -557,54 +557,57 @@
       opacity: 0;
       pointer-events: none;
     }
+    .mode-switch-row {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
     .mode-switch {
       position: relative;
       display: inline-flex;
       align-items: center;
-      width: 140px;
-      height: 48px;
+      width: 56px;
+      height: 32px;
       background: var(--ground);
       border: 1px solid var(--rule);
       border-radius: 999px;
       cursor: pointer;
+      flex-shrink: 0;
       transition: border-color .2s, background .2s;
     }
     .mode-switch:hover { border-color: var(--accent); }
     .mode-thumb {
       position: absolute;
-      top: 4px;
-      left: 4px;
-      width: 40px;
-      height: 40px;
+      top: 3px;
+      left: 3px;
+      width: 24px;
+      height: 24px;
       background: var(--accent);
       border-radius: 50%;
-      box-shadow: 0 4px 12px rgba(0,0,0,.4);
+      box-shadow: 0 2px 8px rgba(0,0,0,.4);
       transition: transform .25s cubic-bezier(.2,.8,.2,1);
       z-index: 1;
     }
-    .mode-input:checked + .mode-switch .mode-thumb {
-      transform: translateX(92px);
+    .mode-input:checked + .mode-switch-row .mode-switch .mode-thumb {
+      transform: translateX(24px);
     }
     .mode-label {
-      position: absolute;
-      top: 50%;
-      transform: translateY(-50%);
       font-family: var(--mono);
-      font-size: .6875rem;
+      font-size: .75rem;
       font-weight: 500;
-      letter-spacing: .08em;
+      letter-spacing: .06em;
       text-transform: uppercase;
       color: var(--on-dim);
       pointer-events: none;
       transition: color .2s, opacity .2s;
       white-space: nowrap;
     }
-    .mode-label-on { left: 56px; }
-    .mode-label-off { right: 56px; opacity: .6; }
-    .mode-input:checked + .mode-switch .mode-label-on { color: var(--accent); opacity: 1; }
-    .mode-input:checked + .mode-switch .mode-label-off { color: var(--on-dim); opacity: .6; }
-    .mode-input:not(:checked) + .mode-switch .mode-label-on { color: var(--on-dim); opacity: .6; }
-    .mode-input:not(:checked) + .mode-switch .mode-label-off { color: var(--accent); opacity: 1; }
+    .mode-label-on { opacity: .6; }
+    .mode-label-off { opacity: .6; }
+    .mode-input:checked + .mode-switch-row .mode-label-on { color: var(--accent); opacity: 1; }
+    .mode-input:checked + .mode-switch-row .mode-label-off { color: var(--on-dim); opacity: .6; }
+    .mode-input:not(:checked) + .mode-switch-row .mode-label-on { color: var(--on-dim); opacity: .6; }
+    .mode-input:not(:checked) + .mode-switch-row .mode-label-off { color: var(--warm); opacity: 1; }
 
     .mode-panels {
       display: grid;
@@ -666,12 +669,10 @@
     @media (max-width: 680px) {
       .mode-toggle { padding: 32px 16px; gap: 24px; }
       .mode-panels { grid-template-columns: 1fr; }
-      .mode-switch { width: 120px; height: 40px; }
-      .mode-thumb { width: 32px; height: 32px; top: 4px; left: 4px; }
-      .mode-input:checked + .mode-switch .mode-thumb { transform: translateX(80px); }
+      .mode-switch { width: 48px; height: 28px; }
+      .mode-thumb { width: 20px; height: 20px; top: 3px; left: 3px; }
+      .mode-input:checked + .mode-switch-row .mode-switch .mode-thumb { transform: translateX(20px); }
       .mode-label { font-size: .625rem; }
-      .mode-label-on { left: 48px; }
-      .mode-label-off { right: 48px; }
     }
 
     /* ── Download ────────────────────────────────────────────────────────── */
@@ -864,11 +865,13 @@
     <!-- Interactive Toggle Demo -->
     <div class="mode-toggle reveal" style="--i: 1">
       <input type="checkbox" id="mode-demo" class="mode-input" checked>
-      <label for="mode-demo" class="mode-switch" role="switch" aria-label="Playback mode demo">
-        <span class="mode-thumb"></span>
+      <div class="mode-switch-row">
         <span class="mode-label mode-label-on" aria-hidden="true">Best available</span>
+        <label for="mode-demo" class="mode-switch" role="switch" aria-label="Playback mode demo">
+          <span class="mode-thumb"></span>
+        </label>
         <span class="mode-label mode-label-off" aria-hidden="true">Instant playback</span>
-      </label>
+      </div>
 
       <div class="mode-panels">
         <div class="mode-panel mode-on">

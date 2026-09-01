@@ -754,3 +754,30 @@ pub fn player_status(state: tauri::State<'_, PlayerState>) -> PlayerStatus {
 
 	PlayerStatus { running, log_tail }
 }
+
+/// Capture the current video frame as a JPEG data-URL via mpv's `screenshot-to-file`.
+#[tauri::command]
+pub fn player_screenshot(state: tauri::State<'_, PlayerState>) -> Result<String, String> {
+	let path = state.0.lock().unwrap().pipe.clone().ok_or("player not running")?;
+	let tmp = std::env::temp_dir().join(format!("rivulet-screenshot-{}.jpg", std::process::id()));
+	let cmd = serde_json::json!({
+		"command": ["screenshot-to-file", tmp.to_string_lossy(), "video"]
+	}).to_string();
+	with_deadline(Duration::from_secs(5), move || {
+		let mut pipe = connect(&path)?;
+		let mut line = cmd.trim().to_string();
+		line.push('\n');
+		pipe.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
+		for line in BufReader::new(pipe).lines() {
+			let line = line.map_err(|e| e.to_string())?;
+			if !line.contains("\"event\"") && line.contains("\"error\"") {
+				return Ok(line);
+			}
+		}
+		Err("no response from mpv".into())
+	})?;
+	let bytes = std::fs::read(&tmp).map_err(|e| e.to_string())?;
+	let _ = std::fs::remove_file(&tmp);
+	use base64::Engine;
+	Ok(format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(&bytes)))
+}

@@ -32,7 +32,29 @@ use super::storage::PremiumState;
 const CHANNEL_COLUMNS: &str = "c.id, c.name, c.logo_url, c.category_id, c.category_name,
             c.country, c.language, c.epg_id, c.stream_type, c.user_agent, c.referer,
             EXISTS(SELECT 1 FROM iptv_premium_favorites f
-                   WHERE f.connection_id = c.connection_id AND f.channel_id = c.id)";
+                   WHERE f.connection_id = c.connection_id AND f.channel_id = c.id),
+            c.quality, c.is_adult";
+
+/// Strip known quality tokens from a channel name, leaving the base
+/// name for matching. The tokens match what `names::detect_quality`
+/// recognises — this is the inverse operation.
+fn strip_quality_tokens(name: &str) -> String {
+    let tokens = [
+        "4K UHD", "4K", "2160P", "FHD", "1080P", "HD", "720P",
+        "SD", "480P", "HEVC", "H265", "H.265",
+    ];
+    let mut result = name.to_string();
+    for token in &tokens {
+        // Case-insensitive removal. Replace with a space to avoid
+        // collapsing "BBCOneHD" into "BBCOne" (though that is rare).
+        let re = regex::Regex::new(&format!(r"(?i)\b{}\b", regex::escape(token))).unwrap();
+        result = re.replace_all(&result, " ").to_string();
+    }
+    // Collapse whitespace left behind.
+    let mut parts: Vec<&str> = result.split_whitespace().collect();
+    parts.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    parts.join(" ").trim().to_string()
+}
 
 pub struct PremiumRepository {
     pub state: Arc<PremiumState>,
@@ -54,6 +76,7 @@ impl PremiumRepository {
         country: Option<&str>,
         search: Option<&str>,
         favorites_only: bool,
+        hide_adult: bool,
         cursor: Option<&str>,
         limit: usize,
     ) -> Result<IPTVChannelPage, PremiumError> {
@@ -94,6 +117,17 @@ impl PremiumRepository {
         if favorites_only {
             sql.push_str(
                 " AND c.id IN (SELECT channel_id FROM iptv_premium_favorites WHERE connection_id = ?1)",
+            );
+        }
+        if hide_adult {
+            sql.push_str(
+                " AND c.is_adult = 0 AND (c.category_name IS NULL OR (\
+                 c.category_name NOT LIKE '%18+%' AND \
+                 c.category_name NOT LIKE '%XXX%' AND \
+                 c.category_name NOT LIKE '%Adult%' AND \
+                 c.category_name NOT LIKE '%Porn%' AND \
+                 c.category_name NOT LIKE '%Erotic%' AND \
+                 c.category_name NOT LIKE '%NSFW%'))",
             );
         }
         // `sort_key` is the provider's own lineup position, which is the
@@ -137,6 +171,17 @@ impl PremiumRepository {
         if favorites_only {
             count_sql.push_str(
                 " AND c.id IN (SELECT channel_id FROM iptv_premium_favorites WHERE connection_id = ?1)",
+            );
+        }
+        if hide_adult {
+            count_sql.push_str(
+                " AND c.is_adult = 0 AND (c.category_name IS NULL OR (\
+                 c.category_name NOT LIKE '%18+%' AND \
+                 c.category_name NOT LIKE '%XXX%' AND \
+                 c.category_name NOT LIKE '%Adult%' AND \
+                 c.category_name NOT LIKE '%Porn%' AND \
+                 c.category_name NOT LIKE '%Erotic%' AND \
+                 c.category_name NOT LIKE '%NSFW%'))",
             );
         }
         let count_refs: Vec<&dyn rusqlite::ToSql> =
@@ -298,6 +343,60 @@ impl PremiumRepository {
         }
     }
 
+    /// Find channels that appear to be quality variants of a given
+    /// channel — same base name but different quality tokens (e.g.
+    /// "BBC One HD" and "BBC One 4K"). Used by the premium TV quality
+    /// picker.
+    ///
+    /// The heuristic strips known quality tokens from both the target
+    /// and every candidate and matches on the remaining prefix. This is
+    /// deliberately broad: a panel that lists "Sky Sports 1 HD",
+    /// "Sky Sports 1 FHD", and "Sky Sports 1 4K" should return all
+    /// three, while "Sky Sports 1" and "Sky Sports 2" must not match.
+    pub fn quality_variants(
+        &self,
+        connection_id: &str,
+        channel_id: &str,
+    ) -> Result<Vec<IPTVChannel>, PremiumError> {
+        let current = self.channel_by_id(connection_id, channel_id)?;
+        let current = match current {
+            Some(ch) => ch,
+            None => return Ok(vec![]),
+        };
+        let base = strip_quality_tokens(&current.name).to_lowercase();
+        if base.is_empty() {
+            return Ok(vec![]);
+        }
+        let conn = self
+            .state
+            .db
+            .lock()
+            .map_err(|e| PremiumError::Database(format!("lock: {e}")))?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {CHANNEL_COLUMNS}
+             FROM iptv_premium_channels c
+             WHERE c.connection_id = ?1
+               AND c.id != ?2
+               AND c.name_lower LIKE ?3"
+        ))?;
+        let pattern = format!("{base}%");
+        let rows = stmt.query_map(
+            rusqlite::params![connection_id, channel_id, pattern],
+            channel_row,
+        )?;
+        let mut variants = Vec::new();
+        for r in rows {
+            let ch = r?;
+            // Only include channels whose base name (after stripping
+            // quality tokens) actually matches — the LIKE above is a
+            // prefix match and would pull in unrelated channels.
+            if strip_quality_tokens(&ch.name).to_lowercase() == base {
+                variants.push(ch);
+            }
+        }
+        Ok(variants)
+    }
+
     /// The imported category list, in provider order where there is one
     /// and alphabetical where there is not.
     ///
@@ -343,19 +442,27 @@ impl PremiumRepository {
     pub fn category_counts(
         &self,
         connection_id: &str,
+        hide_adult: bool,
     ) -> Result<Vec<super::models::CategoryCount>, PremiumError> {
         let conn = self
             .state
             .db
             .lock()
             .map_err(|e| PremiumError::Database(format!("lock: {e}")))?;
-        let mut stmt = conn.prepare(
+        let sql = format!(
             "SELECT category_name, COUNT(*) AS n
              FROM iptv_premium_channels
              WHERE connection_id = ?1 AND category_name IS NOT NULL AND category_name <> ''
+             {}
              GROUP BY category_name
              ORDER BY category_name COLLATE NOCASE ASC",
-        )?;
+            if hide_adult {
+                " AND is_adult = 0 AND (category_name NOT LIKE '%18+%' AND category_name NOT LIKE '%XXX%' AND category_name NOT LIKE '%Adult%' AND category_name NOT LIKE '%Porn%' AND category_name NOT LIKE '%Erotic%' AND category_name NOT LIKE '%NSFW%')"
+            } else {
+                ""
+            },
+        );
+        let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map([connection_id], |row| {
             Ok(super::models::CategoryCount {
                 name: row.get(0)?,
@@ -767,6 +874,8 @@ fn channel_row(row: &rusqlite::Row) -> rusqlite::Result<super::models::IPTVChann
         // redirector reads it with `storage::stream_row`.
         stream_url: None,
         is_favorite: row.get::<_, i64>(11)? != 0,
+        quality: row.get(12).ok(),
+        is_adult: row.get::<_, i64>(13).ok().unwrap_or(0) != 0,
     })
 }
 

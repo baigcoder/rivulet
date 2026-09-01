@@ -21,7 +21,7 @@
  * every transition, and nothing on this page keeps a second copy of it.
  */
 import type { EpgProgram, IPTVChannel } from '~/types/premium'
-import { mdiArrowLeft, mdiCropFree, mdiFormatListBulleted, mdiMagnify, mdiReload, mdiStar, mdiStarOutline } from '@mdi/js'
+import { mdiArrowLeft, mdiCheck, mdiCropFree, mdiFormatListBulleted, mdiMagnify, mdiReload, mdiStar, mdiStarOutline } from '@mdi/js'
 import { usePlaybackSource } from '~/composables/usePlaybackSource'
 import { MAX_RECONNECT_ATTEMPTS } from '~/stores/premiumTv'
 import { premiumApi } from '~/utils/premiumTv'
@@ -56,6 +56,9 @@ const playerRef = ref<{
   buffering: boolean
   ui: { value: boolean }
   catchError?: { value: string }
+  videoWidth: { value: number }
+  videoHeight: { value: number }
+  resolutionLabel: { value: string }
 } | null>(null)
 const overlayRef = ref<{ show: () => void, hide: () => void, visible: boolean } | null>(null)
 
@@ -74,6 +77,11 @@ const showChannelDrawer = ref(false)
 const drawerSearch = ref('')
 const aspectRatio = ref<'contain' | 'cover' | 'fill'>('contain')
 const guideLoading = ref(false)
+
+// ── Quality variants ──────────────────────────────────────────────
+const qualityVariants = ref<IPTVChannel[]>([])
+const qualityLoading = ref(false)
+const showQualityPicker = ref(false)
 
 let pollHandle: ReturnType<typeof setInterval> | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -183,6 +191,29 @@ async function loadGuide(id: string): Promise<void> {
   }
 }
 
+async function loadQualityVariants(id: string): Promise<void> {
+  qualityLoading.value = true
+  qualityVariants.value = []
+  try {
+    const variants = await premiumApi.qualityVariants(id)
+    qualityVariants.value = variants.filter(v => v.id !== id)
+  }
+  catch {
+    qualityVariants.value = []
+  }
+  finally {
+    qualityLoading.value = false
+  }
+}
+
+function switchQuality(ch: IPTVChannel): void {
+  showQualityPicker.value = false
+  void router.replace({
+    path: localePath('/live-tv/premium/watch'),
+    query: { id: ch.id, from: String(route.query.from ?? '') },
+  })
+}
+
 /**
  * Mint a source for `channelId` and start playing it. `fresh` separates a
  * new channel from a reconnect: a new channel resets the attempt counter
@@ -224,6 +255,7 @@ async function load({ fresh } = { fresh: true }): Promise<void> {
       ensureZapList(ch)
     void premium.addRecent(id)
     void loadGuide(id)
+    void loadQualityVariants(id)
   }
 }
 
@@ -299,8 +331,8 @@ function syncPlayerState(): void {
     premium.resetPlayer()
     premium.setPlayer('playing')
     playerCatchError.value = ''
-    if ((p.catchError as any)?.value != null)
-      p.catchError.value = ''
+    if (p.catchError?.value != null)
+      p.catchError!.value = ''
   }
 
   if (premium.player === 'reconnecting' || premium.player === 'error')
@@ -506,6 +538,10 @@ onUnmounted(() => {
       :is-fullscreen="isFullscreen"
       :chrome-up="playerChrome"
       :error="overlayError"
+      :resolution-label="playerRef?.resolutionLabel?.value ?? ''"
+      :source-quality="playback.source.value?.quality ?? null"
+      :quality-variants="qualityVariants"
+      :quality-loading="qualityLoading"
       @back="goBack"
       @prev="zap(-1)"
       @next="zap(1)"
@@ -516,6 +552,7 @@ onUnmounted(() => {
       @set-volume="onSetVolume"
       @toggle-favorite="toggleFav"
       @toggle-fullscreen="toggleFullscreen"
+      @show-quality-picker="showQualityPicker = !showQualityPicker"
     >
       <template #info>
         <div
@@ -684,6 +721,63 @@ onUnmounted(() => {
         <p v-if="filteredDrawerChannels.length === 0" class="p-3 text-body-small opacity-60">
           {{ $t('No channels match that search.') }}
         </p>
+      </div>
+    </div>
+
+    <!-- Quality picker. Lists quality variants for the current channel
+         (e.g. "BBC One HD", "BBC One 4K"). Hidden when no variants exist.
+         z-50 to sit above the overlay (z-40). -->
+    <div
+      v-if="showQualityPicker && qualityVariants.length > 0"
+      class="absolute inset-0 z-50 flex justify-end"
+      @click.self="showQualityPicker = false"
+    >
+      <div
+        class="flex h-full w-72 max-w-[85vw] flex-col border-s border-white/10 bg-black/90 p-4 text-white shadow-2xl"
+        @click.stop
+      >
+        <div class="flex items-center justify-between gap-2 pb-3">
+          <h2 class="text-title-medium font-bold">
+            {{ $t('Quality') }}
+          </h2>
+          <v-btn
+            icon
+            size="x-small"
+            variant="text"
+            :aria-label="$t('Close')"
+            @click="showQualityPicker = false"
+          >
+            <v-icon :icon="mdiArrowLeft" />
+          </v-btn>
+        </div>
+
+        <div class="flex-1 space-y-1 overflow-y-auto" data-dpad-start>
+          <!-- Current channel -->
+          <button
+            type="button"
+            class="flex w-full items-center gap-3 rounded-xl p-2.5 text-start transition-colors bg-primary font-bold text-on-primary"
+            aria-current="true"
+          >
+            <span class="flex-1 truncate text-body-small">{{ channelName }}</span>
+            <span v-if="playback.source.value?.quality" class="text-label-small opacity-70">
+              {{ playback.source.value.quality }}
+            </span>
+            <v-icon :icon="mdiCheck" size="16" />
+          </button>
+          <!-- Variants -->
+          <button
+            v-for="variant in qualityVariants"
+            :key="variant.id"
+            type="button"
+            class="flex w-full items-center gap-3 rounded-xl p-2.5 text-start transition-colors text-white/80 hover:bg-white/10 hover:text-white focus-visible:bg-white/10 focus-visible:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            @click="switchQuality(variant)"
+          >
+            <span class="flex-1 truncate text-body-small">{{ variant.name }}</span>
+            <span v-if="variant.quality" class="text-label-small opacity-70">
+              {{ variant.quality }}
+            </span>
+          </button>
+        </div>
       </div>
     </div>
   </div>

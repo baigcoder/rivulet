@@ -28,7 +28,7 @@ const tabs: Array<{ id: LiveTvTab, icon: string, label: () => string }> = [
       v-for="tab in tabs"
       :key="tab.id"
       type="button"
-      class="relative flex shrink-0 appearance-none items-center gap-2 rounded-xl px-4 py-2 text-body-small font-semibold outline-none transition-all duration-200 focus-visible:ring-2 focus-visible:ring-primary/50"
+      class="relative flex shrink-0 appearance-none items-center gap-2 rounded-xl px-4 py-2 text-body-small font-semibold outline-none transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-primary/50"
       :class="model === tab.id
         ? 'bg-primary text-on-primary shadow-lg shadow-primary/35 ring-1 ring-white/20'
         : 'text-white/60 hover:bg-white/10 hover:text-white'"

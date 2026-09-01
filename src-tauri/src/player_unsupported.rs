@@ -67,3 +67,8 @@ pub fn player_status() -> PlayerStatus {
         log_tail: Some(UNSUPPORTED.into()),
     }
 }
+
+#[tauri::command]
+pub fn player_screenshot() -> Result<String, String> {
+    Err(UNSUPPORTED.into())
+}

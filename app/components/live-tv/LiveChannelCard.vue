@@ -139,7 +139,7 @@ const hasLogo = computed(() => {
   -->
   <button
     type="button"
-    class="group relative flex flex-col overflow-hidden rounded-2xl bg-surface-container-high text-start ring-1 ring-white/6 transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+    class="group relative flex flex-col overflow-hidden rounded-2xl bg-surface-container-high text-start ring-1 ring-white/6 transition-[transform,box-shadow,ring-color] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
     :class="[
       hasStream
         ? 'cursor-pointer hover:-translate-y-0.5 hover:ring-primary/50 hover:shadow-xl hover:shadow-primary/10 focus-visible:-translate-y-0.5'
@@ -205,7 +205,7 @@ const hasLogo = computed(() => {
            and not two stops per card; the favourite is reachable from the
            player. -->
       <span
-        class="absolute right-2 top-2 grid size-7 cursor-pointer place-items-center rounded-full bg-black/60 shadow transition-all hover:bg-black/80 group-focus-visible:opacity-100 group-hover:opacity-100"
+        class="absolute right-2 top-2 grid size-7 cursor-pointer place-items-center rounded-full bg-black/60 shadow transition-colors hover:bg-black/80 group-focus-visible:opacity-100 group-hover:opacity-100"
         :class="fav ? 'opacity-100' : 'opacity-0'"
         role="button"
         :aria-label="fav ? $t('Remove from favorites') : $t('Add to favorites')"
@@ -245,9 +245,10 @@ const hasLogo = computed(() => {
         </p>
         <div class="mt-1">
           <div class="h-0.5 w-full overflow-hidden rounded-full bg-white/8">
+            <!-- scaleX, not width — see LiveChannelRow for why. -->
             <div
-              class="h-full rounded-full bg-primary/70 transition-all duration-1000"
-              :style="{ width: `${epgProgress}%` }"
+              class="h-full w-full origin-left rounded-full bg-primary/70 transition-transform duration-1000 ease-linear"
+              :style="{ transform: `scaleX(${epgProgress / 100})` }"
             />
           </div>
         </div>

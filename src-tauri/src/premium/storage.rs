@@ -128,6 +128,8 @@ const ADDED_COLUMNS: &[(&str, &str)] = &[
     ("iptv_premium_channels", "sort_key INTEGER NOT NULL DEFAULT 0"),
     ("iptv_premium_connections", "catalog_synced_at INTEGER"),
     ("iptv_premium_connections", "epg_synced_at INTEGER"),
+    ("iptv_premium_channels", "quality TEXT"),
+    ("iptv_premium_channels", "is_adult INTEGER NOT NULL DEFAULT 0"),
 ];
 
 fn migrate(conn: &Connection) -> Result<(), PremiumError> {
@@ -433,8 +435,8 @@ pub fn replace_channels(
             "INSERT OR REPLACE INTO iptv_premium_channels
              (connection_id, id, name, logo_url, category_id, category_name,
               country, language, epg_id, stream_type, user_agent, referer,
-              stream_url, sort_key, name_lower)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+              stream_url, sort_key, name_lower, quality, is_adult)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
         )?;
         for (i, ch) in channels.iter().enumerate() {
             stmt.execute(rusqlite::params![
@@ -453,6 +455,8 @@ pub fn replace_channels(
                 ch.stream_url,
                 i as i64,
                 ch.name.to_lowercase(),
+                ch.quality,
+                ch.is_adult as i64,
             ])?;
         }
     }
@@ -469,7 +473,7 @@ pub fn stream_row(
     channel_id: &str,
 ) -> Result<Option<StreamRow>, PremiumError> {
     let mut stmt = conn.prepare(
-        "SELECT stream_url, user_agent, referer FROM iptv_premium_channels
+        "SELECT stream_url, user_agent, referer, quality FROM iptv_premium_channels
          WHERE connection_id = ?1 AND id = ?2",
     )?;
     let mut rows = stmt.query(rusqlite::params![connection_id, channel_id])?;
@@ -478,6 +482,7 @@ pub fn stream_row(
             stream_url: row.get(0)?,
             user_agent: row.get(1)?,
             referer: row.get(2)?,
+            quality: row.get(3).ok(),
         })),
         None => Ok(None),
     }
@@ -488,6 +493,7 @@ pub struct StreamRow {
     pub stream_url: Option<String>,
     pub user_agent: Option<String>,
     pub referer: Option<String>,
+    pub quality: Option<String>,
 }
 
 pub fn provider_type(conn: &Connection, connection_id: &str) -> Result<String, PremiumError> {

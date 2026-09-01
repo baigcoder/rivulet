@@ -174,7 +174,7 @@ onMounted(async () => {
             <div class="flex p-1 rounded-2xl border border-white/10 bg-black/40 backdrop-blur-md">
               <button
                 type="button"
-                class="grid size-8 place-items-center rounded-xl transition-all"
+                class="grid size-8 place-items-center rounded-xl transition-colors"
                 :class="viewMode === 'grid' ? 'bg-primary text-on-primary font-bold shadow-md shadow-primary/30' : 'text-white/50 hover:bg-white/10 hover:text-white'"
                 @click="viewMode = 'grid'"
               >
@@ -182,7 +182,7 @@ onMounted(async () => {
               </button>
               <button
                 type="button"
-                class="grid size-8 place-items-center rounded-xl transition-all"
+                class="grid size-8 place-items-center rounded-xl transition-colors"
                 :class="viewMode === 'list' ? 'bg-primary text-on-primary font-bold shadow-md shadow-primary/30' : 'text-white/50 hover:bg-white/10 hover:text-white'"
                 @click="viewMode = 'list'"
               >

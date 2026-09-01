@@ -54,6 +54,15 @@ pub struct IPTVChannel {
     /// this column server-side instead.
     #[serde(skip_serializing, default)]
     pub stream_url: Option<String>,
+    /// Quality label inferred from the channel name (e.g. "4K UHD", "FHD",
+    /// "HD"). `None` when the name carries no recognisable quality token.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quality: Option<String>,
+    /// Whether the channel belongs to an adult category. Derived from
+    /// the Xtream `is_adult` flag and category name patterns during
+    /// catalog sync. The frontend can filter these behind a toggle.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_adult: bool,
     /// Whether the channel is in the user's favourites. The repository
     /// fills this in so a grid can draw its stars without fetching the
     /// favourite list alongside every page.
@@ -98,6 +107,9 @@ pub struct PlaybackSource {
     /// Same, for `Referer` (mpv's `--referrer=`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub referer: Option<String>,
+    /// Quality label from the channel name (e.g. "4K UHD", "FHD", "HD").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quality: Option<String>,
 }
 
 /// The connected provider's account snapshot. The server URL and

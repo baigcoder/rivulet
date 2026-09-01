@@ -463,10 +463,11 @@ pub async fn categories(
 pub async fn category_counts(
     State(state): State<ApiState>,
     headers: axum::http::HeaderMap,
+    Query(q): Query<ChannelsQuery>,
 ) -> Result<Json<Vec<CategoryCount>>, super::ApiError> {
     guard(&state, &headers)?;
     let id = active_connection(&state)?;
-    Ok(Json(repo(&state).category_counts(&id)?))
+    Ok(Json(repo(&state).category_counts(&id, q.hide_adult.unwrap_or(false))?))
 }
 
 #[derive(Deserialize, Default)]
@@ -477,6 +478,7 @@ pub struct ChannelsQuery {
     pub country: Option<String>,
     pub search: Option<String>,
     pub favorites_only: Option<bool>,
+    pub hide_adult: Option<bool>,
     pub limit: Option<usize>,
 }
 
@@ -493,6 +495,7 @@ pub async fn channels(
         q.country.as_deref(),
         q.search.as_deref(),
         q.favorites_only.unwrap_or(false),
+        q.hide_adult.unwrap_or(false),
         q.cursor.as_deref(),
         q.limit.unwrap_or(DEFAULT_PAGE),
     )?;
@@ -599,6 +602,19 @@ pub async fn play(
     let cid = active_connection(&state)?;
     let source = player::build_source(state.premium.clone(), &cid, &id)?;
     Ok(Json(source))
+}
+
+/// Find quality variants for a channel — other channels with a similar
+/// base name but different quality labels. Returns an empty list when
+/// no variants exist.
+pub async fn quality_variants(
+    State(state): State<ApiState>,
+    headers: axum::http::HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<IPTVChannel>>, super::ApiError> {
+    guard(&state, &headers)?;
+    let cid = active_connection(&state)?;
+    Ok(Json(repo(&state).quality_variants(&cid, &id)?))
 }
 
 // ── Favourites and history ─────────────────────────────────────────

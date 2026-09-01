@@ -12,6 +12,7 @@ import {
   mdiCheck,
   mdiChevronDown,
   mdiChevronUp,
+  mdiCloud,
   mdiClose,
   mdiCog,
   mdiEarHearing,
@@ -30,6 +31,7 @@ import {
   mdiRewind10,
   mdiSkipNext,
   mdiSleep,
+  mdiStar,
   mdiStepForward,
   mdiSubtitles,
   mdiSubtitlesOutline,
@@ -85,6 +87,8 @@ const props = defineProps<{
   year?: string
   season?: number
   episode?: number
+  /** Transparent title treatment from TMDB (logo PNG path). Shown on the pause overlay. */
+  logo?: string | null
   /**
    * The other server streams the sources answered with, offered as two menus:
    * `servers` names every candidate (and is the failover list), `qualities`
@@ -107,6 +111,10 @@ const props = defineProps<{
   autoOpenQuality?: boolean
   /** Quality label from the source, e.g. "4k DV | HDR". Used to detect HDR content. */
   quality?: string
+  /** True while the parent is resolving the stream URL (source search, TMDB lookup). */
+  resolving?: boolean
+  /** Current resolution step text from the parent (e.g. "Searching your sources…"). */
+  step?: string
   /**
    * Live stream mode hides the VOD-only chrome (seek bar, position,
    * duration, chapter markers, end-of-playback countdown, "next
@@ -133,6 +141,8 @@ const emit = defineEmits<{
   useCandidate: [index: number]
   /** The self-introducing Quality menu fired; the parent can stop offering it. */
   autoOpened: []
+  /** User pressed Back while the player was resolving or idle — delegate to the parent. */
+  back: []
 }>()
 
 /**
@@ -290,6 +300,7 @@ const started = ref(false)
 const busy = ref(false)
 const waiting = ref(false)
 const paused = ref(false)
+watch(paused, (p) => { if (p) captureFrame(); else pauseFrame.value = '' })
 const buffering = ref(false)
 const ended = ref(false)
 const duration = ref(0)
@@ -449,6 +460,27 @@ async function readProps<T = Record<string, any>>(names: string[]): Promise<T | 
   }
 }
 
+/** Capture the frozen video frame as a JPEG data-URL for the pause overlay. */
+const pauseFrame = ref('')
+async function captureFrame() {
+  if (!native) return
+  try {
+    pauseFrame.value = await invoke<string>('player_screenshot')
+  }
+  catch { pauseFrame.value = '' }
+}
+/** Background style that sizes the screenshot to the full player-box dimensions
+ *  so the left portion visible through the data-cut hole aligns with the native video. */
+const pauseFrameStyle = computed(() => {
+  if (!pauseFrame.value || !boxWidth.value || !boxHeight.value) return undefined
+  return {
+    backgroundImage: `url(${pauseFrame.value})`,
+    backgroundSize: `${boxWidth.value}px ${boxHeight.value}px`,
+    backgroundRepeat: 'no-repeat' as const,
+    backgroundPosition: '0 0',
+  }
+})
+
 /**
  * Is the chrome up? Declared this high because both the cursor poll below and
  * `subPos` — which measures the subtitle line against the bottom bar — read it.
@@ -529,6 +561,8 @@ interface Track { id: number, type: string, lang?: string, title?: string, exter
 const tracks = ref<Track[]>([])
 const sid = ref<number | 'no'>('no')
 const aid = ref<number | 'no'>('no')
+/** One-shot: auto-select English audio on a fresh stream. */
+const autoEng = ref(true)
 const externals = ref<Subtitle[]>([])
 const subLoading = ref(false)
 const subError = ref('')
@@ -559,7 +593,7 @@ const subLang = useLocalStorage(key('subLang'), '')
 const settings = useSettingsStore()
 const library = useLibraryStore()
 
-const { height: boxHeight } = useElementSize(boxEl)
+const { width: boxWidth, height: boxHeight } = useElementSize(boxEl)
 /** The track/speed panel, measured because the subtitles have to clear it. */
 const menuEl = ref<HTMLElement | null>(null)
 const { height: menuHeight } = useElementSize(menuEl)
@@ -600,6 +634,26 @@ watch(() => settings.subs, applySubtitleStyle, { deep: true })
 // offers none.
 /** Cues from a track inside the file, which only libVLC can read out. */
 const subText = ref('')
+/** Actual decoded video dimensions, read from mpv's video-params. */
+const videoWidth = ref(0)
+const videoHeight = ref(0)
+/** Human-readable resolution label derived from the decoded height. */
+const resolutionLabel = computed(() => {
+  const h = videoHeight.value
+  if (h <= 0)
+    return ''
+  if (h >= 2160)
+    return '4K UHD'
+  if (h >= 1440)
+    return '1440p'
+  if (h >= 1080)
+    return '1080p'
+  if (h >= 720)
+    return '720p'
+  if (h >= 480)
+    return '480p'
+  return `${h}p`
+})
 const cueText = computed(() => native
   ? ''
   // A muxed track is decoded by the backend that found it and handed over as
@@ -667,6 +721,14 @@ async function refreshTracks() {
   tracks.value = Array.isArray(p['track-list']) ? p['track-list'] : []
   sid.value = typeof p.sid === 'number' ? p.sid : 'no'
   aid.value = typeof p.aid === 'number' ? p.aid : 'no'
+  if (autoEng.value) {
+    autoEng.value = false
+    const eng = audioTracks.value.find(t => t.lang?.startsWith('eng'))
+    if (eng && aid.value !== eng.id) {
+      aid.value = eng.id
+      ipc(['set_property', 'aid', eng.id])
+    }
+  }
 }
 
 /**
@@ -1540,7 +1602,22 @@ function frame(now: number) {
   const dt = lastFrame ? Math.min(0.25, (now - lastFrame) / 1000) : 0
   lastFrame = now
 
-  if (!started.value)
+  // Before the engine starts there is no native surface to size, but a
+  // loading overlay may still need a cutout punched into a leftover mpv
+  // window from a previous session — otherwise the user sees a black
+  // screen while the source search runs. The state mirrors the `centre`
+  // computed below; duplicated here so this function stays a forward
+  // reference (the RAF loop is set up before the computed exists).
+  // `stalled` is intentionally omitted: it's only ever true after
+  // `started`, and the pre-start branch is what needs this check.
+  const hasCentre = !!errorMsg.value
+    || ended.value
+    || busy.value
+    || !!props.resolving
+    || (started.value && !paused.value && (buffering.value || (!position.value && !duration.value)))
+  const needsGeometry = started.value || (native && overlay && hasCentre)
+
+  if (!needsGeometry)
     return
 
   // The <video> carries the real clock and reading it costs nothing, so its
@@ -1548,13 +1625,15 @@ function frame(now: number) {
   // and a guess between polls would leave them up to 0.4s off the picture.
   // libVLC's clock is a bridge call away, which is too much per frame, so
   // that one runs forward and lets the poll correct it as mpv's does.
-  const clock = vlc ? undefined : videoEl.value?.currentTime
-  if (clock != null) {
-    if (!scrubbing.value)
-      position.value = clock
-  }
-  else if (!paused.value && !buffering.value && !scrubbing.value && duration.value) {
-    position.value = Math.min(duration.value, position.value + dt * speed.value)
+  if (started.value) {
+    const clock = vlc ? undefined : videoEl.value?.currentTime
+    if (clock != null) {
+      if (!scrubbing.value)
+        position.value = clock
+    }
+    else if (!paused.value && !buffering.value && !scrubbing.value && duration.value) {
+      position.value = Math.min(duration.value, position.value + dt * speed.value)
+    }
   }
 
   // Neither shim has a surface to chase: the bars stack in CSS and the picture
@@ -1683,17 +1762,25 @@ async function waitForStream(url: string, timeoutMs = 60000): Promise<{ ok: bool
       if (proxy && (status === 502 || status === 500 || status === 503 || status === 404)) {
         return { ok: false, status }
       }
-      // An explicit status from a remote host is final — waiting out a 404
-      // only delays the failover. The local engine is different: statuses
-      // while it warms up are just "not yet".
-      if (!local && !proxy && status >= 400)
+      // A 404 from any remote host is final — the resource is gone. But
+      // other 4xx/5xx from debrid links are often transient: the server
+      // is still activating the stream. Keep retrying within the window
+      // rather than failing instantly on the first probe.
+      if (!local && !proxy && status === 404)
         return { ok: false, status }
       if (local && status >= 400 && status < 500)
         return { ok: false, status }
     }
     catch {
-      if (!local)
+      if (!local && !proxy) {
+        // Debrid URLs often lack CORS headers (fetch throws) or need a moment
+        // to activate — keep retrying within the window instead of giving up
+        // on the first probe. If every attempt fails, fall through with
+        // `unknown: true` so mpv opens it directly (media elements bypass CORS).
+        if (Date.now() + 150 < deadline)
+          continue
         return { ok: false, unknown: true, status: 0 }
+      }
       // Engine momentarily unreachable — keep waiting.
     }
     await new Promise(r => setTimeout(r, 150))
@@ -1837,17 +1924,30 @@ async function startPlayer() {
     paused.value = false
     silentSaid = false
     started.value = true
+    // Assume we're buffering until the first poll says otherwise — otherwise
+    // there is a dead window between `started` becoming true and the first
+    // 200ms poll where the centre overlay is hidden.
+    buffering.value = true
     loaded = false
     tracks.value = []
     sid.value = 'no'
     aid.value = 'no'
+    autoEng.value = true
     activeUrl.value = ''
     subText.value = ''
+    videoWidth.value = 0
+    videoHeight.value = 0
     subDelay.value = 0 // a fresh mpv starts at zero
     subSpeed.value = 1
     syncNote.value = ''
     guess.value = null
     lastKey = '' // force a geometry + shape push on the next frame
+    // Push geometry and cutouts immediately so the stalled overlay's data-cut
+    // hole appears in the native window before the next paint — waiting for
+    // the next RAF leaves a frame where the mpv surface covers the webview
+    // with no holes, which the user sees as a black flash.
+    if (native)
+      frame(performance.now())
 
     // Clicks and the wheel land on the video window in front of the page, never
     // on the webview. On X11 that window is mpv's own, so it can answer them
@@ -1952,18 +2052,29 @@ async function zapTo() {
 // `ui` is exposed because a page-level HUD (Live TV) cannot compute it itself:
 // where mpv paints over the page no mousemove ever reaches the DOM, and this
 // flag is the one fed by the native pointer poll.
-defineExpose({ osd, zapTo, togglePlay, toggleMute, setVolume, paused, volume, muted, started, buffering, ui })
+defineExpose({ osd, zapTo, togglePlay, toggleMute, setVolume, paused, volume, muted, started, buffering, ui, videoWidth, videoHeight, resolutionLabel })
 
 // ---------------------------------------------------------------------------
 // Polling: playback props, plus a liveness check so a dead mpv reports itself
 // instead of leaving a black rectangle behind.
 // ---------------------------------------------------------------------------
-const POLLED = ['pause', 'paused-for-cache', 'duration', 'time-pos', 'demuxer-cache-time', 'volume', 'mute', 'speed', 'mouse-pos', 'sub-text']
+const POLLED = ['pause', 'paused-for-cache', 'duration', 'time-pos', 'demuxer-cache-time', 'volume', 'mute', 'speed', 'mouse-pos', 'sub-text', 'video-params']
 let tick = 0
-let lastMouse = ''
-let lastCursor = ''
+let lastMouseX = -1
+let lastMouseY = -1
+let lastCursorX = -1
+let lastCursorY = -1
 /** Wallclock of the most recent native-cursor report, for the stale sampler. */
 let lastCursorAt = 0
+/**
+ * Deadband for "did the cursor actually move" on the desktop-overlay path.
+ * The native pointer poll on Linux/Windows can return slightly different
+ * coordinates on every tick (sub-pixel rounding, jitter, XWayland quirks),
+ * and a one-pixel change is not user activity — treat it as idle so the
+ * chrome can hide. Five pixels is small enough to be instant, large enough
+ * to swallow noise.
+ */
+const POINTER_DEADBAND = 5
 
 async function poll() {
   if (!started.value)
@@ -2016,14 +2127,22 @@ async function poll() {
   // (Windows). It is the same signal as mpv's `mouse-pos` below and is read the
   // same way, but it survives the pointer leaving the window and coming back —
   // which mpv's does not there, leaving the controls unable to un-hide again.
+  // Only a *moving* cursor is activity: one that is sitting still on the
+  // picture must not keep the chrome up (or keep resetting the stale timer),
+  // or the bars never hide. The safety net below covers "recently over the
+  // video" via `cursorOverVideo`, which the stale sampler retires.
   if (cursor?.over) {
-    noteVideoHover()
-    ui.value = true
-    lastCursorAt = performance.now()
-    const key = `${cursor.x},${cursor.y}`
-    if (!lastCursor || key !== lastCursor)
+    const dx = cursor.x - lastCursorX
+    const dy = cursor.y - lastCursorY
+    const first = lastCursorX < 0
+    const moved = first || (dx * dx + dy * dy) > POINTER_DEADBAND * POINTER_DEADBAND
+    if (moved) {
+      lastCursorAt = performance.now()
+      noteVideoHover()
       noteActivity()
-    lastCursor = key
+      lastCursorX = cursor.x
+      lastCursorY = cursor.y
+    }
   }
 
   if (!p)
@@ -2041,6 +2160,15 @@ async function poll() {
     speed.value = p.speed
   cacheEnd.value = typeof p['demuxer-cache-time'] === 'number' ? p['demuxer-cache-time'] : 0
   subText.value = typeof p['sub-text'] === 'string' ? p['sub-text'] : ''
+
+  // Video dimensions — read once per poll to show the resolution badge and
+  // detect 4K content for HDR tone mapping.
+  // mpv's video-params uses `w`/`h`; the <video> shim mirrors it.
+  const vp = p['video-params']
+  if (vp && typeof vp.w === 'number' && typeof vp.h === 'number') {
+    videoWidth.value = vp.w
+    videoHeight.value = vp.h
+  }
 
   // The rAF loop runs the clock between polls; only correct it once it has
   // really drifted, so the bar never stutters backwards a frame.
@@ -2062,34 +2190,51 @@ async function poll() {
 
   // mpv's window swallows pointer events over the video, so its own cursor
   // position is the only way to notice the mouse moving there.
+  // Only call `noteVideoHover` on a real position change: a cursor that is
+  // just sitting on the picture must not keep resetting the stale-pointer
+  // timer, or the chrome never hides.
   const m = p['mouse-pos']
   if (m && typeof m.x === 'number') {
     // Every bar is a hole cut out of mpv's window, so a cursor mpv can see is a
     // cursor that is not on a bar. Trust that over `pointerleave`, which the
     // webview never gets for a pointer crossing into the native window.
-    if (m.hover) {
-      noteVideoHover()
-      ui.value = true
+    const dx = m.x - lastMouseX
+    const dy = m.y - lastMouseY
+    const first = lastMouseX < 0
+    const moved = first || (dx * dx + dy * dy) > POINTER_DEADBAND * POINTER_DEADBAND
+    if (moved) {
+      if (m.hover)
+        lastCursorAt = performance.now()
     }
-    if (m.hover)
-      lastCursorAt = performance.now()
-    const key = `${m.x},${m.y}`
-    if (!lastMouse || key !== lastMouse)
+    if (m.hover && moved)
+      noteVideoHover()
+    if (moved)
       noteActivity()
-    lastMouse = key
+    if (moved) {
+      lastMouseX = m.x
+      lastMouseY = m.y
+    }
   }
 
   // If the native cursor source has gone quiet for a beat, the user has left
   // the picture and the chrome is allowed to hide. Without this, a single
-  // early sample pins `cursorOverVideo` true until the film ends.
+  // early sample pins `cursorOverVideo` true until the film ends. The
+  // matching `hovering` reset happens in the watch below — it sits after
+  // `hovering` is declared, and the RAF loop here is a forward reference.
   if (cursorOverVideo.value && lastCursorAt && performance.now() - lastCursorAt > CURSOR_STALE_MS)
     cursorOverVideo.value = false
 
-  // Aggressive safety net: on Wayland (nativeHoverUnavailable) or whenever the
-  // cursor is over video, force the chrome visible every single poll. The watch
-  // + gate in `noteActivity` should be enough, but on some compositors the hide
-  // timer manages to slip through and leave the user with no controls at all.
-  if (nativeHoverUnavailable.value || cursorOverVideo.value) {
+  // Aggressive safety net: while the cursor is over the video, force the
+  // chrome visible every poll. The watch + gate in `noteActivity` should
+  // be enough, but on some compositors the hide timer manages to slip
+  // through and leave the user with no controls at all.
+  // `nativeHoverUnavailable` is NOT here: on Windows the `player_pointer`
+  // IPC can return `None` when the mpv window is not foreground or the
+  // cursor is outside the embed rectangle, and three misses flips the
+  // flag true — a flag that then pinned the bars visible for the rest of
+  // the film. The flag is still a one-shot `noteActivity` to surface the
+  // chrome, and the stale sampler handles `cursorOverVideo` correctly.
+  if (cursorOverVideo.value) {
     ui.value = true
     if (hideTimer) {
       clearTimeout(hideTimer)
@@ -2350,7 +2495,7 @@ async function warm() {
  */
 // Touch chrome is deliberately brief: it is an overlay over video, not a
 // permanent control panel. A tap brings it straight back when it is needed.
-const IDLE_MS = touch.value ? 1500 : isTv() ? 6500 : 2800
+const IDLE_MS = touch.value ? 1500 : isTv() ? 6500 : 2000
 const hovering = ref(false)
 /**
  * Is there a pointer that can hover at all? A television answers `hover: none`,
@@ -2385,7 +2530,32 @@ function onFocusIn(e: FocusEvent) {
 function noteVideoHover() {
   cursorOverVideo.value = true
   hovering.value = true
+  const now = performance.now()
+  lastCursorAt = now
   ui.value = true
+  noteActivity()
+}
+
+/**
+ * Pointer entered the webview (a bar's cutout, the root itself). The DOM
+ * fires this on the desktop-overlay path when the cursor moves from the
+ * OS desktop onto a bar; mirror `noteVideoHover` for the stale sampler.
+ */
+function notePointerEnter() {
+  hovering.value = true
+  lastCursorAt = performance.now()
+  noteActivity()
+}
+
+/**
+ * Pointer left the webview. On desktop overlay the root div only sees
+ * this when the cursor crosses between a cutout and the mpv window or
+ * the OS desktop, but when it does, clear the stale-pointer timer and
+ * re-arm the hide timer straight away — the cursor is no longer on a
+ * bar and the chrome should be allowed to hide.
+ */
+function onPointerLeave() {
+  hovering.value = false
   noteActivity()
 }
 
@@ -2428,7 +2598,13 @@ function noteActivity() {
   // On desktop overlay (linux/windows) cursorOverVideo is sufficient — the
   // hoverable+hovering pair is unreliable there because mpv's window sits in
   // front of the webview and the root never gets pointerenter.
-  if (started.value && !paused.value && !menu.value && !nativeHoverUnavailable.value && !cursorOverVideo.value && !(hovering.value && (hoverable.value || overlay)))
+  // `nativeHoverUnavailable` is intentionally NOT in the gate: on Windows the
+  // `player_pointer` IPC can return `None` (mpv window not foreground, or the
+  // cursor is outside the embed rectangle), and three misses flips the flag
+  // true and pins the bars visible forever. The safety net in `poll()` already
+  // keeps the bars up while the flag is set, so a stray flag can't strand the
+  // user with no controls.
+  if (started.value && !paused.value && !menu.value && !cursorOverVideo.value && !(hovering.value && (hoverable.value || overlay)))
     hideTimer = setTimeout(hideChrome, IDLE_MS)
 }
 
@@ -2442,6 +2618,18 @@ function noteActivity() {
 // nothing else can wake them — the watch has to fire here so `noteActivity`
 // restores `ui` once and pins the chrome visible.
 watch([started, paused, menu, hovering, cursorOverVideo, nativeHoverUnavailable], noteActivity)
+
+// On desktop overlay the root div never gets pointerleave when the cursor
+// crosses from the mpv window into the OS desktop, so `hovering` stays
+// true after `noteVideoHover` set it. Mirror `cursorOverVideo` into
+// `hovering` here so the hide gate passes right away, and re-arm the
+// hide timer through `noteActivity`.
+watch(cursorOverVideo, (over, was) => {
+  if (was && !over) {
+    hovering.value = false
+    noteActivity()
+  }
+})
 
 // The bar appearing is the only notice anyone gives that a scrub may be coming.
 // `duration` is in there because it lands a beat after playback starts, and a
@@ -2457,9 +2645,15 @@ const centre = computed(() => {
     return 'error'
   if (ended.value)
     return 'ended'
-  if (busy.value)
+  if (busy.value || props.resolving)
     return 'loading'
-  return stalled.value && !paused.value ? 'stalled' : ''
+  // Show the buffering indicator when the engine is running but no frame has
+  // played yet (position and duration both zero) — the poll clears
+  // `buffering` before the debounce catches up, leaving a dead window with
+  // a black screen and no feedback.
+  if (started.value && !paused.value && (buffering.value || stalled.value || (!position.value && !duration.value)))
+    return 'stalled'
+  return ''
 })
 
 // ---------------------------------------------------------------------------
@@ -2814,6 +3008,18 @@ function fmt(s: number) {
   return `${h > 0 ? `${h}:` : ''}${mm}:${String(sec).padStart(2, '0')}`
 }
 
+/** Duration in human-readable form: "1h 54m" or "42m". */
+function fmtDuration(s: number) {
+  if (!Number.isFinite(s) || s <= 0) return ''
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  if (h > 0) return `${h}h ${m}m`
+  return `${m}m`
+}
+
+/** Full logo URL from the TMDB logo path, or null. */
+const logoSrc = computed(() => logoUrl(props.logo ?? null, 'w500'))
+
 const remaining = computed(() => duration.value ? `-${fmt((duration.value - position.value) / speed.value)}` : '')
 </script>
 
@@ -2827,8 +3033,8 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
     @pointerdown="noteActivity"
     @focusin="onFocusIn"
     @focusout="focused = false"
-    @pointerenter="hovering = true; noteActivity()"
-    @pointerleave="hovering = false"
+    @pointerenter="notePointerEnter"
+    @pointerleave="onPointerLeave"
   >
     <!-- The rectangle mpv paints into. Everything below is punched out of it —
          or, with no native window, the box the <video> fills and the bars
@@ -2840,7 +3046,7 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
            player full screen, taking the controls, the subtitles and the
            watch history with it. -->
       <video
-        v-if="!native && !vlc"
+        v-if="src && !native && !vlc"
         ref="videoEl"
         class="h-full w-full bg-black"
         playsinline
@@ -2933,24 +3139,11 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
       <header
         v-show="ui && !isLive"
         data-cut
-        class="absolute inset-x-0 top-0 h-14 flex items-center gap-2 border-b px-3"
-        :class="[SURFACE, touch && 'border-transparent bg-gradient-to-b from-black/78 via-black/35 to-transparent']"
+        class="absolute inset-x-0 top-0 z-30 h-14 flex items-center px-3 bg-transparent"
         @pointerenter="hovering = true"
         @pointerleave="onChildPointerLeave"
       >
         <slot name="start" />
-        <div class="min-w-0 flex-1">
-          <slot name="info" />
-        </div>
-        <!-- HDR / Dolby badges, auto-detected from the source quality label. -->
-        <div v-if="isHdrContent" class="flex shrink-0 items-center gap-1.5">
-          <span class="rounded bg-amber-500/20 px-1.5 py-0.5 text-label-small font-bold text-amber-400">
-            HDR
-          </span>
-          <span v-if="isDolbyContent" class="rounded bg-sky-500/20 px-1.5 py-0.5 text-label-small font-bold text-sky-400">
-            DV
-          </span>
-        </div>
       </header>
     </transition>
 
@@ -2959,7 +3152,7 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
       v-if="!barTransport"
       v-show="ui && started && !centre && !isLive"
       data-cut
-      class="absolute left-1/2 top-1/2 flex items-center gap-3 rounded-full border border-white/9 bg-[#0e0f11]/70 px-3 py-3 -translate-x-1/2 -translate-y-1/2"
+      class="absolute left-1/2 top-1/2 z-30 flex items-center gap-3 rounded-full border border-white/9 bg-transparent px-3 py-3 -translate-x-1/2 -translate-y-1/2"
       @pointerenter="hovering = true"
       @pointerleave="onChildPointerLeave"
     >
@@ -2985,12 +3178,12 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
       v-if="centre"
       :key="centre"
       data-cut
-      class="absolute left-1/2 top-1/2 flex items-center gap-2.5 border -translate-x-1/2 -translate-y-1/2"
+      class="absolute left-1/2 top-1/2 flex items-center gap-3 border -translate-x-1/2 -translate-y-1/2"
       :class="[
-        SURFACE,
+        centre === 'loading' ? 'bg-black/90 border-white/15' : SURFACE,
         centre === 'stalled'
-          ? 'rounded-full px-4 py-2.5 text-body-medium'
-          : 'max-w-[min(520px,80%)] flex-col rounded-2xl px-6.5 py-5.5 text-center',
+          ? 'rounded-full px-5 py-3 text-body-large'
+          : 'max-w-[min(520px,80%)] flex-col rounded-2xl px-7 py-6 text-center',
       ]"
     >
       <template v-if="centre === 'error'">
@@ -3029,9 +3222,20 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
       </template>
 
       <template v-else-if="centre === 'loading'">
-        <v-progress-circular indeterminate color="primary" size="28" width="3" />
+        <v-progress-circular indeterminate color="primary" size="48" width="3.5" />
         <div class="text-title-small">
-          {{ waiting ? $t('Waiting for the torrent stream…') : native ? $t('Starting mpv…') : $t('Opening the stream…') }}
+          <template v-if="resolving && !busy">
+            {{ step || $t('Loading…') }}
+          </template>
+          <template v-else-if="waiting">
+            {{ $t('Waiting for the torrent stream…') }}
+          </template>
+          <template v-else-if="native">
+            {{ $t('Starting mpv…') }}
+          </template>
+          <template v-else>
+            {{ $t('Opening the stream…') }}
+          </template>
         </div>
         <!-- The first source is selected by the release ranker (1080p first
              for streaming). Showing it here makes a slow provider response
@@ -3050,10 +3254,66 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
       </template>
 
       <template v-else>
-        <v-progress-circular indeterminate color="primary" size="20" width="2" />
+        <v-progress-circular indeterminate color="primary" size="28" width="3" />
         <span>{{ $t('Buffering') }}<template v-if="status"> · {{ status }}</template></span>
       </template>
     </div>
+
+    <!-- Pause overlay: movie info panel shown when playback is paused.
+         Positioned centre-left over the frozen frame, matching the Netflix
+         reference. Text floats over a gradient — no card, no border, no poster. -->
+    <transition
+      enter-active-class="transition-[opacity] duration-250 ease-out"
+      leave-active-class="transition-[opacity] duration-200 ease-in"
+      enter-from-class="opacity-0"
+      leave-to-class="opacity-0"
+    >
+      <div
+        v-if="paused && started && !centre"
+        data-cut
+        class="absolute inset-0 z-20"
+        :style="pauseFrameStyle"
+        @pointerenter="hovering = true"
+        @pointerleave="onChildPointerLeave"
+      >
+        <div class="absolute inset-0 bg-black/50" />
+        <div class="absolute inset-y-0 left-0 w-[min(520px,48%)] bg-gradient-to-r from-black/70 via-black/40 to-transparent" />
+        <div class="absolute inset-y-0 left-0 flex w-[min(520px,48%)] items-center pl-8 pr-12">
+          <div class="flex flex-col gap-3">
+          <img
+            v-if="logoSrc"
+            :src="logoSrc"
+            :alt="props.title"
+            class="h-24 w-auto object-contain object-left drop-shadow-[0_2px_12px_rgba(0,0,0,0.8)]"
+          >
+          <div v-else-if="props.title" class="text-headline-large font-bold leading-tight text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.6)]">
+            {{ props.title }}
+          </div>
+          <div class="flex items-center gap-2 text-title-medium text-white/70">
+            <span v-if="props.year">{{ props.year }}</span>
+            <template v-if="duration">
+              <span class="opacity-45">·</span>
+              <span>{{ fmtDuration(duration) }}</span>
+            </template>
+            <template v-if="props.media?.rating">
+              <span class="opacity-45">·</span>
+              <span class="flex items-center gap-0.5">
+                <svg viewBox="0 0 24 24" class="size-4 fill-amber-400"><path :d="mdiStar" /></svg>
+                {{ props.media.rating.toFixed(1) }}
+              </span>
+            </template>
+            <template v-if="props.season && props.episode">
+              <span class="opacity-45">·</span>
+              <span>S{{ props.season }}E{{ props.episode }}</span>
+            </template>
+          </div>
+          <div v-if="props.media?.overview" class="line-clamp-3 text-body-large leading-relaxed text-white/50">
+            {{ props.media.overview }}
+          </div>
+          </div>
+        </div>
+      </div>
+    </transition>
 
     <transition
       :enter-active-class="SLIDE"
@@ -3067,7 +3327,7 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
         v-if="menu"
         ref="menuEl"
         data-cut
-        class="absolute right-4 max-h-[44vh] w-75 flex flex-col overflow-hidden border rounded-xl"
+        class="absolute right-4 z-30 max-h-[44vh] w-75 flex flex-col overflow-hidden border rounded-xl"
         :class="SURFACE"
         :style="{ bottom: `${menuBottom}px` }"
         @pointerenter="hovering = true"
@@ -3483,13 +3743,8 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
       <footer
         v-show="ui && !isLive"
         data-cut
-        class="absolute inset-x-0 bottom-0 border-t px-5 pb-3 pt-5.5"
-        :class="[
-          SURFACE,
-          touch
-            ? 'min-h-19 border-transparent bg-gradient-to-t from-black/82 via-black/42 to-transparent px-3 pb-2 pt-4'
-            : 'h-24',
-        ]"
+        class="absolute inset-x-0 bottom-0 z-30 border-t border-transparent px-5 pb-3 pt-5.5"
+        :class="touch && 'min-h-19 px-3 pb-2 pt-4'"
         @pointerenter="hovering = true"
         @pointerleave="onChildPointerLeave"
       >
@@ -3578,12 +3833,10 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
           <button
             v-if="activeServer"
             v-tooltip:top="$t('Source')"
-            class="max-w-44"
-            :class="PILL"
-            @click="usePill('server')"
+            :class="[ICO, menu === 'server' && '!text-primary !opacity-100']"
+            @click="openMenu('server')"
           >
-            <span class="truncate">{{ activeServer.label }}</span>
-            <v-icon :icon="mdiChevronDown" size="14" class="shrink-0" />
+            <v-icon :icon="mdiCloud" size="22" />
           </button>
           <button
             v-tooltip:top="$t('Playback speed ([ / ])')"
@@ -3603,29 +3856,12 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
             <v-icon :icon="mdiSurroundSound" size="22" />
           </button>
           <button
-            v-if="chapters.length"
-            v-tooltip:top="$t('Chapters')"
-            :class="[ICO, menu === 'chapter' && '!text-primary !opacity-100']"
-            :disabled="!started"
-            @click="openMenu('chapter')"
-          >
-            <v-icon :icon="mdiBookOpenPageVariant" size="22" />
-          </button>
-          <button
             v-tooltip:top="$t('Subtitles (s)')"
             :class="[ICO, menu === 'subs' && '!text-primary !opacity-100']"
             :disabled="!started"
             @click="openMenu('subs')"
           >
             <v-icon :icon="subsOn ? mdiSubtitles : mdiSubtitlesOutline" size="22" />
-          </button>
-          <button
-            v-tooltip:top="sleepTimerRemaining ? $t('Sleep timer: {time}', { time: sleepTimerText(sleepTimerRemaining) }) : $t('Sleep timer')"
-            :class="[ICO, menu === 'sleep' && '!text-primary !opacity-100', sleepTimerRemaining && sleepTimerRemaining > 0 && '!text-primary']"
-            :disabled="!started"
-            @click="openMenu('sleep')"
-          >
-            <v-icon :icon="mdiSleep" size="22" />
           </button>
           <button
             v-tooltip:top="$t('Video & Audio')"
@@ -3650,14 +3886,6 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
             @click="toggleFullscreen"
           >
             <v-icon :icon="windowFullscreen ? mdiFullscreenExit : mdiFullscreen" size="22" />
-          </button>
-          <button
-            v-tooltip:top="$t('A-B loop (i/o/I)')"
-            :class="[ICO, abLoop && '!text-primary']"
-            :disabled="!started"
-            @click="abLoop ? clearLoop() : setLoopA()"
-          >
-            <v-icon :icon="mdiRepeat" size="22" />
           </button>
           <button
             v-if="!touch"

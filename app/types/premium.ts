@@ -37,6 +37,10 @@ export interface IPTVChannel {
    * than sending `false` sixty times per page.
    */
   isFavorite?: boolean
+  /** Quality label inferred from the channel name (e.g. "4K UHD", "FHD", "HD"). */
+  quality?: string | null
+  /** Adult content flag from the provider or category name detection. */
+  isAdult?: boolean
 }
 
 export interface IPTVChannelPage {
@@ -79,6 +83,8 @@ export interface PlaybackSource {
    */
   userAgent?: string | null
   referer?: string | null
+  /** Quality label from the channel name (e.g. "4K UHD", "FHD", "HD"). */
+  quality?: string | null
 }
 
 export interface CategoryCount {

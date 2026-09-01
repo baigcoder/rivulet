@@ -80,7 +80,7 @@ function getCategoryId(cat: LiveCategory): string {
       <!-- All button -->
       <button
         type="button"
-        class="flex shrink-0 items-center gap-2 rounded-full border px-4 py-2 text-body-small font-medium transition-all"
+        class="flex shrink-0 items-center gap-2 rounded-full border px-4 py-2 text-body-small font-medium transition-colors"
         :class="!selected ? 'border-primary/50 bg-primary/20 text-primary font-bold shadow-md' : 'border-white/10 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white'"
         @click="emit('select', '')"
       >
@@ -92,7 +92,7 @@ function getCategoryId(cat: LiveCategory): string {
         v-for="cat in categories"
         :key="getCategoryId(cat)"
         type="button"
-        class="flex shrink-0 items-center gap-2 rounded-full border px-4 py-2 text-body-small font-medium transition-all"
+        class="flex shrink-0 items-center gap-2 rounded-full border px-4 py-2 text-body-small font-medium transition-colors"
         :class="selected === getCategoryId(cat) ? 'border-primary/50 bg-primary/20 text-primary font-bold shadow-md' : 'border-white/10 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white'"
         @click="emit('select', getCategoryId(cat) === selected ? '' : getCategoryId(cat))"
       >

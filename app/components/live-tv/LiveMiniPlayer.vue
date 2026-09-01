@@ -142,7 +142,7 @@ const nowProgram = computed(() => {
 <style scoped>
 .mini-enter-active,
 .mini-leave-active {
-  transition: all 300ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: transform 300ms cubic-bezier(0.16, 1, 0.3, 1), opacity 300ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 .mini-enter-from,
 .mini-leave-to {

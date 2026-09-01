@@ -15,13 +15,13 @@ defineExpose({ focus })
 <template>
   <div class="group relative">
     <!-- Glow aura behind search bar when focused -->
-    <div class="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-primary/40 via-purple-500/30 to-primary/40 opacity-0 blur-md transition-all duration-300 group-focus-within:opacity-100" />
+    <div class="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-primary/40 via-purple-500/30 to-primary/40 opacity-0 blur-md transition-opacity duration-300 group-focus-within:opacity-100" />
 
     <div
-      class="relative flex items-center rounded-2xl border border-white/12 bg-black/40 backdrop-blur-xl px-4 py-3 shadow-lg transition-all duration-300 group-focus-within:border-primary/60 group-focus-within:bg-black/60 group-focus-within:shadow-xl"
+      class="relative flex items-center rounded-2xl border border-white/12 bg-black/40 backdrop-blur-xl px-4 py-3 shadow-lg transition-[border-color,background-color,box-shadow] duration-300 group-focus-within:border-primary/60 group-focus-within:bg-black/60 group-focus-within:shadow-xl"
     >
       <!-- Search icon inside stylized pill -->
-      <div class="me-3 grid size-8 shrink-0 place-items-center rounded-xl bg-primary/15 transition-all duration-300 group-focus-within:bg-primary group-focus-within:text-on-primary">
+      <div class="me-3 grid size-8 shrink-0 place-items-center rounded-xl bg-primary/15 transition-colors duration-300 group-focus-within:bg-primary group-focus-within:text-on-primary">
         <v-icon
           :icon="mdiMagnify"
           size="19"
@@ -43,7 +43,7 @@ defineExpose({ focus })
         <button
           v-if="model"
           type="button"
-          class="ms-2 grid size-7 shrink-0 place-items-center rounded-full bg-white/10 text-white/70 transition-all hover:bg-white/20 hover:text-white"
+          class="ms-2 grid size-7 shrink-0 place-items-center rounded-full bg-white/10 text-white/70 transition-colors hover:bg-white/20 hover:text-white"
           :aria-label="$t('Clear search')"
           @click="model = ''"
         >

@@ -403,7 +403,7 @@ function toDetail(raw: RawDetail, type: MediaType): MediaDetail {
     certification: certificationOf(raw),
     votes: raw.vote_count ?? 0,
     released: raw.release_date ?? raw.first_air_date ?? '',
-    logo: raw.images?.logos.find(l => l.iso_639_1 === 'en')?.file_path ?? null,
+    logo: raw.images?.logos.find(l => l.iso_639_1 === 'en')?.file_path ?? raw.images?.logos[0]?.file_path ?? null,
     trailer: trailerOf(raw),
     cast: (raw.credits?.cast ?? []).slice(0, 20).map(toPerson),
     directors: jobs(crew, ['Director']),

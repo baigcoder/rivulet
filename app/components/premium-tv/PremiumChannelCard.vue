@@ -115,7 +115,6 @@ const parsedName = computed(() => {
 })
 
 const displayName = computed(() => parsedName.value.name)
-const quality = computed(() => parsedName.value.quality)
 
 const channelInitials = computed(() => {
   const clean = displayName.value.replace(/[^a-z0-9\s]/gi, ' ').trim()
@@ -150,21 +149,13 @@ const subtitle = computed(() => props.channel.country || props.channel.categoryN
   -->
   <button
     type="button"
-    class="group relative flex flex-col overflow-hidden rounded-xl bg-surface-container-high/70 text-start ring-1 ring-white/5 transition-colors duration-150 hover:bg-surface-container-highest hover:ring-primary/50 focus-visible:bg-surface-container-highest focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+    class="group relative flex flex-col overflow-hidden rounded-2xl bg-surface-container-high text-start ring-1 ring-white/6 cursor-pointer hover:-translate-y-0.5 hover:ring-primary/50 hover:shadow-xl hover:shadow-primary/10 focus-visible:-translate-y-0.5 transition-[transform,box-shadow] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
     :aria-label="displayName"
     @click="emit('play', channel)"
   >
-    <!--
-      Fixed height, `object-contain`: a lineup's logos are every aspect
-      ratio there is, and a box that sizes itself to them makes a grid of
-      ragged rows. The height is the one thing every card agrees on.
-    -->
-    <div
-      class="relative w-full shrink-0 overflow-hidden bg-black/25"
-      :class="compact ? 'h-14' : 'h-[68px]'"
-    >
-      <!-- Skeleton, not a blank: a slow logo should look like it is
-           coming, and the shimmer is one element inside a bounded box. -->
+    <!-- Logo viewport — aspect-video to match Free TV -->
+    <div class="relative aspect-video w-full overflow-hidden bg-surface-container">
+      <!-- Skeleton -->
       <div
         v-if="hasLogo && !imgLoaded && !imgError"
         class="absolute inset-0 animate-pulse bg-white/5"
@@ -175,74 +166,71 @@ const subtitle = computed(() => props.channel.country || props.channel.categoryN
         alt=""
         loading="lazy"
         decoding="async"
-        class="size-full object-contain p-2 transition-opacity duration-200"
+        class="size-full object-contain p-3 transition-opacity duration-300"
         :class="imgLoaded ? 'opacity-100' : 'opacity-0'"
         @load="imgLoaded = true"
         @error="imgError = true"
       >
 
-      <!-- No logo, or one that 404'd. Initials rather than a broken-image
-           glyph, which is the same information and looks like a bug. -->
+      <!-- No logo fallback — gradient with initials badge, matching Free TV -->
       <div
         v-if="!hasLogo || imgError"
-        class="grid size-full place-items-center"
+        class="relative flex size-full items-center justify-center overflow-hidden bg-gradient-to-br from-indigo-950 via-purple-900/70 to-slate-950"
       >
-        <span class="text-title-small font-black tracking-wider text-white/45">
-          {{ channelInitials }}
-        </span>
+        <div class="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.08),transparent_70%)] pointer-events-none" />
+        <div class="relative z-10 flex flex-col items-center justify-center text-center">
+          <div class="flex size-11 items-center justify-center rounded-2xl bg-black/40 ring-1 ring-white/15">
+            <span class="text-title-medium font-black tracking-widest text-white drop-shadow">
+              {{ channelInitials }}
+            </span>
+          </div>
+        </div>
       </div>
 
       <!-- Decorative overlay control: `tabindex="-1"` so the remote walks
            channels and not two stops per card. The favourite is reachable
            from the player and the channel row instead. -->
       <span
-        class="absolute right-1 top-1 grid size-6 cursor-pointer place-items-center rounded-full bg-black/60 transition-opacity hover:bg-black/80 group-focus-visible:opacity-100 group-hover:opacity-100"
+        class="absolute right-2 top-2 grid size-7 cursor-pointer place-items-center rounded-full bg-black/60 shadow transition-colors hover:bg-black/80 group-focus-visible:opacity-100 group-hover:opacity-100"
         :class="fav ? 'opacity-100' : 'opacity-0'"
         role="button"
         tabindex="-1"
         :aria-label="fav ? $t('Remove from favorites') : $t('Add to favorites')"
         @click.stop.prevent="emit('toggleFavorite', channel)"
       >
-        <v-icon :icon="mdiStar" size="14" :class="fav ? 'text-amber-400' : 'text-white/70'" />
+        <v-icon :icon="mdiStar" size="15" :class="fav ? 'text-amber-400' : 'text-white/70'" />
       </span>
 
-      <div class="absolute inset-0 grid place-items-center bg-black/35 opacity-0 transition-opacity duration-150 group-focus-visible:opacity-100 group-hover:opacity-100">
-        <div class="grid size-9 place-items-center rounded-full bg-primary shadow-lg shadow-primary/40">
-          <v-icon :icon="mdiPlay" size="20" class="ml-0.5 text-on-primary" />
+      <div class="absolute inset-0 grid place-items-center opacity-0 transition-opacity duration-200 group-focus-visible:opacity-100 group-hover:opacity-100">
+        <div class="grid size-11 place-items-center rounded-full bg-primary shadow-lg shadow-primary/40 ring-2 ring-white/20">
+          <v-icon :icon="mdiPlay" size="22" class="ml-0.5 text-on-primary" />
         </div>
       </div>
     </div>
 
-    <div class="flex min-w-0 flex-1 flex-col px-2.5 pb-2 pt-1.5">
-      <!-- One quiet row for status. A red pill on every one of five
-           thousand cards is not information, it is texture — the dot says
-           the same thing in a tenth of the ink, and the quality badge
-           beside it is what actually distinguishes two rows. -->
-      <div class="flex items-center gap-1.5">
-        <span class="size-1.5 shrink-0 rounded-full bg-red-500" aria-hidden="true" />
-        <span class="text-[9px] font-semibold uppercase tracking-widest text-white/40">
-          {{ $t('Live') }}
-        </span>
-        <span
-          v-if="quality"
-          class="ml-auto rounded bg-white/8 px-1 text-[9px] font-bold tracking-wide text-white/55"
-        >{{ quality }}</span>
-      </div>
-
-      <h3 class="truncate text-body-small font-semibold leading-tight" :title="displayName">
+    <div class="flex flex-1 flex-col gap-1 px-3 py-2.5">
+      <h3 class="line-clamp-1 text-body-medium font-semibold leading-snug" :title="displayName">
         {{ displayName }}
       </h3>
 
-      <p v-if="subtitle" class="truncate text-[10px] leading-tight text-white/35">
-        {{ subtitle }}
-      </p>
-
-      <!-- The guide, reduced to the only part of it that reads at this
-           size: how far through the programme we are. No title, no
-           clock, no container when there is no guide at all. -->
-      <div v-if="nowProgram" class="mt-1.5 h-0.5 w-full overflow-hidden rounded-full bg-white/8">
-        <div class="h-full rounded-full bg-primary/70" :style="{ width: `${epgProgress}%` }" />
+      <div class="flex items-center gap-1 text-label-small text-white/45">
+        <span v-if="subtitle" class="line-clamp-1">{{ subtitle }}</span>
       </div>
+
+      <template v-if="nowProgram">
+        <p class="mt-0.5 line-clamp-1 text-label-small font-medium text-primary/80">
+          {{ nowProgram.title }}
+        </p>
+        <div class="mt-1">
+          <div class="h-0.5 w-full overflow-hidden rounded-full bg-white/8">
+            <!-- scaleX, not width — see LiveChannelRow for why. -->
+            <div
+              class="h-full w-full origin-left rounded-full bg-primary/70 transition-transform duration-1000 ease-linear"
+              :style="{ transform: `scaleX(${epgProgress / 100})` }"
+            />
+          </div>
+        </div>
+      </template>
     </div>
   </button>
 </template>

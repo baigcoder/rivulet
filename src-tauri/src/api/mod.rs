@@ -209,6 +209,7 @@ pub fn build_router(state: ApiState) -> Router {
         .route("/api/premium-tv/channels/:id", get(routes_premium::channel))
         .route("/api/premium-tv/channels/:id/epg", get(routes_premium::epg))
         .route("/api/premium-tv/channels/:id/play", post(routes_premium::play))
+        .route("/api/premium-tv/channels/:id/qualities", get(routes_premium::quality_variants))
         // POST, not GET, because the id list is a request body: a page of
         // 60 channel ids does not fit a query string that every proxy and
         // log truncates at some length of its own choosing.

@@ -309,6 +309,9 @@ struct XtreamStream {
     epg_channel_id: Option<String>,
     #[serde(default)]
     category_id: Option<String>,
+    /// Xtream panels mark adult streams with `"is_adult": "1"` or `"is_adult": 1`.
+    #[serde(default, rename = "is_adult")]
+    is_adult: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -536,7 +539,14 @@ impl IPTVProvider for XtreamAdapter {
                 // A panel's lineup contains section dividers and escaped
                 // names as well as channels; `None` means the row was
                 // furniture, not a channel (see `premium::names`).
-                let name = s.name.as_deref().and_then(names::clean_channel_name)?;
+                let raw_name = s.name.as_deref()?;
+                let name = names::clean_channel_name(raw_name)?;
+                let quality = names::detect_quality(raw_name);
+                let is_adult = s.is_adult.as_ref().map(|v| match v {
+                    serde_json::Value::Number(n) => n.as_u64().unwrap_or(0) != 0,
+                    serde_json::Value::String(s) => s == "1",
+                    _ => false,
+                }).unwrap_or(false);
                 Some((
                     s.num,
                     IPTVChannel {
@@ -552,6 +562,8 @@ impl IPTVProvider for XtreamAdapter {
                         user_agent: None,
                         referer: None,
                         stream_url: None,
+                        quality,
+                        is_adult,
                         is_favorite: false,
                     },
                 ))
@@ -580,12 +592,26 @@ impl IPTVProvider for XtreamAdapter {
             .iter()
             .map(|c| (c.id.as_str(), c.name.as_str()))
             .collect();
+        // Build a set of category ids whose names indicate adult content.
+        let adult_cat_ids: std::collections::HashSet<&str> = categories
+            .iter()
+            .filter(|c| names::is_adult_category(&c.name))
+            .map(|c| c.id.as_str())
+            .collect();
         for ch in &mut channels {
             ch.category_name = ch
                 .category_id
                 .as_deref()
                 .and_then(|id| names.get(id))
                 .map(|s| s.to_string());
+            // Mark as adult if the Xtream API said so OR the category name indicates it.
+            if !ch.is_adult {
+                ch.is_adult = ch
+                    .category_id
+                    .as_deref()
+                    .map(|id| adult_cat_ids.contains(id))
+                    .unwrap_or(false);
+            }
         }
         Ok(Catalog { categories, channels })
     }
@@ -806,6 +832,7 @@ mod tests {
             stream_icon: None,
             epg_channel_id: None,
             category_id: None,
+            is_adult: None,
         };
         let movie = XtreamStream {
             stream_type: Some("movie".into()),

@@ -328,6 +328,12 @@ export function videoEngine(video: HTMLVideoElement): PlayerEngine {
     // warn wrongly.
     'silent': () => 'webkitAudioDecodedByteCount' in video
       && !(video as unknown as { webkitAudioDecodedByteCount: number }).webkitAudioDecodedByteCount,
+    // Video dimensions for the resolution badge — Chromium/Safari expose the
+    // decoded size once the first frame is painted.
+    'video-params': () => ({
+      w: video.videoWidth || 0,
+      h: video.videoHeight || 0,
+    }),
   }
 
   function setProp(name: string, value: unknown) {
