@@ -258,6 +258,19 @@ impl PremiumRepository {
         Ok(())
     }
 
+    pub fn clear_recent(&self, connection_id: &str) -> Result<(), PremiumError> {
+        let conn = self
+            .state
+            .db
+            .lock()
+            .map_err(|e| PremiumError::Database(format!("lock: {e}")))?;
+        conn.execute(
+            "DELETE FROM iptv_premium_recent WHERE connection_id=?1",
+            rusqlite::params![connection_id],
+        )?;
+        Ok(())
+    }
+
     pub fn favorite_channels(
         &self,
         connection_id: &str,

@@ -304,6 +304,10 @@ export function liveAddRecent(sourceId: string, channelId: string): Promise<void
   return invoke<void>('live_add_recent', { sourceId, channelId })
 }
 
+export function liveClearRecent(sourceId: string): Promise<void> {
+  return invoke<void>('live_clear_recent', { sourceId })
+}
+
 // ── EPG ────────────────────────────────────────────────────────────
 
 /**

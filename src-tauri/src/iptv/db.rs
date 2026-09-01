@@ -1139,6 +1139,12 @@ pub fn upsert_recent(
     Ok(())
 }
 
+pub fn clear_recent(conn: &Connection, source_id: &str) -> Result<(), IptvError> {
+    conn.execute("DELETE FROM iptv_recent WHERE source_id=?1", params![source_id])
+        .map_err(|e| IptvError::Database(e.to_string()))?;
+    Ok(())
+}
+
 pub fn recent_channels(
     conn: &Connection,
     source_id: &str,

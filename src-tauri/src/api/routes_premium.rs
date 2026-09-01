@@ -674,6 +674,16 @@ pub async fn add_recent(
     Ok(StatusCode::NO_CONTENT)
 }
 
+pub async fn clear_recent(
+    State(state): State<ApiState>,
+    headers: axum::http::HeaderMap,
+) -> Result<StatusCode, super::ApiError> {
+    guard(&state, &headers)?;
+    let cid = active_connection(&state)?;
+    repo(&state).clear_recent(&cid)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 // ── The redirector ─────────────────────────────────────────────────
 
 /// `/premium-stream/:token` — the only route a player opens, and the

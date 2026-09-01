@@ -218,6 +218,7 @@ pub fn build_router(state: ApiState) -> Router {
         .route("/api/premium-tv/favorites/:id", post(routes_premium::toggle_favorite))
         .route("/api/premium-tv/recent", get(routes_premium::recent))
         .route("/api/premium-tv/recent", post(routes_premium::add_recent))
+        .route("/api/premium-tv/recent", delete(routes_premium::clear_recent))
         .route("/premium-stream/:token", get(routes_premium::stream_redirect))
         .layer(cors)
         .with_state(state)

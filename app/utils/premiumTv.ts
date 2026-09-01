@@ -310,6 +310,10 @@ export const premiumApi = {
     return request<void>('POST', '/api/premium-tv/recent', { body: { channelId } })
   },
 
+  clearRecent(): Promise<void> {
+    return request<void>('DELETE', '/api/premium-tv/recent')
+  },
+
   /**
    * Find quality variants for a channel — channels with a similar base
    * name but different quality labels (e.g. "Sky Sports HD" and "Sky

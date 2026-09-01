@@ -9,6 +9,7 @@ import {
   liveAddRecent,
   liveCancelImport,
   liveChannelEpgBatch,
+  liveClearRecent,
   liveDashboard,
   liveFavorites,
   liveGetLiveEpg,
@@ -432,6 +433,17 @@ export const useLiveTvStore = defineStore('liveTv', () => {
     catch {
       return []
     }
+  }
+
+  async function clearRecent(): Promise<void> {
+    const id = activeSourceId.value
+    if (!id)
+      return
+    try {
+      await liveClearRecent(id)
+      recentChannelIds.value = []
+    }
+    catch { /* ignore */ }
   }
 
   // ── EPG ─────────────────────────────────────────────────────────
@@ -878,6 +890,7 @@ export const useLiveTvStore = defineStore('liveTv', () => {
     loadFavorites,
     addRecent,
     loadRecent,
+    clearRecent,
     channelFavKey,
 
     // EPG

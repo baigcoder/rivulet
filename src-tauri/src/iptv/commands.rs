@@ -391,6 +391,15 @@ pub async fn live_add_recent(
     db::upsert_recent(&conn, &source_id, &channel_id).map_err(map_err)
 }
 
+#[tauri::command]
+pub async fn live_clear_recent(
+    state: State<'_, IptvState>,
+    source_id: String,
+) -> Result<(), String> {
+    let conn = state.db.lock().map_err(map_err)?;
+    db::clear_recent(&conn, &source_id).map_err(map_err)
+}
+
 // ── EPG (Free TV: iptv-org) ────────────────────────────────────────
 
 /// Per-channel EPG is a no-op for Free TV. Free TV uses the iptv-org

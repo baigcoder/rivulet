@@ -604,6 +604,14 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
     catch { /* */ }
   }
 
+  async function clearRecent(): Promise<void> {
+    try {
+      await premiumApi.clearRecent()
+      recent.value = []
+    }
+    catch { /* */ }
+  }
+
   // ── View selection ───────────────────────────────────────────
 
   function setView(next: PremiumView): void {
@@ -709,6 +717,7 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
     loadFavorites,
     addRecent,
     loadRecent,
+    clearRecent,
     // player
     player,
     playerError,

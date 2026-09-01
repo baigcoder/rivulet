@@ -24,7 +24,7 @@
  */
 import type { PremiumView } from '~/stores/premiumTv'
 import type { IPTVChannel } from '~/types/premium'
-import { mdiArrowLeft, mdiClose, mdiLogout, mdiMagnify, mdiRefresh, mdiTelevisionOff, mdiTune } from '@mdi/js'
+import { mdiArrowLeft, mdiClose, mdiDeleteSweepOutline, mdiLogout, mdiMagnify, mdiRefresh, mdiTelevisionOff, mdiTune } from '@mdi/js'
 import { computed, onMounted, ref } from 'vue'
 
 /**
@@ -237,6 +237,15 @@ async function disconnect(): Promise<void> {
           · {{ syncedAgo }}
         </span>
 
+        <v-btn
+          v-if="premium.view === 'recent' && premium.recent.length"
+          :icon="mdiDeleteSweepOutline"
+          variant="text"
+          size="small"
+          :aria-label="$t('Clear recently watched')"
+          :title="$t('Clear recently watched')"
+          @click="premium.clearRecent()"
+        />
         <v-btn
           :icon="mdiRefresh"
           variant="text"

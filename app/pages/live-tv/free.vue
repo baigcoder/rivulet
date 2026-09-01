@@ -26,7 +26,7 @@
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import type { LiveView } from '~/stores/liveTv'
 import type { LiveChannel } from '~/utils/iptv'
-import { mdiClose, mdiMagnify, mdiRefresh, mdiTelevisionOff, mdiTune } from '@mdi/js'
+import { mdiClose, mdiDeleteSweepOutline, mdiMagnify, mdiRefresh, mdiTelevisionOff, mdiTune } from '@mdi/js'
 import { listen } from '@tauri-apps/api/event'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
@@ -220,6 +220,16 @@ watch(() => route.query.category, category => {
         <span class="shrink-0 text-label-small tabular-nums opacity-45">
           {{ $t('{count} channels', { count: count.toLocaleString() }) }}
         </span>
+        <v-btn
+          v-if="liveTv.view === 'recent' && liveTv.recentChannels.length"
+          :icon="mdiDeleteSweepOutline"
+          variant="text"
+          size="x-small"
+          class="shrink-0"
+          :aria-label="$t('Clear recently watched')"
+          :title="$t('Clear recently watched')"
+          @click="liveTv.clearRecent()"
+        />
         <v-btn
           v-if="liveTv.view === 'category' || liveTv.searchQuery"
           :icon="mdiClose"

@@ -743,6 +743,7 @@ pub fn run() {
             iptv::commands::live_favorites,
             iptv::commands::live_recent,
             iptv::commands::live_add_recent,
+            iptv::commands::live_clear_recent,
             iptv::commands::live_get_live_epg,
             iptv::commands::live_channel_epg_batch,
             iptv::commands::live_cancel_import,
