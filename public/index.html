@@ -1030,22 +1030,58 @@
 <!-- ═══════════════════════════════ LIVE TV ════════════════════════════ -->
 <section class="pad" id="live-tv">
   <div class="wrap">
-    <div class="reveal">
-      <hr class="trace" style="width: 56px; margin-bottom: 26px" />
+    <div class="sec-head reveal">
+      <hr class="trace" />
       <span class="label" style="color: var(--warm);">Live TV</span>
       <h2 class="h2">Free and premium channels, built in</h2>
       <p class="lede measure">
-        Two IPTV backends share one screen — a free tier powered by iptv-org
-        and a premium tier that connects to your own Xtream-Codes or M3U provider.
-        Both share the same EPG, favourites and playback chrome.
+        Two IPTV backends share one screen — a free tier powered by iptv-org and a
+        premium tier that connects to your own Xtream-Codes or M3U provider. Both share
+        the same EPG, favourites and playback chrome.
       </p>
-      <div class="chips" style="margin-top: 32px">
-        <span class="chip">Free TV · iptv-org</span>
-        <span class="chip">Premium TV · Xtream / M3U</span>
-        <span class="chip">EPG (XMLTV)</span>
-        <span class="chip">Favourites</span>
-        <span class="chip">Country · Language filters</span>
+    </div>
+
+    <div class="ruled reveal" style="grid-template-columns: repeat(2, 1fr); gap: 20px; margin-bottom: 32px;">
+      <div style="background: var(--surface); padding: 28px 24px; border: 1px solid var(--rule); border-radius: var(--r-lg);">
+        <div style="width: 40px; height: 40px; border-radius: 8px; background: rgba(111,227,255,.1); display: grid; place-items: center; margin-bottom: 16px; color: var(--accent);">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        </div>
+        <h3 style="font-size: 1rem; font-weight: 600; margin-bottom: 8px; color: var(--on-ground);">Free TV</h3>
+        <p style="font-size: .84375rem; color: var(--on-muted); line-height: 1.6; margin-bottom: 12px;">
+          8 000+ channels from iptv-org, grouped by country and language. No account needed — just open and watch.
+        </p>
+        <ul style="list-style: none; padding: 0; margin: 0; font-size: .8125rem; color: var(--on-dim); line-height: 1.8;">
+          <li>Country and language filters</li>
+          <li>Category browsing</li>
+          <li>Favourite channels</li>
+          <li>Channel search</li>
+        </ul>
       </div>
+
+      <div style="background: var(--surface); padding: 28px 24px; border: 1px solid var(--rule); border-radius: var(--r-lg);">
+        <div style="width: 40px; height: 40px; border-radius: 8px; background: rgba(255,183,77,.1); display: grid; place-items: center; margin-bottom: 16px; color: var(--warm);">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="15" rx="2" ry="2"/><polyline points="17 2 12 7 7 2"/></svg>
+        </div>
+        <h3 style="font-size: 1rem; font-weight: 600; margin-bottom: 8px; color: var(--on-ground);">Premium TV</h3>
+        <p style="font-size: .84375rem; color: var(--on-muted); line-height: 1.6; margin-bottom: 12px;">
+          Connect your own Xtream-Codes provider or paste an M3U playlist URL. Categories and channel count come from your account.
+        </p>
+        <ul style="list-style: none; padding: 0; margin: 0; font-size: .8125rem; color: var(--on-dim); line-height: 1.8;">
+          <li>Xtream-Codes username / password</li>
+          <li>M3U / M3U8 playlist URL</li>
+          <li>EPG (XMLTV) per channel</li>
+          <li>Favourites across both tiers</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="chips reveal" style="--i: 1">
+      <span class="chip">iptv-org</span>
+      <span class="chip">Xtream-Codes</span>
+      <span class="chip">M3U / M3U8</span>
+      <span class="chip">EPG (XMLTV)</span>
+      <span class="chip">Favourites</span>
+      <span class="chip">Search</span>
     </div>
   </div>
 </section>
