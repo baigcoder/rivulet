@@ -97,6 +97,7 @@ function message(e: unknown): string {
   // ("Failed to fetch") tells a user nothing.
   if (e instanceof PremiumApiError)
     return e.message
+  console.error('[premium-tv] non-API error:', e)
   return $t('Premium TV is not responding. Try restarting the app.')
 }
 

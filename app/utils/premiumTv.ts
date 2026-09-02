@@ -176,6 +176,11 @@ async function request<T>(
 // ── API surface ──────────────────────────────────────────────
 
 export const premiumApi = {
+  /** Lightweight check that the API server is reachable. No auth. */
+  health(): Promise<string> {
+    return fetch(`${API_BASE}/api/premium-tv/health`).then(r => r.text())
+  },
+
   /** Who is connected and how fresh their catalog is. */
   status(): Promise<PremiumStatus> {
     return request('GET', '/api/premium-tv/status')

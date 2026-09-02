@@ -177,6 +177,7 @@ fn is_local_app_origin(origin: &HeaderValue) -> bool {
     };
     origin == "tauri://localhost"
         || origin == "https://tauri.localhost"
+        || origin == "http://tauri.localhost"
         || origin == "http://localhost"
         || origin.starts_with("http://localhost:")
         || origin == "http://127.0.0.1"
@@ -194,6 +195,7 @@ pub fn build_router(state: ApiState) -> Router {
     // axum 0.7 path syntax (`:id`). 0.8 changed it to `{id}`; a bump
     // that misses these silently stops matching.
     Router::new()
+        .route("/api/premium-tv/health", get(|| async { "ok" }))
         .route("/api/premium-tv/status", get(routes_premium::status))
         .route("/api/premium-tv/account", get(routes_premium::account))
         .route("/api/premium-tv/connect", post(routes_premium::connect))

@@ -933,9 +933,14 @@ pub fn run() {
             // unwritable; app_data_dir is the per-app private dir and
             // always available. Set the env var that crypto.rs and
             // auth.rs read so they use it instead of temp_dir().
-            if std::env::var("RIVULET_APP_CACHE").is_err() {
-                std::env::set_var("RIVULET_APP_CACHE", &app_data);
-            }
+            let cache_dir = std::env::var("RIVULET_APP_CACHE")
+                .unwrap_or_else(|_| {
+                    std::env::set_var("RIVULET_APP_CACHE", &app_data);
+                    app_data.to_string_lossy().into_owned()
+                });
+            eprintln!("[premium] app_data={}", app_data.display());
+            eprintln!("[premium] RIVULET_APP_CACHE={cache_dir}");
+            eprintln!("[premium] db_path={}", premium_db_path.display());
             match PremiumState::open(&premium_db_path) {
                 Ok(state) => {
                     let premium = Arc::new(state);

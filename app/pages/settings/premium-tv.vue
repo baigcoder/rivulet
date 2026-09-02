@@ -6,7 +6,7 @@ import {
   mdiShieldCheckOutline,
   mdiShieldOffOutline,
 } from '@mdi/js'
-import { pushEntitlement } from '~/utils/premiumTv'
+import { pushEntitlement, premiumApi } from '~/utils/premiumTv'
 
 const settings = useSettingsStore()
 const premium = usePremiumTvStore()
@@ -18,6 +18,10 @@ const UNLIMITED_DAYS = 100 * 365
 const statusLoaded = ref(false)
 
 onMounted(async () => {
+  // Quick health check — tells us whether the API server started at all.
+  premiumApi.health()
+    .then(() => console.log('[premium-tv] API server is up'))
+    .catch((e: unknown) => console.error('[premium-tv] API server unreachable:', e))
   try {
     await premium.loadStatus()
   }
