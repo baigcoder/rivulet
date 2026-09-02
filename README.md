@@ -378,29 +378,68 @@ bundle's `Info.plist` and can't change it at runtime, so the `stremio://` switch
 
 ## Live TV
 
-Rivulet includes a built-in live TV player with two modes:
+Rivulet includes a built-in live TV player with two modes — both reachable from the *Live TV*
+room in the sidebar.
 
-**Free TV** uses the [iptv-org](https://github.com/iptv-org/iptv) public channel list — no
-account, no configuration. Browse by country, search by name, star your favourites, and check
-what's on with the electronic programme guide. Free TV channels are imported automatically on first
-open.
+### Free TV
 
-**Premium TV** connects to your own IPTV provider. Paste a provider link (Xtream Codes panel URL
-or M3U playlist) under *Settings → Premium TV → Login via IPTV*, and Rivulet imports the live
-channels with full EPG, categories and account status. Providers that speak the Xtream Codes
-panel API get automatic expiry tracking and connection-limit warnings.
+Uses the [iptv-org](https://github.com/iptv-org/iptv) public channel list — no account, no
+configuration. Channels are imported automatically on first open via a streaming M3U parser that
+never buffers the full playlist.
 
-| Feature | Free TV | Premium TV |
-| --- | --- | --- |
-| **Source** | iptv-org public list | Your own IPTV provider |
-| **Setup** | Automatic | Settings → Premium TV → Login via IPTV |
-| **EPG** | iptv-org programme guide | Provider's own EPG |
-| **Favourites** | Yes | Yes |
-| **Categories** | By country | Provider's categories |
-| **Account info** | N/A | Expiry, active connections |
+| Feature | Detail |
+| --- | --- |
+| **Channels** | 8 000+ from iptv-org, grouped by country and language |
+| **Browsing** | Grid or list view, four views (All, Favourites, Recently watched, Category) |
+| **Filters** | Country, language, category (Sports, News, Entertainment, Kids, Movies & Series, Music, Documentary, Religious, General) |
+| **Search** | Server-side, debounced (350ms), cursor-paginated |
+| **Favourites** | Star any channel, stored server-side, capped at 200 |
+| **Recently watched** | Last 20 channels per source, with clear option |
+| **EPG** | iptv-org programme guide — 7-day disk cache, lazy per-channel loading, displayed as "now playing" + progress bar on cards |
+| **TV Guide** | Cable-style horizontal time grid (4-hour window), sticky channel column, red "now" line, auto-scrolls to current time |
+| **EPG drawer** | Slide-in panel: "On Now" with progress, "Catch up" (past programs), "Upcoming" programs |
+| **Channel health** | Lazy probe (4 concurrent, 5-second timeout), offline channels dimmed, session-only verdicts |
+| **Auto-failover** | Up to 5 consecutive dead channels before giving up; `.m3u8` to `.ts` protocol fallback on first failure |
+| **Stream proxy** | Local HTTP proxy on `127.0.0.1:3031`, rewrites HLS manifests, adds CORS headers, forwards `User-Agent` and `Referer` from M3U `#EXTVLCOPT` tags |
 
-Both modes play through the same player component, and both are reachable from the *Live TV* room
-in the sidebar.
+### Premium TV
+
+Connects to your own IPTV provider — paste a Xtream Codes panel URL or M3U playlist under
+*Settings → Premium TV → Login via IPTV*. Provider credentials never leave the Rust side; the
+player always talks to a local proxy with a signed redirector token (valid ~30 seconds).
+
+| Feature | Detail |
+| --- | --- |
+| **Provider types** | Xtream Codes (server URL + username + password) or M3U/M3U+ (playlist URL + optional account name) |
+| **Auto-detect** | Parses `player_api.php`, `playlist.php`, `get.php` URLs to extract credentials; strips `[text](url)` formatting from pasted links |
+| **Account status** | Provider type, username, expiry date (Xtream), active/max connections (Xtream), account name, syncing indicator |
+| **Expiry tracking** | Automatic for Xtream providers; Unix timestamp parsed and displayed |
+| **Connection limit** | `activeConnections / maxConnections` displayed; `atConnectionLimit` computed when all slots are used |
+| **Browsing** | Same layout as Free TV — grid/list, four views, category rail, server-side pagination (60 per page) |
+| **Search** | Debounced (300ms), server-side, abort-controller for race-safe switching |
+| **EPG** | Provider's own EPG — now/next batch endpoint for grid cards, full guide per-channel (12-program limit, session-cached) |
+| **Favourites** | Server-side, `POST /favorites/:id`, authoritative state returned |
+| **Quality variants** | Finds channels with similar base names but different quality labels (e.g. "Sky Sports HD" and "Sky Sports 4K"), picker in player |
+| **Adult filter** | "Hide adult channels" toggle — provider-flagged 18+ or category-name detected |
+| **Subscription** | Two tiers: `free` and `premium` (30-day trial or unlimited activation) |
+| **Reconnect** | Exponential backoff (2s, 4s, 8s, 20s cap), max 4 attempts, accounts for provider connection slot release timing |
+
+### The Live TV Player
+
+One component, one set of controls, both modes. The player fills the full screen with VOD chrome
+hidden (no seek bar, rewind, chapters, end-of-playback).
+
+| Feature | Detail |
+| --- | --- |
+| **Channel zap** | Arrow keys, Page Up/Down, ChannelUp/ChannelDown — in-process via `router.replace`, no component remount |
+| **QuickZap drawer** | Slide-in from left, instant search, channel list with logos, "Z" keyboard shortcut |
+| **HUD overlay** | Auto-hide after idle (1.5s touch, 2.8s mouse), force-shown on drawer open or error |
+| **Centre tap** | Play/pause toggle with animated flash (touch: first tap shows chrome, second toggles) |
+| **Bottom bar** | Play/pause, prev/next channel, volume + mute, QuickZap toggle, quality picker, favourite star, fullscreen |
+| **Mini player** | Draggable picture-in-picture with LIVE indicator, EPG "now" display, expand/close |
+| **Fullscreen** | `requestFullscreen` / `exitFullscreen` |
+| **Error handling** | Modal with retry, next channel, and back buttons |
+| **Buffering** | Indicator in the control bar |
 
 <p align="right"><a href="#readme-top">&#9650; back to top</a></p>
 
