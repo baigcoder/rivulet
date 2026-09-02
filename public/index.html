@@ -729,13 +729,46 @@
     }
     @media (max-width: 680px) {
       .nav-links a:not(.btn) { display: none; }
+      .nav-links .btn { display: none; }
       .hero { padding-top: 116px; }
-      .ruled, .defs { grid-template-columns: 1fr; }
+      .ruled, .defs { grid-template-columns: 1fr !important; }
       .index { grid-template-columns: 1fr; }
       .facts { display: block; }
       .facts li { padding: 10px 0; border-top: 1px solid var(--rule-soft); }
       .facts li + li { padding-left: 0; border-left: 0; }
       .foot-grid { grid-template-columns: 1fr; gap: 32px; }
+      .h2 { max-width: 100%; }
+      .hero h1 { max-width: 100%; }
+      .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+      .shot img { width: 100%; height: auto; }
+      .split-media img { width: 100%; height: auto; }
+      .chips { flex-wrap: wrap; }
+      .pad { padding: clamp(48px, 8vw, 80px) 0; }
+
+      /* Hamburger menu */
+      .nav-links { display: none; }
+      .nav-links.open {
+        display: flex; flex-direction: column; align-items: stretch;
+        position: fixed; top: 58px; left: 0; right: 0; bottom: 0;
+        background: rgba(var(--ground-rgb), .97);
+        backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+        padding: 24px var(--gutter); gap: 0; z-index: 199;
+        overflow-y: auto;
+      }
+      .nav-links.open a {
+        padding: 14px 0; font-size: 1rem; border-bottom: 1px solid var(--rule-soft);
+        border-radius: 0;
+      }
+      .nav-links.open .btn { margin-top: 16px; justify-content: center; }
+      .hamburger {
+        display: flex; align-items: center; justify-content: center;
+        width: 40px; height: 40px; border: none; background: none;
+        color: var(--on-ground); cursor: pointer; padding: 0;
+      }
+      .hamburger svg { width: 22px; height: 22px; }
+    }
+    @media (min-width: 681px) {
+      .hamburger { display: none; }
     }
   </style>
 </head>
@@ -746,6 +779,9 @@
     <img src="/logo.svg" alt="" />
     Rivulet
   </span>
+  <button type="button" class="hamburger" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Toggle navigation">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+  </button>
   <div class="nav-links">
     <a href="#why">Why</a>
     <a href="#modes">Modes</a>
@@ -1632,6 +1668,13 @@
     /* The buttons are a convenience; the release links in the footer are not
        generated and still work. */
   }
+</script>
+
+<script>
+  /* Close mobile nav when a link is tapped */
+  document.querySelector('.nav-links').addEventListener('click', function (e) {
+    if (e.target.tagName === 'A') this.classList.remove('open');
+  });
 </script>
 
 </body>
