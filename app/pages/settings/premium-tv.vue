@@ -73,7 +73,9 @@ async function activate(tier: 'free' | 'premium', expiresAt: number): Promise<vo
     activationMessage.value = tier === 'premium'
       ? $t('Premium TV is active. You can now connect your provider.')
       : $t('Premium TV has been deactivated.')
-    await premium.loadStatus()
+    // loadStatus populates the provider card but must not block
+    // activation — the entitlement is already set via IPC.
+    await premium.loadStatus().catch(() => {})
   }
   catch {
     activationError.value = $t('Could not activate Premium TV. Restart the app and try again.')

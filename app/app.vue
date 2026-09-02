@@ -163,7 +163,7 @@ if (legacyZoom) {
 watch(
   () => [settings.subscriptionTier, settings.subscriptionExpiresAt] as const,
   ([tier, expiresAt]) => {
-    void pushEntitlement(tier, expiresAt || null)
+    void pushEntitlement(tier, expiresAt || null).catch(() => {})
   },
   { immediate: true },
 )

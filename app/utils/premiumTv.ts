@@ -105,13 +105,10 @@ async function mintToken(): Promise<string | null> {
 export async function pushEntitlement(tier: string, expiresAtMs: number | null): Promise<void> {
   if (!isTauri())
     return
-  try {
-    await invoke('premium_set_entitlement', {
-      tier,
-      expiresAtMs: expiresAtMs && expiresAtMs > 0 ? expiresAtMs : null,
-    })
-  }
-  catch { /* the gate keeps whatever it held, which is the closed default */ }
+  await invoke('premium_set_entitlement', {
+    tier,
+    expiresAtMs: expiresAtMs && expiresAtMs > 0 ? expiresAtMs : null,
+  })
 }
 
 class PremiumApiError extends Error {

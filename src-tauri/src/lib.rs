@@ -928,6 +928,14 @@ pub fn run() {
             app.manage(entitlement.clone());
 
             let premium_db_path = app_data.join("iptv_premium.db");
+            // The credential vault and JWT key store need a writable
+            // directory. On Android the temp dir may be cleaned up or
+            // unwritable; app_data_dir is the per-app private dir and
+            // always available. Set the env var that crypto.rs and
+            // auth.rs read so they use it instead of temp_dir().
+            if std::env::var("RIVULET_APP_CACHE").is_err() {
+                std::env::set_var("RIVULET_APP_CACHE", &app_data);
+            }
             match PremiumState::open(&premium_db_path) {
                 Ok(state) => {
                     let premium = Arc::new(state);
