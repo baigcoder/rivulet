@@ -116,7 +116,7 @@ function formatExpiry(ms: number): string {
       :hint="$t('Premium TV unlocks Xtream and M3U IPTV sources with EPG, favourites and more.')"
     >
       <v-card
-        v-if="settings.isPremium"
+        v-if="premium.connected"
         rounded="xl"
         class="panel flex flex-col items-start gap-3 p-6"
       >
