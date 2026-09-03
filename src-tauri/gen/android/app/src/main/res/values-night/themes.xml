@@ -15,5 +15,6 @@
              of them ours. Pinned to the app's own ground, a slow start reads as
              the app arriving rather than as a flash of the wrong colour. -->
         <item name="android:windowBackground">@color/rivulet_ground</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
     </style>
 </resources>

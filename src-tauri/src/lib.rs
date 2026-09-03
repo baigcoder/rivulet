@@ -33,6 +33,9 @@ use crate::api::ApiState;
 )]
 mod player;
 
+/// Direct HTTP vs torrent-engine mpv cache flags.
+mod player_direct;
+
 mod iptv;
 
 /// Premium TV — separate module, separate SQLite database, separate
@@ -401,6 +404,9 @@ async fn thumbnail(
     url: String,
     at: f64,
 ) -> Result<tauri::ipc::Response, String> {
+    // Same wrap mpv uses: ffmpeg on a debrid resolver sits on each 302, and
+    // a hover would wait the same 40s the picture used to. Loopback is a no-op.
+    let url = crate::player_direct::play_url(&url, Some(crate::player_direct::STREAM_UA), None);
     let exe = ffmpeg(&app);
     tauri::async_runtime::spawn_blocking(move || {
         let out = ffmpeg_command(exe)
@@ -415,7 +421,7 @@ async fn thumbnail(
             // nothing at all without it.
             .args([
                 "-vf",
-                "scale=192:-2",
+                "scale=320:-2",
                 "-pix_fmt",
                 "yuvj420p",
                 "-f",

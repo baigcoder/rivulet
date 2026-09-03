@@ -111,13 +111,13 @@ export const useSettingsStore = defineStore('settings', () => {
   const uiScale = useLocalStorage(key('uiScale'), 1)
   /**
    * Drop the effects that cost the most frames — see `.reduce-effects` in
-   * assets/css/layers.css for exactly which. Defaults on for a television,
-   * which is the hardware that needs it: the set this was measured on took ten
-   * d-pad moves at 13fps with these effects and 23 without them.
-   * `isTv()` reads a bridge Android installs before the page loads, so it
-   * answers correctly the first time the store is built.
+   * assets/css/layers.css for exactly which. Defaults on for a television
+   * and for a phone: both paint into a WebView whose GPU is doing the page
+   * and* the picture. A computer has headroom, so it stays off there.
+   * `isTv()` reads a bridge Android installs before the page loads;
+   * `isAndroid()` is the OS itself.
    */
-  const reduceEffects = useLocalStorage(key('reduceEffects'), isTv() ?? false)
+  const reduceEffects = useLocalStorage(key('reduceEffects'), isTv() === true || isAndroid())
 
   /**
    * How much moves, and what decides it when the user hasn't said.
@@ -200,6 +200,8 @@ export const useSettingsStore = defineStore('settings', () => {
   // --- Notifications ---
   const notifyComplete = useLocalStorage(key('notifyComplete'), true)
   const notifyError = useLocalStorage(key('notifyError'), true)
+  /** OS notification (and the About copy) when GitHub has a newer Rivulet. */
+  const notifyUpdates = useLocalStorage(key('notifyUpdates'), true)
 
   // --- Parental controls ---
   const parentalEnabled = useLocalStorage(key('parentalEnabled'), false)
@@ -225,5 +227,5 @@ export const useSettingsStore = defineStore('settings', () => {
     && subscriptionExpiresAt.value > Date.now(),
   )
 
-  return { locale, theme, source, themeFromArt, colourFromPicture, customCss, uiScale, reduceEffects, motion, effectiveMotion, sources, allowTorrents, watchRegion, tmdbKey, downLimit, upLimit, wifiOnly, downloadDir, subs, resetSubs, notifyComplete, notifyError, parentalEnabled, parentalMaxRating, parentalPin, hideAdultChannels, subscriptionTier, subscriptionExpiresAt, isPremium }
+  return { locale, theme, source, themeFromArt, colourFromPicture, customCss, uiScale, reduceEffects, motion, effectiveMotion, sources, allowTorrents, watchRegion, tmdbKey, downLimit, upLimit, wifiOnly, downloadDir, subs, resetSubs, notifyComplete, notifyError, notifyUpdates, parentalEnabled, parentalMaxRating, parentalPin, hideAdultChannels, subscriptionTier, subscriptionExpiresAt, isPremium }
 })

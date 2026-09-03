@@ -45,6 +45,18 @@ assert.match(
   /containIntrinsicSize/,
   'content-visibility needs a size to reserve, or the scrollbar jumps as cards are drawn',
 )
+assert.match(
+  card,
+  /finger\.value/,
+  'a phone tap must not count as hover: that turns content-visibility off and mounts the overlay',
+)
+
+const layout = read('app/components/MediaLayout.vue')
+assert.match(
+  layout,
+  /minmax\(min\(/,
+  'the browse grid must shrink below cardWidth so a phone gets two posters, not one',
+)
 
 // The hover/focus ring is inset on the poster. A box-shadow or outline on the
 // wrapping <a> boxed the title under the art — the caption is not the poster.
@@ -209,14 +221,31 @@ assert.match(
 // The key is built by `key()` from app/brand now rather than spelled out, so the
 // prefix moves with the product name and this asserts the shape, not the string.
 assert.match(settings, /reduceEffects = useLocalStorage\(key\('reduceEffects'\)/, 'the setting is stored')
-assert.match(settings, /key\('reduceEffects'\), isTv\(\) \?\? false/, 'a television gets it on by default')
+assert.match(settings, /isTv\(\) === true \|\| isAndroid\(\)/, 'a television or a phone gets it on by default')
 assert.match(settings, /return \{[^}]*reduceEffects/, 'the store must expose it')
 assert.match(
   app,
   /classList\.toggle\('reduce-effects', settings\.reduceEffects\)/,
   'the setting must put the class on <html>, which is what the CSS keys off',
 )
+assert.match(
+  app,
+  /classList\.toggle\('android', isAndroid\(\)\)/,
+  'a phone WebView must be marked so CSS can drop backdrop-filter without the switch',
+)
+assert.match(
+  layers,
+  /html\.android[\s\S]{0,280}?backdrop-filter:\s*none/,
+  'Android must not run backdrop-filter: WebView readback is the lag',
+)
 assert.match(appearance, /v-model="settings\.reduceEffects"/, 'Appearance needs the switch')
+
+const activity = read(
+  'src-tauri/gen/android/app/src/main/java/io/github/rivulet/rivulet/MainActivity.kt',
+)
+assert.match(activity, /offscreenPreRaster/, 'the WebView must raster tiles before they scroll on')
+assert.match(activity, /LAYER_TYPE_HARDWARE/, 'and stay on the GPU, not a software copy')
+assert.match(activity, /OVER_SCROLL_NEVER/, 'overscroll glow is a full-surface stretch on a phone')
 
 /* --- Motion ----------------------------------------------------------------
 

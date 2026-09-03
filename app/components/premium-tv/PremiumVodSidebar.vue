@@ -11,6 +11,7 @@ const props = defineProps<{
   categories: VodCategory[]
   selectedId: string
   kind: 'movie' | 'series'
+  bare?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -18,7 +19,8 @@ const emit = defineEmits<{
 }>()
 
 const filter = ref('')
-const groupsOpen = ref(false)
+const groupsOpen = ref(props.bare === true)
+const groupsShown = computed(() => props.bare || groupsOpen.value)
 
 const shown = computed(() => {
   const q = filter.value.trim().toLowerCase()
@@ -47,8 +49,9 @@ const shown = computed(() => {
       </button>
     </div>
 
-    <div v-if="categories.length > 0" class="flex min-h-0 flex-1 flex-col gap-2 border-t border-outline/20 pt-2">
+    <div v-if="categories.length > 0" class="flex min-h-0 flex-1 flex-col gap-2" :class="bare ? '' : 'border-t border-outline/20 pt-2'">
       <button
+        v-if="!bare"
         type="button"
         class="flex items-center gap-2 px-1.5 py-1 text-label-medium font-medium opacity-55 hover:opacity-100 focus-visible:opacity-100 transition-opacity"
         :aria-expanded="groupsOpen"
@@ -59,7 +62,7 @@ const shown = computed(() => {
         <span class="tabular-nums opacity-70">{{ categories.length }}</span>
       </button>
 
-      <template v-if="groupsOpen">
+      <template v-if="groupsShown">
         <search-field
           v-model="filter"
           :placeholder="$t('Find a category…')"

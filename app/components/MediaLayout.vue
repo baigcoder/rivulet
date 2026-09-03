@@ -41,7 +41,10 @@ useEventListener(scroller, 'scroll', () => {
 onActivated(() => scroller.value?.scrollTo({ top: at }))
 
 const gridStyle = computed(() => ({
-  gridTemplateColumns: `repeat(auto-fill, minmax(${ui.cardWidth}px, 1fr))`,
+  // `min(card, 50% - gap/2)` so a phone never gets one poster filling the
+  // row — 170px minmax on a 360px screen is exactly that. Desktop still
+  // sizes to the user's card width.
+  gridTemplateColumns: `repeat(auto-fill, minmax(min(${ui.cardWidth}px, calc(50% - 8px)), 1fr))`,
 }))
 
 // Placeholders only while the first page is in flight — later pages append below

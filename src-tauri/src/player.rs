@@ -21,6 +21,7 @@ use std::sync::Mutex;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
+use crate::player_direct;
 use crate::player_socket;
 
 // ----------------------------------------------------------------------------
@@ -330,6 +331,11 @@ pub fn player_start(
 		));
 	}
 
+	let ua = user_agent.filter(|s| !s.is_empty());
+	let rf = referer.filter(|s| !s.is_empty());
+	let url = player_direct::play_url(&url, ua.as_deref(), rf.as_deref());
+	let engine = player_direct::is_engine_stream(&url);
+
 	let parent = x11_window_id(&window)?;
 
 	let mut player = state.0.lock().unwrap();
@@ -378,13 +384,12 @@ pub fn player_start(
 		.arg("--cache=yes")
 		// Start the picture as soon as a frame is decoded — do not sit on
 		// "Buffering" while lavf probes a remote HTTP file for several seconds.
-		.arg("--cache-pause-initial=no")
-		.arg("--cache-pause-wait=0.4")
-		.arg("--cache-secs=20")
-		.arg("--demuxer-readahead-secs=5")
-		.arg("--demuxer-lavf-analyzeduration=0.4")
-		.arg("--demuxer-lavf-probesize=524288")
-		.arg("--stream-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=5")
+		.arg("--cache-pause-initial=no");
+	for flag in player_direct::cache_cli(engine) {
+		command.arg(*flag);
+	}
+	command
+		.arg(format!("--stream-lavf-o={}", player_direct::stream_lavf_o(engine)))
 		.arg("--keep-open=no")
 		.arg("--no-terminal")
 		.arg("--msg-level=all=warn")
@@ -399,12 +404,10 @@ pub fn player_start(
 		// the *system's*, and inheriting that kills it on the first symbol its
 		// own dependencies have and the bundle's copies don't.
 		.env_remove("LD_LIBRARY_PATH");
-	// Per-stream User-Agent / Referer, forwarded as mpv flags so the
-	// upstream sees the same headers it would see through the IPTV proxy.
-	if let Some(ua) = user_agent.filter(|s| !s.is_empty()) {
+	if let Some(ua) = ua.as_deref() {
 		command.arg(format!("--user-agent={ua}"));
 	}
-	if let Some(rf) = referer.filter(|s| !s.is_empty()) {
+	if let Some(rf) = rf.as_deref() {
 		command.arg(format!("--referrer={rf}"));
 	}
 	let spawn = command.arg(&url).spawn();

@@ -116,7 +116,7 @@ const { items, pending, error, done, loadMore } = useMediaFeed(request)
 </script>
 
 <template>
-  <div class="flex h-full flex-col">
+  <div class="flex h-full min-h-0 flex-col">
     <options-bar :active="filtered ? 1 : 0">
       <div class="flex min-w-0 items-center gap-4">
         <h1 v-if="pageTitle" class="text-title-large shrink-0 font-bold">

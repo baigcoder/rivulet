@@ -102,6 +102,10 @@ assert.match(freePage, /goHub|liveTvBackPath/, 'Free TV needs an explicit way ba
 const watchPage = readFileSync(new URL('../app/pages/live-tv/watch.vue', import.meta.url), 'utf8')
 assert.doesNotMatch(watchPage, /\bAspectMode\b/, 'the free player must not auto-import AspectMode — that crashed setup')
 assert.match(watchPage, /from '~\/utils\/aspectRatio'/, 'aspect helpers are imported, not auto-injected')
+assert.match(watchPage, /:aspect="aspectRatio"/, 'Fit/Center/Stretch is a player prop, not a CSS-only guess')
+assert.match(watchPage, /:fullscreen="isFullscreen"/, 'live fullscreen is the same player-mode the film uses')
+assert.match(watchPage, /setAndroidPlayerMode/, 'Android live fullscreen hides system bars through MainActivity')
+assert.doesNotMatch(watchPage, /requestFullscreen/, 'the WebView has no Fullscreen API — do not call it')
 assert.doesNotMatch(watchPage, /function flag\b/, 'local flag() collides with utils/flag and crashes setup')
 assert.match(watchPage, /readLivePlay/, 'the player must recover the staged stream if the zap list is gone')
 assert.match(watchPage, /@go-live=/, 'resume after pause must offer a jump back to the live edge')
@@ -123,8 +127,8 @@ assert.doesNotMatch(
 const playerSrc = readFileSync(new URL('../app/components/MpvPlayer.vue', import.meta.url), 'utf8')
 assert.match(
   playerSrc,
-  /fromIptv\.value \|\| fromProxy\.value/,
-  'proxied live streams skip the HTTP probe — a live TS has no end',
+  /if \(!fromEngine\.value\) \{/,
+  'Direct HTTP skips the HTTP probe — mpv starts instead of waiting on fetch',
 )
 assert.match(
   playerSrc,
@@ -143,14 +147,58 @@ assert.match(
 )
 assert.match(
   playerSrc,
+  /fromEngine\.value && started\.value && !duration\.value/,
+  'unknown duration is a torrent stall, not Direct-play Buffering',
+)
+assert.match(
+  playerSrc,
+  /!fromEngine\.value && started\.value && !ended\.value && videoWidth\.value === 0 && position\.value === 0/,
+  'Direct opening stays on Loading until a frame or clock exists — including while libVLC reports pause',
+)
+assert.match(
+  playerSrc,
+  /opening = !fromEngine\.value && !localLive\.value/,
+  'Direct play hides the native surface so Buffering is not covered by a black mpv window',
+)
+assert.match(
+  playerSrc,
+  /cache-buffering-state/,
+  'the player polls stream fill so the loader can show a percent',
+)
+assert.match(
+  playerSrc,
+  /loadPercent/,
+  'Buffering shows a streaming percent, not only a spinner',
+)
+assert.match(
+  playerSrc,
   /status && !isLive/,
   'Buffering must not append the live skip sentence',
 )
+
+const vlcPlayer = readFileSync(new URL('../src-tauri/gen/android/app/src/main/java/io/github/rivulet/rivulet/VlcPlayer.kt', import.meta.url), 'utf8')
+assert.match(vlcPlayer, /fun applyVideoScale/, 'Fit/Center/Stretch must drive libVLC setScale, not setVideoScale alone')
+assert.match(vlcPlayer, /SURFACE_FIT_SCREEN/, 'Center is crop-to-fill')
+assert.match(vlcPlayer, /setAspectRatio/, 'Stretch forces the picture to the view')
+assert.match(vlcPlayer, /http-user-agent=Mozilla/, 'libVLC must not hit debrid as Lavf')
+assert.match(vlcPlayer, /length <= 0 \|\| pos < duration/, 'opening a Direct URL is a stall, not a pause')
+assert.match(vlcPlayer, /video-params/, 'first frame is what dismisses Loading on Android')
+
+const androidMain = readFileSync(new URL('../src-tauri/gen/android/app/src/main/java/io/github/rivulet/rivulet/MainActivity.kt', import.meta.url), 'utf8')
+assert.match(androidMain, /fun applyPlayerMode/, 'player mode is re-applied when Android restores the bars')
+assert.match(androidMain, /onWindowFocusChanged/, 'MIUI shows the bars again on focus')
+assert.match(androidMain, /FLAG_FULLSCREEN/, 'legacy fullscreen flag for skins that ignore WindowInsetsController')
 
 const categoryPage = readFileSync(new URL('../app/pages/live-tv/free/category/[category].vue', import.meta.url), 'utf8')
 assert.doesNotMatch(categoryPage, /LiveCategoryPage/, 'category deep-links stay on the unified Free TV shell')
 assert.match(freePage, /live-tv-live-browse-header/, 'Free TV uses the shared browse header')
 assert.doesNotMatch(freePage, /v-text-field/, 'Free TV must not mount a raw text field in the header')
+assert.doesNotMatch(freePage, /max-width="320"/, 'the category sheet is not a 320px desktop rail on a phone')
+assert.match(freePage, /:fullscreen="!smAndUp"/, 'phones get a full-width category sheet')
+
+const hubPage = readFileSync(new URL('../app/pages/live-tv/index.vue', import.meta.url), 'utf8')
+assert.match(hubPage, /list-none/, 'hub tags are chips, not a bulleted list')
+assert.match(hubPage, /text-title-large/, 'hub titles fit a phone width without clipping')
 
 for (const rel of [
   'app/components/live-tv/LiveChannelCard.vue',

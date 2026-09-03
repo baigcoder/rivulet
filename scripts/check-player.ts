@@ -1,4 +1,5 @@
 import assert from 'node:assert'
+import { readFileSync } from 'node:fs'
 import { deviceCodecs, hasNativePlayer, hasVideoOverlay, videoEngine, vlcEngine } from '../app/utils/htmlvideo'
 import { nearestFrame, walkOrder } from '../app/utils/thumbs'
 // Self-check for the <video> player backend: `bun scripts/check-player.ts`.
@@ -23,6 +24,7 @@ function fakeVideo() {
     readyState: 4,
     error: null as { code: number } | null,
     src: '',
+    style: { objectFit: 'contain' },
     buffered: { length: 1, start: () => 0, end: () => 90 },
     seekable: { length: 1, start: () => 0, end: () => 95 },
     play() {
@@ -77,6 +79,21 @@ assert.equal(p.duration, 5400)
 assert.equal(p.volume, 100, 'mpv counts volume to 100, the element to 1')
 assert.equal(p['demuxer-cache-time'], 90, 'absolute, like mpv reports it — not a length')
 assert.equal(p['paused-for-cache'], false)
+assert.equal(
+  player.props(['cache-buffering-state'])['cache-buffering-state'],
+  100,
+  '48s ahead of a 1s Direct cache is full',
+)
+
+video.buffered = { length: 1, start: () => 0, end: () => 0.5 }
+video.currentTime = 0
+assert.equal(
+  player.props(['cache-buffering-state'])['cache-buffering-state'],
+  50,
+  'half of the 1s Direct startup buffer',
+)
+video.buffered = { length: 1, start: () => 0, end: () => 90 }
+video.currentTime = 42
 
 // A duration the element hasn't worked out yet must read 0, not NaN: the seek
 // bar divides by it.
@@ -106,6 +123,8 @@ video.currentTime = 42
 // Starved of data mid-play is a stall; the same readyState while paused is not.
 video.readyState = 1
 assert.equal(player.props(['paused-for-cache'])['paused-for-cache'], true)
+video.readyState = 2
+assert.equal(player.props(['paused-for-cache'])['paused-for-cache'], false, 'HAVE_CURRENT_DATA is enough to start Direct play')
 video.readyState = 4
 
 // --- Commands, as the controls send them ---------------------------------------
@@ -121,6 +140,13 @@ player.command(['set_property', 'speed', 1.5])
 assert.equal(video.playbackRate, 1.5)
 player.command(['set_property', 'mute', true])
 assert.equal(video.muted, true)
+
+player.command(['set_property', 'video-scale', 'cover'])
+assert.equal(video.style.objectFit, 'cover', 'Center is object-fit: cover')
+player.command(['set_property', 'video-scale', 'fill'])
+assert.equal(video.style.objectFit, 'fill', 'Stretch is object-fit: fill')
+player.command(['set_property', 'video-scale', 'contain'])
+assert.equal(video.style.objectFit, 'contain', 'Fit is object-fit: contain')
 
 // Live "go live": percent-seek is the end of `seekable`, not duration * pct.
 // A live window's duration is Infinity and the element would throw.
@@ -325,6 +351,37 @@ assert.ok(!mpv.includes('rootEl.value?.querySelectorAll'), 'scoped to the player
   await engine3.start('http://127.0.0.1:3030/torrents/1/stream/0')
   assert.equal(plain.src, 'http://127.0.0.1:3030/torrents/1/stream/0')
 }
+
+const mpvLinux = readFileSync(new URL('../src-tauri/src/player.rs', import.meta.url), 'utf8')
+assert.match(mpvLinux, /player_direct::cache_cli/, 'Direct HTTP cache flags live in one place')
+assert.match(mpvLinux, /player_direct::play_url/, 'Direct HTTP opens through the loopback proxy, not lavf hopping 302s')
+assert.doesNotMatch(mpvLinux, /resolved_url/, 'must not Range-GET a debrid URL before mpv — that spends the token')
+const mpvWin = readFileSync(new URL('../src-tauri/src/player_windows.rs', import.meta.url), 'utf8')
+assert.match(mpvWin, /player_direct::play_url/, 'Windows Direct path uses the same proxy wrap')
+const mpvMac = readFileSync(new URL('../src-tauri/src/player_macos.rs', import.meta.url), 'utf8')
+assert.match(mpvMac, /player_direct::play_url/, 'macOS Direct path uses the same proxy wrap')
+const mpvDirect = readFileSync(new URL('../src-tauri/src/player_direct.rs', import.meta.url), 'utf8')
+assert.match(mpvDirect, /cache-secs=1/, 'Direct HTTP must not wait on a 20s mpv cache')
+assert.match(mpvDirect, /probesize=524288/, 'Direct MKV needs a real lavf probe, not 64KiB')
+assert.match(mpvDirect, /network-timeout=90/, 'ffmpeg 30s first-byte abort is the 40s Direct wait')
+assert.match(mpvDirect, /proxy_free_stream_url/, 'wrap is the existing IPTV proxy, not a second GET')
+const libSrc = readFileSync(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8')
+assert.match(libSrc, /async fn thumbnail[\s\S]*player_direct::play_url/, 'seek previews take the same proxy wrap or Direct hover waits 40s')
+const sliderSrc = readFileSync(new URL('../app/components/PlayerSlider.vue', import.meta.url), 'utf8')
+assert.match(sliderSrc, /aspect-video/, 'hover card reserves a scene box before the JPEG lands')
+assert.match(sliderSrc, /@focus="onFocus"/, 'a remote on the seek bar must preview, not only a pointer')
+assert.match(sliderSrc, /^\s+data-cut$/m, 'the scene card is always punched out of the native window')
+const watchSrc = readFileSync(new URL('../app/pages/watch.vue', import.meta.url), 'utf8')
+assert.doesNotMatch(watchSrc, /player_warm/, 'warming a Direct URL before mpv spends the link')
+const htmlSrc = readFileSync(new URL('../app/utils/htmlvideo.ts', import.meta.url), 'utf8')
+assert.match(htmlSrc, /maxBufferLength: 4/, 'hls.js Direct play must not prefetch 30s before starting')
+assert.match(htmlSrc, /127\.0\.0\.1:3031\/stream/, 'Android / <video> Direct path uses the same proxy wrap')
+assert.match(htmlSrc, /hasVlcPlayer\(\)/, 'Android wraps even if isTauri() is late — libVLC on the raw resolver is the 40s wait')
+assert.doesNotMatch(htmlSrc, /invoke<string>\('proxy_free_stream_url'/, 'the wrap is a string, not an IPC round-trip before start')
+const proxySrc = readFileSync(new URL('../src-tauri/src/iptv/proxy.rs', import.meta.url), 'utf8')
+assert.match(proxySrc, /fn stream_http/, 'stream proxy must not inherit the 300s IPTV JSON timeout')
+assert.match(proxySrc, /connect_timeout\(Duration::from_secs\(15\)\)/, 'dead hosts fail the connect, not a body deadline')
+assert.match(proxySrc, /cached_redirect/, 'mpv re-probes must hit the cached CDN URL, not the resolver again')
 
 // eslint-disable-next-line no-console
 console.log('player: ok')

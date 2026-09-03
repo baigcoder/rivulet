@@ -40,6 +40,8 @@ use std::time::{Duration, Instant};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use tauri::Emitter;
 use windows_sys::Win32::Foundation::{ERROR_PIPE_BUSY, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+
+use crate::player_direct;
 use windows_sys::Win32::Graphics::Gdi::{
 	CombineRgn, CreateRectRgn, DeleteObject, GetStockObject, ScreenToClient, SetWindowRgn,
 	BLACK_BRUSH, RGN_DIFF,
@@ -525,6 +527,11 @@ pub fn player_start(
 		return Err(format!("player box not laid out yet ({width}x{height}px) — retrying"));
 	}
 
+	let ua = user_agent.filter(|s| !s.is_empty());
+	let rf = referer.filter(|s| !s.is_empty());
+	let url = player_direct::play_url(&url, ua.as_deref(), rf.as_deref());
+	let engine = player_direct::is_engine_stream(&url);
+
 	let parent = parent_window(&window)?;
 
 	// The video window's thread has no other way to reach the page.
@@ -559,13 +566,12 @@ pub fn player_start(
 		.arg("--cache=yes")
 		// Start the picture as soon as a frame is decoded — do not sit on
 		// "Buffering" while lavf probes a remote HTTP file for several seconds.
-		.arg("--cache-pause-initial=no")
-		.arg("--cache-pause-wait=0.4")
-		.arg("--cache-secs=20")
-		.arg("--demuxer-readahead-secs=5")
-		.arg("--demuxer-lavf-analyzeduration=0.4")
-		.arg("--demuxer-lavf-probesize=524288")
-		.arg("--stream-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=5")
+		.arg("--cache-pause-initial=no");
+	for flag in player_direct::cache_cli(engine) {
+		command.arg(*flag);
+	}
+	command
+		.arg(format!("--stream-lavf-o={}", player_direct::stream_lavf_o(engine)))
 		.arg("--keep-open=no")
 		.arg("--no-terminal")
 		.arg("--msg-level=all=warn")
@@ -574,10 +580,10 @@ pub fn player_start(
 		// mpv.exe is a GUI binary and would not open one anyway, but a console
 		// flashing up on every play is not worth risking.
 		.creation_flags(CREATE_NO_WINDOW);
-	if let Some(ua) = user_agent.filter(|s| !s.is_empty()) {
+	if let Some(ua) = ua.as_deref() {
 		command.arg(format!("--user-agent={ua}"));
 	}
-	if let Some(rf) = referer.filter(|s| !s.is_empty()) {
+	if let Some(rf) = rf.as_deref() {
 		command.arg(format!("--referrer={rf}"));
 	}
 	let spawn = command.arg(&url).spawn();

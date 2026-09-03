@@ -1,8 +1,11 @@
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tokio::sync::Mutex as AsyncMutex;
 
-use super::client::IptvHttpClient;
+use reqwest::Client;
 
 /// Proxy port — one above the torrent engine's 3030. Off that port to avoid
 /// fighting for the bind, below the reserved dynamic range so it stays
@@ -31,13 +34,113 @@ const CORS_HEADERS: &[(&str, &str)] = &[
     ("Access-Control-Max-Age", "86400"),
 ];
 
-/// Shared reqwest client. Building one per connection burns a TCP pool slot
-/// and a TLS handshake; with ~50k HLS segments over a session that's
-/// enough to matter, and a live stream can issue 10+ req/s.
-static HTTP: OnceLock<IptvHttpClient> = OnceLock::new();
+/// Shared reqwest client for *streaming* (HLS, Direct movies, live TS).
+/// The IPTV JSON client caps a request at 300s, which kills a film at
+/// five minutes and a live channel the same way. Connect-timeout only:
+/// first-byte can wait on a debrid unlock; the body lasts as long as playback.
+static STREAM: OnceLock<Client> = OnceLock::new();
 
-fn http() -> &'static IptvHttpClient {
-    HTTP.get_or_init(|| IptvHttpClient::new().expect("failed to build IPTV HTTP client"))
+fn stream_http() -> &'static Client {
+    STREAM.get_or_init(|| {
+        Client::builder()
+            .connect_timeout(Duration::from_secs(15))
+            .gzip(true)
+            .brotli(true)
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+            .build()
+            .expect("failed to build stream HTTP client")
+    })
+}
+
+fn stream_get(
+    url: &str,
+    ua: Option<&str>,
+    referer: Option<&str>,
+    range: Option<&str>,
+) -> reqwest::RequestBuilder {
+    let mut req = stream_http().get(url);
+    if let Some(ua) = ua {
+        req = req.header("User-Agent", ua);
+    } else {
+        for (k, v) in BROWSER_HEADERS {
+            req = req.header(*k, *v);
+        }
+    }
+    if let Some(rf) = referer {
+        req = req.header("Referer", rf);
+    }
+    if let Some(r) = range {
+        req = req.header("Range", r);
+    }
+    req
+}
+
+/// After the first 302, mpv still probes the *resolver* URL two or three
+/// times. Remember the CDN location so those extra GETs skip the unlock.
+const REDIR_TTL: Duration = Duration::from_secs(10 * 60);
+
+struct Redirect {
+    url: String,
+    at: Instant,
+}
+
+static REDIRS: OnceLock<Mutex<HashMap<String, Redirect>>> = OnceLock::new();
+static GATES: OnceLock<Mutex<HashMap<String, Arc<AsyncMutex<()>>>>> = OnceLock::new();
+
+fn redirs() -> &'static Mutex<HashMap<String, Redirect>> {
+    REDIRS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cached_redirect(from: &str) -> Option<String> {
+    let mut map = redirs().lock().unwrap_or_else(|e| e.into_inner());
+    match map.get(from) {
+        Some(c) if c.at.elapsed() < REDIR_TTL => Some(c.url.clone()),
+        Some(_) => {
+            map.remove(from);
+            None
+        }
+        None => None,
+    }
+}
+
+fn remember_redirect(from: &str, to: &str) {
+    if from == to {
+        return;
+    }
+    let mut map = redirs().lock().unwrap_or_else(|e| e.into_inner());
+    if map.len() > 64 {
+        map.retain(|_, c| c.at.elapsed() < REDIR_TTL);
+        if map.len() > 64 {
+            map.clear();
+        }
+    }
+    map.insert(
+        from.to_string(),
+        Redirect {
+            url: to.to_string(),
+            at: Instant::now(),
+        },
+    );
+}
+
+fn forget_redirect(from: &str) {
+    redirs()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(from);
+}
+
+fn url_gate(url: &str) -> Arc<AsyncMutex<()>> {
+    let mut g = GATES
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if g.len() > 64 {
+        g.clear();
+    }
+    g.entry(url.to_string())
+        .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+        .clone()
 }
 
 /// Tiny HTTP proxy: receives GET /stream?url=... and forwards the response
@@ -143,29 +246,39 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
     let range = extract_header(&request, "Range");
     eprintln!("[iptv-proxy] GET {target_url}");
 
-    let client = http();
-    let mut req = client.inner().get(&target_url);
-    // Custom headers from the calling page, when the M3U declared them
-    // in #EXTVLCOPT. They beat the generic Chrome 131 we send otherwise,
-    // because some iptv-org upstreams reject everything but their own UA.
-    if let Some(ua) = custom_ua.as_deref() {
-        req = req.header("User-Agent", ua);
-    } else {
-        for (k, v) in BROWSER_HEADERS {
-            req = req.header(*k, *v);
-        }
+    let ua = custom_ua.as_deref();
+    let rf = custom_referer.as_deref();
+    // Hold only while following the resolver 302 — not while the movie
+    // body streams, or a Range seek would wait on the first connection.
+    let gate = url_gate(&target_url);
+    let _resolve = gate.lock().await;
+    let mut fetch_url = cached_redirect(&target_url).unwrap_or_else(|| target_url.clone());
+    if fetch_url != target_url {
+        eprintln!("[iptv-proxy] cached {fetch_url}");
     }
-    if let Some(rf) = custom_referer.as_deref() {
-        req = req.header("Referer", rf);
-    }
-    if let Some(ref r) = range {
-        req = req.header("Range", r);
-    }
-    // Send the request. No retry — a live stream's first attempt is the
-    // one that matters, and retrying just makes the page count down three
-    // failures against the same broken upstream.
-    let resp = match req.send().await {
+
+    let resp = match stream_get(&fetch_url, ua, rf, range.as_deref()).send().await {
         Ok(r) => r,
+        Err(e) if fetch_url != target_url => {
+            eprintln!("[iptv-proxy] cached upstream failed ({e}), retrying resolver");
+            forget_redirect(&target_url);
+            fetch_url = target_url.clone();
+            match stream_get(&fetch_url, ua, rf, range.as_deref()).send().await {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("[iptv-proxy] upstream error for {target_url}: {e}");
+                    write_response(
+                        stream,
+                        502,
+                        "Bad Gateway",
+                        "text/plain",
+                        e.to_string().as_bytes(),
+                    )
+                    .await?;
+                    return Ok(());
+                }
+            }
+        }
         Err(e) => {
             eprintln!("[iptv-proxy] upstream error for {target_url}: {e}");
             write_response(
@@ -183,25 +296,23 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
     let mut status = resp.status();
     let mut resp = resp;
 
+    if fetch_url != target_url && !status.is_success() && status.as_u16() != 206 {
+        forget_redirect(&target_url);
+        fetch_url = target_url.clone();
+        if let Ok(r) = stream_get(&fetch_url, ua, rf, range.as_deref()).send().await {
+            resp = r;
+            status = resp.status();
+        }
+    }
+
     // Range Header Fallback:
     // Many IPTV servers (Xtream Codes live streams) reject `Range: bytes=...` requests
     // with 400, 416, 500, etc. If a range header was sent and upstream failed, retry WITHOUT Range header.
     if !status.is_success() && status.as_u16() != 206 && range.is_some() {
-        eprintln!("[iptv-proxy] range request failed with {status}, retrying without Range header: {target_url}");
-        let mut nr_req = client.inner().get(&target_url);
-        if let Some(ua) = custom_ua.as_deref() {
-            nr_req = nr_req.header("User-Agent", ua);
-        } else {
-            for (k, v) in BROWSER_HEADERS {
-                nr_req = nr_req.header(*k, *v);
-            }
-        }
-        if let Some(rf) = custom_referer.as_deref() {
-            nr_req = nr_req.header("Referer", rf);
-        }
-        if let Ok(nr_resp) = nr_req.send().await {
+        eprintln!("[iptv-proxy] range request failed with {status}, retrying without Range header: {fetch_url}");
+        if let Ok(nr_resp) = stream_get(&fetch_url, ua, rf, None).send().await {
             if nr_resp.status().is_success() || nr_resp.status().as_u16() == 206 {
-                eprintln!("[iptv-proxy] request without Range succeeded for {target_url}");
+                eprintln!("[iptv-proxy] request without Range succeeded for {fetch_url}");
                 resp = nr_resp;
                 status = resp.status();
             }
@@ -222,18 +333,7 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
 
         if let Some(ref fb_url) = fallback_url {
             eprintln!("[iptv-proxy] upstream failed with {status}, retrying fallback: {fb_url}");
-            let mut fb_req = client.inner().get(fb_url);
-            if let Some(ua) = custom_ua.as_deref() {
-                fb_req = fb_req.header("User-Agent", ua);
-            } else {
-                for (k, v) in BROWSER_HEADERS {
-                    fb_req = fb_req.header(*k, *v);
-                }
-            }
-            if let Some(rf) = custom_referer.as_deref() {
-                fb_req = fb_req.header("Referer", rf);
-            }
-            if let Ok(fb_resp) = fb_req.send().await {
+            if let Ok(fb_resp) = stream_get(fb_url, ua, rf, None).send().await {
                 if fb_resp.status().is_success() || fb_resp.status().as_u16() == 206 {
                     eprintln!("[iptv-proxy] fallback succeeded: {fb_url}");
                     resp = fb_resp;
@@ -242,6 +342,9 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
             }
         }
     }
+
+    remember_redirect(&target_url, resp.url().as_str());
+    drop(_resolve);
 
     let content_type = resp
         .headers()
@@ -258,7 +361,7 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
             Ok(body) => {
                 let rewritten = rewrite_m3u(
                     &body,
-                    &target_url,
+                    &fetch_url,
                     custom_ua.as_deref(),
                     custom_referer.as_deref(),
                 );

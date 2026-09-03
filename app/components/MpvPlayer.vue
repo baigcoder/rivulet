@@ -73,6 +73,8 @@ const props = defineProps<{
   status?: string
   /** Hold the OS window in fullscreen for as long as this player is mounted. */
   fullscreen?: boolean
+  /** Fit / center / stretch. Live TV drives this from its overlay; VOD uses the player's own button. */
+  aspect?: 'contain' | 'cover' | 'fill'
   /**
    * What is being played, for the watch history. Without it playback is not
    * tracked at all — which is right for a bare magnet, where there is no title
@@ -218,8 +220,9 @@ const behind = vlc || (native && !overlay)
  */
 /**
  * A finger, not a pointer. Controls get thumb-sized, the volume slider goes
- * away (a phone's own buttons own volume), and a tap on the picture shows the
- * chrome rather than pausing — which is what every other player on a phone does.
+ * away (left-edge swipe and the phone's own buttons own volume), and a tap on
+ * the picture shows the chrome rather than pausing — which is what every other
+ * player on a phone does.
  */
 // Android WebView often advertises `(pointer: fine)`, even on a phone. The
 // native platform is the reliable signal there; without it Android accidentally
@@ -293,7 +296,7 @@ const boxEl = ref<HTMLElement | null>(null)
 const playBtn = ref<HTMLButtonElement | null>(null)
 
 const videoEl = ref<HTMLVideoElement | null>(null)
-const aspectRatio = ref<'contain' | 'cover' | 'fill'>('contain')
+const aspectRatio = ref<'contain' | 'cover' | 'fill'>(props.aspect ?? 'contain')
 let engine: PlayerEngine | null = null
 /** The no-sound notice is said once per file, not every poll. See `poll`. */
 let silentSaid = false
@@ -313,6 +316,10 @@ const ended = ref(false)
 const duration = ref(0)
 const position = ref(0)
 const cacheEnd = ref(0)
+/** 0–100 fill of the startup buffer, from mpv / <video> / libVLC. */
+const cacheFill = ref<number | null>(null)
+/** High-water while the loader is up, so a jittery cache doesn't flicker 40→28. */
+const loadPeak = ref(0)
 const volume = ref(100)
 const muted = ref(false)
 const speed = ref(1)
@@ -484,6 +491,10 @@ function cycleAspectRatio() {
 }
 watch(aspectRatio, applyAspectMode)
 watch(started, value => value && applyAspectMode())
+watch(() => props.aspect, mode => {
+  if (mode && mode !== aspectRatio.value)
+    aspectRatio.value = mode
+})
 
 /** Several properties over one socket round trip. Missing/failed ones read null. */
 async function readProps<T = Record<string, any>>(names: string[]): Promise<T | null> {
@@ -1539,11 +1550,8 @@ async function setWindowFullscreen(on: boolean) {
   // does have is system bars in the way and a rotation that should be locked
   // while a film is on, and the webview implements neither the Fullscreen API
   // nor screen.orientation.lock. MainActivity.kt exposes both instead.
-  const android = (window as any).RivuletScreen
-  if (android?.setPlayerMode) {
-    android.setPlayerMode(on)
+  if (setAndroidPlayerMode(on))
     return
-  }
 
   try {
     await useTauriWebviewWindowGetCurrentWebviewWindow().setFullscreen(on)
@@ -1552,6 +1560,11 @@ async function setWindowFullscreen(on: boolean) {
     // Not running under Tauri (plain `bun dev` in a browser) — nothing to do.
   }
 }
+
+watch(() => props.fullscreen, on => {
+  if (typeof on === 'boolean' && on !== windowFullscreen.value)
+    void setWindowFullscreen(on)
+})
 
 function toggleFullscreen() {
   setWindowFullscreen(!windowFullscreen.value)
@@ -1694,7 +1707,12 @@ function frame(now: number) {
     || ended.value
     || busy.value
     || !!props.resolving
-    || (started.value && !paused.value && (buffering.value || (!position.value && !duration.value)))
+    || (!!props.src && !started.value)
+    || (started.value && !paused.value && (
+      buffering.value
+      || (!position.value && !duration.value)
+      || (!fromEngine.value && videoWidth.value === 0 && position.value === 0)
+    ))
   const needsGeometry = started.value || (native && overlay && hasCentre)
 
   if (!needsGeometry)
@@ -1729,7 +1747,14 @@ function frame(now: number) {
   const dpr = pxRatio
   // Hide the native surface when the box is off-screen or not laid out —
   // otherwise it keeps painting over whatever the page scrolls under it.
-  const visible = r.width >= 16 && r.height >= 16
+  // Direct HTTP also hides it until a frame exists: otherwise mpv's black
+  // child window covers the Buffering overlay. `position` is the wrong
+  // signal — the seek-bar deadband ignores time-pos under 0.4s, so the
+  // picture would stay hidden (and Buffering stuck) after playback started.
+  const opening = !fromEngine.value && !localLive.value && !!props.src && (
+    !started.value || (!ended.value && !paused.value && videoWidth.value === 0 && position.value === 0)
+  )
+  const visible = !opening && r.width >= 16 && r.height >= 16
     && r.bottom > 0 && r.top < window.innerHeight
     && r.right > 0 && r.left < window.innerWidth
 
@@ -1908,37 +1933,21 @@ async function startPlayer() {
       return
     }
 
-    // IPTV streams carry the user's Xtream credentials in the URL path
-    // and the upstream never has our webview's origin in CORS headers,
-    // so a `fetch()` probe would always fail (or, worse, leak the
-    // password in the request URL). Native mpv has no CORS constraint
-    // and is the one that opens the stream — let it be the verdict.
-    // Proxied Free TV is the same call: a live TS never ends, so reading
-    // the probe body used to hang until the upstream dropped and mpv never
-    // started. The proxy already answered CORS; mpv is the judge.
+    // Torrent streams have to wait for librqbit: a 500 in the first milliseconds
+    // is "not ready yet", and mpv exits instead of retrying. Direct HTTP, IPTV
+    // and the loopback proxy are already a server — a `fetch()` probe is CORS,
+    // a hang on live TS, or 800ms of "Buffering" before mpv even starts. Native
+    // mpv is the verdict.
     interface Probe { ok: boolean, status: number, unknown?: boolean, stub?: boolean }
     let probe: Probe
-    if (fromIptv.value || fromProxy.value) {
+    if (!fromEngine.value) {
       probe = { ok: true, status: 0, unknown: true }
     }
     else {
       // Never hand mpv a URL that isn't serving yet — it exits instantly on a 500.
-      // A torrent stream gets the patient window (peers need time to appear);
-      // a direct debrid/server link is one probe (or an instant CORS miss)
-      // and then mpv opens it. Proxied live streams skip this: see above.
       waiting.value = true
-      probe = await waitForStream(
-        props.src,
-        fromEngine.value ? 60_000 : localLive.value ? 3_000 : 800,
-      )
+      probe = await waitForStream(props.src, 60_000)
       waiting.value = false
-      // A stub clip is a *verdict* — quota gone or key rejected. Fail over like
-      // any dead server, and remember why for the last-one-standing message.
-      if (probe.ok && probe.stub && !fromEngine.value) {
-        const stubbed = { ...probe, ok: false, stub: true, unknown: false, status: probe.status }
-        probe = stubbed
-        stubSeen.value = true
-      }
     }
     // `unknown` (the probe was CORS-blocked from even asking) falls through to
     // the opener: media elements don't need the permission fetch wants, so the
@@ -2009,13 +2018,15 @@ async function startPlayer() {
     position.value = 0
     duration.value = 0
     cacheEnd.value = 0
+    cacheFill.value = null
+    loadPeak.value = 0
     paused.value = false
     silentSaid = false
     started.value = true
-    // Assume we're buffering until the first poll says otherwise — otherwise
-    // there is a dead window between `started` becoming true and the first
-    // 200ms poll where the centre overlay is hidden.
-    buffering.value = true
+    // Torrent pieces arrive slowly, so assume a stall until the poll says
+    // otherwise. A Direct HTTP link is already on a server — starting as
+    // "Buffering…" is a wait the first frame does not need.
+    buffering.value = fromEngine.value
     loaded = false
     tracks.value = []
     sid.value = 'no'
@@ -2221,7 +2232,7 @@ defineExpose({
 // Polling: playback props, plus a liveness check so a dead mpv reports itself
 // instead of leaving a black rectangle behind.
 // ---------------------------------------------------------------------------
-const POLLED = ['pause', 'paused-for-cache', 'duration', 'time-pos', 'demuxer-cache-time', 'volume', 'mute', 'speed', 'mouse-pos', 'sub-text', 'video-params']
+const POLLED = ['pause', 'paused-for-cache', 'duration', 'time-pos', 'demuxer-cache-time', 'cache-buffering-state', 'volume', 'mute', 'speed', 'mouse-pos', 'sub-text', 'video-params']
 let tick = 0
 let lastMouseX = -1
 let lastMouseY = -1
@@ -2324,6 +2335,24 @@ async function poll() {
   if (typeof p.speed === 'number')
     speed.value = p.speed
   cacheEnd.value = typeof p['demuxer-cache-time'] === 'number' ? p['demuxer-cache-time'] : 0
+  if (typeof p['cache-buffering-state'] === 'number') {
+    const n = Math.max(0, Math.min(100, Math.round(p['cache-buffering-state'])))
+    cacheFill.value = n
+    if (n > loadPeak.value)
+      loadPeak.value = n
+  }
+  else if (duration.value > 0 && cacheEnd.value > 0) {
+    const n = Math.min(100, Math.round((cacheEnd.value / duration.value) * 100))
+    cacheFill.value = n
+    if (n > loadPeak.value)
+      loadPeak.value = n
+  }
+  else if (cacheEnd.value > position.value) {
+    const n = Math.min(100, Math.round(((cacheEnd.value - position.value) / 3) * 100))
+    cacheFill.value = n
+    if (n > loadPeak.value)
+      loadPeak.value = n
+  }
   subText.value = typeof p['sub-text'] === 'string' ? p['sub-text'] : ''
   if (handleProviderSlate(subText.value, duration.value))
     return
@@ -2338,9 +2367,13 @@ async function poll() {
   }
 
   // The rAF loop runs the clock between polls; only correct it once it has
-  // really drifted, so the bar never stutters backwards a frame.
-  if (!scrubbing.value && typeof p['time-pos'] === 'number' && Math.abs(p['time-pos'] - position.value) > 0.4)
-    position.value = p['time-pos']
+  // really drifted, so the bar never stutters backwards a frame. At start the
+  // deadband would swallow the first 0.4s and leave Direct play on Buffering
+  // with the picture hidden.
+  if (!scrubbing.value && typeof p['time-pos'] === 'number') {
+    if (position.value < 0.5 || Math.abs(p['time-pos'] - position.value) > 0.4)
+      position.value = p['time-pos']
+  }
 
   // A start-up log line can land before the first frame; once time is
   // moving the message is stale and must not sit over a playing picture.
@@ -2502,6 +2535,26 @@ function setVolume(v: number) {
   ipc(['set_property', 'mute', false])
   ipc(['set_property', 'volume', volume.value])
 }
+
+/** Left-edge vertical drag = volume, right-edge = brightness. Touch only. */
+const {
+  hud: edgeHud,
+  swiping: edgeSwiping,
+  onDown: onEdgeDown,
+  onMove: onEdgeMove,
+  onUp: onEdgeUp,
+  onTouchStart: onEdgeTouchStart,
+} = usePlayerEdgeSwipe({
+  enabled: () => touch.value && isTv() !== true,
+  volume: () => volume.value,
+  setVolume,
+  seek: t => {
+    if (!isLive.value)
+      seekTo(t)
+  },
+  position: () => position.value,
+  duration: () => isLive.value ? 0 : duration.value,
+})
 
 function toggleMute() {
   muted.value = !muted.value
@@ -2785,6 +2838,11 @@ function hideChrome() {
     at.blur()
 }
 
+watch(edgeSwiping, on => {
+  if (on)
+    hideChrome()
+})
+
 function noteActivity() {
   ui.value = true
   if (hideTimer)
@@ -2854,21 +2912,42 @@ const centre = computed(() => {
   // "trying the next one" in the same pill.
   if (isLive.value && props.resolving)
     return ''
-  if (busy.value || props.resolving)
+  if (busy.value || props.resolving || (props.src && !started.value && !ended.value))
     return 'loading'
-  // Show the buffering indicator when the engine is running but no frame has
-  // played yet (position and duration both zero) — the poll clears
+  // Show the buffering indicator when the torrent engine is running but no
+  // frame has played yet (position and duration both zero) — the poll clears
   // `buffering` before the debounce catches up, leaving a dead window with
   // a black screen and no feedback.
   //
   // When buffering is true the player is stalling for data even though it may
   // report paused (libVLC stops outputting frames while buffering). Show the
   // spinner instead of the pause overlay in that case.
-  if (started.value && !duration.value && !ended.value)
+  if (fromEngine.value && started.value && !duration.value && !ended.value)
     return 'stalled'
+  // Direct HTTP / libVLC: `started` flips true as soon as start() returns,
+  // which is before the first frame. libVLC also reports pause while it
+  // opens, so requiring !paused hid this overlay and showed the pause card
+  // on a black screen instead — "no loading" on the phone.
+  if (!isLive.value && !fromEngine.value && started.value && !ended.value && videoWidth.value === 0 && position.value === 0)
+    return 'loading'
   if (started.value && (buffering.value || stalled.value))
     return 'stalled'
   return ''
+})
+
+const loadPercent = computed(() => {
+  if (centre.value !== 'stalled' && centre.value !== 'loading')
+    return null
+  if (loadPeak.value > 0)
+    return loadPeak.value
+  return cacheFill.value
+})
+
+watch(centre, c => {
+  if (c !== 'stalled' && c !== 'loading') {
+    loadPeak.value = 0
+    cacheFill.value = null
+  }
 })
 
 // ---------------------------------------------------------------------------
@@ -3087,7 +3166,32 @@ function onChildPointerLeave(_e: PointerEvent) {
  * `.stop` in the template matters: the root's own `pointerdown` would otherwise
  * show the bars first, and `toggleChrome` would read that as "already up" and
  * hide them again — a tap that did nothing at all.
+ *
+ * Volume / brightness swipes start on `pointerdown` but a tap is only decided
+ * on `pointerup`, or a vertical drag would also toggle the chrome.
  */
+function onPicturePointerDown(e: PointerEvent) {
+  if (e.pointerType === 'mouse' && !touch.value)
+    return tapVideo(e)
+  onEdgeDown(e)
+}
+
+function onPicturePointerMove(e: PointerEvent) {
+  onEdgeMove(e)
+}
+
+function onPictureTouchStart(e: TouchEvent) {
+  onEdgeTouchStart(e)
+}
+
+function onPicturePointerUp(e: PointerEvent) {
+  if (e.pointerType === 'mouse' && !touch.value)
+    return
+  if (onEdgeUp(e))
+    return
+  tapVideo(e)
+}
+
 function tapVideo(e: PointerEvent) {
   if (menu.value) {
     menu.value = ''
@@ -3269,20 +3373,33 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
       <video
         v-if="src && !native && !vlc"
         ref="videoEl"
-        class="h-full w-full bg-black"
+        class="h-full w-full touch-none bg-black"
         :class="{
           'object-contain': aspectRatio === 'contain',
           '!object-cover': aspectRatio === 'cover',
           '!object-fill': aspectRatio === 'fill',
         }"
         playsinline
-        @pointerdown.stop="tapVideo"
+        preload="auto"
+        @pointerdown.stop="onPicturePointerDown"
+        @pointermove="onPicturePointerMove"
+        @pointerup="onPicturePointerUp"
+        @pointercancel="onPicturePointerUp"
+        @touchstart.stop="onPictureTouchStart"
       />
       <!-- A picture painted behind the whole webview (libVLC on Android, and
            mpv on macOS) leaves no element under the finger. This is what the
            taps land on instead — transparent, or it would be the thing
            covering it. -->
-      <div v-else-if="behind" class="h-full w-full" @pointerdown.stop="tapVideo" />
+      <div
+        v-else-if="behind"
+        class="h-full w-full touch-none bg-black/[0.01]"
+        @pointerdown.stop="onPicturePointerDown"
+        @pointermove="onPicturePointerMove"
+        @pointerup="onPicturePointerUp"
+        @pointercancel="onPicturePointerUp"
+        @touchstart.stop="onPictureTouchStart"
+      />
     </div>
 
     <!-- Subtitles, where the page draws them itself. Pinned to `sub-pos` the
@@ -3302,6 +3419,8 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
     >
       {{ osdText }}
     </div>
+
+    <player-edge-hud v-if="edgeHud" :kind="edgeHud.kind" :level="edgeHud.level" :caption="edgeHud.caption" />
 
     <!-- A-B loop indicator -->
     <div
@@ -3450,19 +3569,21 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
       </template>
 
       <template v-else-if="centre === 'loading'">
-        <v-progress-circular indeterminate color="primary" size="48" width="3.5" />
+        <v-progress-circular
+          :model-value="loadPercent ?? 0"
+          :indeterminate="loadPercent == null"
+          color="primary"
+          size="48"
+          width="3.5"
+        >
+          <span v-if="loadPercent != null" class="text-label-small tabular-nums">{{ loadPercent }}</span>
+        </v-progress-circular>
         <div class="text-title-small">
-          <template v-if="resolving && !busy">
-            {{ step || $t('Loading…') }}
-          </template>
-          <template v-else-if="waiting">
+          <template v-if="waiting">
             {{ $t('Waiting for the torrent stream…') }}
           </template>
-          <template v-else-if="native">
-            {{ $t('Starting mpv…') }}
-          </template>
           <template v-else>
-            {{ $t('Opening the stream…') }}
+            {{ step || (native ? $t('Starting mpv…') : $t('Opening the stream…')) }}
           </template>
         </div>
         <!-- The first source is selected by the release ranker (1080p first
@@ -3482,8 +3603,18 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
       </template>
 
       <template v-else>
-        <v-progress-circular indeterminate color="primary" size="28" width="3" />
-        <span>{{ $t('Buffering') }}<template v-if="status && !isLive"> · {{ status }}</template></span>
+        <v-progress-circular
+          :model-value="loadPercent ?? 0"
+          :indeterminate="loadPercent == null"
+          color="primary"
+          size="40"
+          width="3.5"
+        >
+          <span v-if="loadPercent != null" class="text-label-small font-medium tabular-nums">{{ loadPercent }}</span>
+        </v-progress-circular>
+        <span>
+          {{ $t('Buffering') }}<template v-if="loadPercent != null"> · {{ loadPercent }}%</template><template v-else-if="status && !isLive"> · {{ status }}</template>
+        </span>
       </template>
     </div>
 

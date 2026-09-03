@@ -50,7 +50,7 @@ import {
 } from '@mdi/js'
 import { invoke } from '@tauri-apps/api/core'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { isAndroid } from '~/utils/platform'
+import { isAndroid, isTv } from '~/utils/platform'
 import { fmtHudTime, friendlyPlaybackError } from '~/utils/playbackError'
 import { proxyLogo } from '~/utils/premiumTv'
 
@@ -172,6 +172,22 @@ const timeLine = computed(() => {
 })
 const IDLE_MS = computed(() => touch.value ? 1500 : 2800)
 
+/** Left-edge vertical drag = volume, right-edge = brightness. Touch only. */
+const {
+  hud: edgeHud,
+  swiping: edgeSwiping,
+  onDown: onEdgeDown,
+  onMove: onEdgeMove,
+  onUp: onEdgeUp,
+  onTouchStart: onEdgeTouchStart,
+} = usePlayerEdgeSwipe({
+  enabled: () => touch.value && isTv() !== true,
+  volume: () => props.volume,
+  setVolume: n => emit('setVolume', n),
+})
+
+let skipCentreClick = false
+
 // ── Chrome visibility ──────────────────────────────────────────────────
 const showQuickZap = ref(false)
 /** The cursor is on a bar — which is a hole, so this the DOM can see. */
@@ -209,6 +225,9 @@ let hideTimer: ReturnType<typeof setTimeout> | null = null
 const HIDE_GRACE_MS = 400
 
 function show() {
+  // A volume / brightness drag is not "the user is here, show the bars".
+  if (edgeSwiping.value)
+    return
   // If the user explicitly clicked the eye button very recently, swallow
   // this call. The real user action is "close the HUD"; spurious same-tick
   // window events and stale chromeUp transitions must not undo it.
@@ -267,6 +286,15 @@ watch(
   },
 )
 
+watch(edgeSwiping, on => {
+  if (!on)
+    return
+  nudged.value = false
+  if (hideTimer)
+    clearTimeout(hideTimer)
+  hideTimer = null
+})
+
 // ── Native pointer poll for overlay platforms (Linux/Win32) ────────────
 // On the platforms where mpv paints ABOVE the page, the DOM sees no
 // mousemove/click/pointer events anywhere over the picture — it is a
@@ -321,6 +349,33 @@ function triggerCenterPlayPulse() {
   emit('togglePlay')
 }
 
+function onCentrePointerDown(e: PointerEvent) {
+  skipCentreClick = false
+  onEdgeDown(e)
+}
+
+function onCentrePointerMove(e: PointerEvent) {
+  onEdgeMove(e)
+}
+
+function onCentrePointerUp(e: PointerEvent) {
+  if (onEdgeUp(e))
+    skipCentreClick = true
+}
+
+function onCentreClick() {
+  if (skipCentreClick) {
+    skipCentreClick = false
+    return
+  }
+  if (isLiveVariant.value)
+    triggerCenterPlayPulse()
+}
+
+function onCentreTouchStart(e: TouchEvent) {
+  onEdgeTouchStart(e)
+}
+
 // ── Window-level activity tracking ────────────────────────────────────
 // The overlay root has `pointer-events-none` (it spans the picture while
 // the bars sit in `data-cut` holes), so a DOM `@mousemove` on it never
@@ -337,18 +392,18 @@ function onWindowMouseMove(e: MouseEvent) {
   lastMouseKey = key
 }
 function onWindowTouchStart() {
+  if (touch.value)
+    return
   show()
 }
 function onWindowClick() {
   show()
 }
-function onWindowPointerMove(e: PointerEvent) {
-  // Pointer events carry a hardware-specific pointerType, so there are no
-  // synthetic "touch → mouse" fallouts here like the legacy mousemove path
-  // above. Real mouse moves on a phone with a Bluetooth mouse, and pen
-  // input on a tablet, both deserve the same treatment as a desktop mouse.
-  // Touch pointer moves are also fine — a finger dragging across the film
-  // is clearly someone at the controls.
+function onWindowPointerMove() {
+  // Phones (and Android WebView reporting a finger as a mouse) must not
+  // treat every move as "show the bars" — that is the volume / brightness swipe.
+  if (touch.value)
+    return
   show()
 }
 
@@ -513,10 +568,14 @@ defineExpose({ show, hide, visible })
          *not* `data-cut`: it spans the whole picture, and a hole that size
          subtracts every pixel mpv paints. -->
     <div
-      class="flex-1 grid place-items-center"
+      class="flex-1 grid place-items-center touch-none bg-black/[0.01]"
       :class="isLiveVariant ? 'pointer-events-auto cursor-pointer' : 'pointer-events-none'"
-      @click="isLiveVariant ? triggerCenterPlayPulse() : undefined"
-      @touchstart.passive="show"
+      @click="onCentreClick"
+      @pointerdown="onCentrePointerDown"
+      @pointermove="onCentrePointerMove"
+      @pointerup="onCentrePointerUp"
+      @pointercancel="onCentrePointerUp"
+      @touchstart.stop="onCentreTouchStart"
     >
       <transition
         enter-active-class="transition duration-200 ease-out transform scale-50 opacity-0"
@@ -532,6 +591,8 @@ defineExpose({ show, hide, visible })
         </div>
       </transition>
     </div>
+
+    <player-edge-hud v-if="edgeHud" :kind="edgeHud.kind" :level="edgeHud.level" :caption="edgeHud.caption" />
 
     <!-- CENTER PLAYER ERROR MODAL -->
     <transition

@@ -33,7 +33,7 @@ definePageMeta({ layout: 'default' })
 const liveTv = useLiveTvStore()
 const route = useRoute()
 const router = useRouter()
-const { mdAndUp, lgAndUp } = useDisplay()
+const { smAndUp, mdAndUp, lgAndUp } = useDisplay()
 
 /** Category from `/free/category/:category` or `?category=`. The parent
  *  route's `params` is a union of every nested page, so `params.category`
@@ -382,15 +382,26 @@ watch(liveCategory, name => {
       </section>
     </div>
 
-    <v-dialog v-model="sheetOpen" max-width="320" scrollable>
-      <v-card class="bg-surface-container">
-        <div class="flex items-center justify-between px-4 pt-4">
+    <v-dialog
+      v-model="sheetOpen"
+      scrollable
+      :fullscreen="!smAndUp"
+      :max-width="smAndUp ? 400 : undefined"
+    >
+      <v-card class="flex h-full flex-col bg-surface">
+        <div
+          class="flex items-center justify-between px-4 pt-4"
+          :class="smAndUp ? undefined : 'pt-[max(1rem,var(--safe-top))]'"
+        >
           <h2 class="text-title-large font-bold">
             {{ $t('Categories') }}
           </h2>
           <v-btn :icon="mdiClose" variant="text" size="small" :aria-label="$t('Close')" @click="sheetOpen = false" />
         </div>
-        <v-card-text class="flex min-h-0 flex-1 flex-col !pt-2" style="height: min(80vh, 640px)">
+        <v-card-text
+          class="flex min-h-0 flex-1 flex-col !pt-3"
+          :style="smAndUp ? { height: 'min(80vh, 640px)' } : undefined"
+        >
           <premium-tv-premium-sidebar
             :view="liveTv.view"
             :selected-category="liveTv.selectedCategory"
@@ -399,6 +410,7 @@ watch(liveCategory, name => {
             :favorite-count="liveTv.favKeys.size"
             :recent-count="liveTv.recentChannels.length"
             categories-open
+            bare
             @set-view="pickView"
             @set-category="pickCategory"
           />

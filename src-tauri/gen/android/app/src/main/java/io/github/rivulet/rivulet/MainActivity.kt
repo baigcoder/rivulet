@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.database.Cursor
+import android.media.AudioManager
 import android.net.ConnectivityManager
 import android.net.Uri
 import android.graphics.Color
@@ -42,17 +43,23 @@ class MainActivity : TauriActivity() {
   private var web: WebView? = null
   private var player: RivuletPlayer? = null
   private var premiumPlayer: RivuletPremiumPlayer? = null
+  /** True while a film or live channel is in player mode — bars hidden, phone locked landscape. */
+  private var playerMode = false
 
   /** In-app update state: download ID from DownloadManager and the file it produced. */
   private var updateDownloadId: Long = -1L
   private var updateApkPath: String? = null
   private val updateHandler = Handler(Looper.getMainLooper())
+  /** Notification tap before the webview exists: open About once it does. */
+  private var openAboutWhenReady = false
 
   companion object {
     /** Largest file FAT32 can address: 4 GiB, less one byte. */
     private const val FAT32_MAX = 4L * 1024 * 1024 * 1024 - 1
     private const val UPDATE_CHANNEL = "updates"
     private const val UPDATE_NOTIFICATION = 100
+    private const val UPDATE_PREFS = "rivulet_update"
+    private const val UPDATE_APK = "rivulet-update.apk"
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -77,6 +84,10 @@ class MainActivity : TauriActivity() {
       requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 0)
     }
 
+    loadUpdateState()
+    if (intent.getBooleanExtra("openSettings", false))
+      openAboutWhenReady = true
+
     onBackPressedDispatcher.addCallback(this, backToPage)
   }
 
@@ -91,15 +102,26 @@ class MainActivity : TauriActivity() {
   override fun onResume() {
     super.onResume()
     nudgeDownloads()
+    web?.let { tuneWebView(it) }
+    if (playerMode)
+      applyPlayerMode()
+  }
+
+  override fun onWindowFocusChanged(hasFocus: Boolean) {
+    super.onWindowFocusChanged(hasFocus)
+    // MIUI and gesture nav both restore the bars on a focus change. Put them
+    // back away while a film is up rather than leaving a gap under the HUD.
+    if (hasFocus && playerMode)
+      applyPlayerMode()
   }
 
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
+    setIntent(intent)
     // The update notification puts `openSettings=true` so the user lands
     // on the About page with the download/install controls.
-    if (intent.getBooleanExtra("openSettings", false)) {
-      web?.evaluateJavascript("window.__tvNavigate && window.__tvNavigate('/settings/about')", null)
-    }
+    if (intent.getBooleanExtra("openSettings", false))
+      openAboutPage()
   }
 
   override fun onPause() {
@@ -111,6 +133,77 @@ class MainActivity : TauriActivity() {
     // Never worth a crash on the way out of the app: without it downloads simply
     // stop when the app does, which is where this started.
     runCatching { startService(Intent(this, DownloadService::class.java)) }
+  }
+
+  private fun updateApkFile() = File(getExternalFilesDir(null), UPDATE_APK)
+
+  private fun loadUpdateState() {
+    val p = getSharedPreferences(UPDATE_PREFS, MODE_PRIVATE)
+    updateDownloadId = p.getLong("id", -1L)
+    updateApkPath = p.getString("path", null)
+    val file = updateApkFile()
+    when {
+      updateApkPath != null && !File(updateApkPath!!).exists() ->
+        updateApkPath = file.takeIf { it.exists() }?.absolutePath
+      updateApkPath == null && file.exists() ->
+        updateApkPath = file.absolutePath
+    }
+  }
+
+  private fun saveUpdateState() {
+    getSharedPreferences(UPDATE_PREFS, MODE_PRIVATE).edit()
+      .putLong("id", updateDownloadId)
+      .putString("path", updateApkPath)
+      .apply()
+  }
+
+  /**
+   * `__tvNavigate` is installed by the d-pad plugin after the page boots, so a
+   * cold start from the update notification has to wait for it rather than
+   * evaluating once into an empty webview.
+   */
+  private fun openAboutPage(attempt: Int = 0) {
+    val view = web
+    if (view == null) {
+      openAboutWhenReady = true
+      return
+    }
+    view.post {
+      view.evaluateJavascript("typeof window.__tvNavigate") { result ->
+        if (result?.contains("function") == true) {
+          view.evaluateJavascript("window.__tvNavigate('/settings/about')", null)
+        }
+        else if (attempt < 24) {
+          view.postDelayed({ openAboutPage(attempt + 1) }, 250)
+        }
+      }
+    }
+  }
+
+  /**
+   * Hand the APK to the system installer. Same applicationId as the running
+   * app, so confirming the prompt replaces this install rather than sitting
+   * beside it. API 26+ also needs "install unknown apps" for this package,
+   * which Xiaomi in particular leaves off until the user flips it.
+   */
+  private fun launchInstaller(file: File) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
+      startActivity(
+        Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))
+          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      )
+      return
+    }
+    val uri = FileProvider.getUriForFile(this, "${packageName}.fileprovider", file)
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+      setDataAndType(uri, "application/vnd.android.package-archive")
+      addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    packageManager.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY).forEach {
+      grantUriPermission(it.activityInfo.packageName, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    startActivity(intent)
   }
 
   override fun onWebViewCreate(webView: WebView) {
@@ -149,6 +242,10 @@ class MainActivity : TauriActivity() {
     }
 
     webView.addJavascriptInterface(Screen(), "RivuletScreen")
+    if (openAboutWhenReady) {
+      openAboutWhenReady = false
+      openAboutPage()
+    }
     player = RivuletPlayer(this).also { webView.addJavascriptInterface(it, "RivuletPlayer") }
     // Premium TV: Media3 ExoPlayer, same @JavascriptInterface
     // shape as the libVLC player so the front-end drives one
@@ -157,6 +254,22 @@ class MainActivity : TauriActivity() {
     // never run at the same time.
     premiumPlayer = RivuletPremiumPlayer(this)
       .also { webView.addJavascriptInterface(it, "RivuletPremiumPlayer") }
+
+    tuneWebView(webView)
+  }
+
+  /**
+   * Raster on the GPU, tiles before they scroll on screen, no glow stretch.
+   * Software layers and overscroll glow are the two things that made the
+   * same page stutter on a phone WebView after it was already fine in Chrome.
+   */
+  private fun tuneWebView(webView: WebView) {
+    webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+    webView.overScrollMode = View.OVER_SCROLL_NEVER
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+      webView.settings.offscreenPreRaster = true
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+      webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, true)
   }
 
   /**
@@ -355,8 +468,8 @@ class MainActivity : TauriActivity() {
 
     /**
      * Download an APK from [url] using Android's DownloadManager. Returns a
-     * download ID the frontend can poll with [getUpdateProgress]. The APK
-     * lands in the app's private cache dir so no storage permission is needed.
+     * download ID the frontend can poll with [getUpdateProgress]. The file
+     * lands in the app's own files dir so no storage permission is needed.
      */
     @JavascriptInterface
     fun downloadUpdate(url: String): Long {
@@ -372,10 +485,11 @@ class MainActivity : TauriActivity() {
         .setTitle("Downloading Rivulet update")
         .setDescription("An update is being downloaded")
         .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-        .setDestinationInExternalFilesDir(this@MainActivity, null, "rivulet-update.apk")
+        .setDestinationInExternalFilesDir(this@MainActivity, null, UPDATE_APK)
         .setAllowedOverMetered(true)
         .setAllowedOverRoaming(true)
       updateDownloadId = dm.enqueue(req)
+      saveUpdateState()
       return updateDownloadId
     }
 
@@ -391,8 +505,16 @@ class MainActivity : TauriActivity() {
     @JavascriptInterface
     fun getUpdateProgress(): String {
       val obj = JSONObject()
+      val onDisk = updateApkFile()
       if (updateDownloadId <= 0) {
-        obj.put("bytes", 0).put("total", 0).put("done", false).put("path", "")
+        if (onDisk.exists()) {
+          updateApkPath = onDisk.absolutePath
+          obj.put("bytes", onDisk.length()).put("total", onDisk.length())
+            .put("done", true).put("path", onDisk.absolutePath)
+        }
+        else {
+          obj.put("bytes", 0).put("total", 0).put("done", false).put("path", "")
+        }
         return obj.toString()
       }
       val dm = getSystemService(DownloadManager::class.java)
@@ -409,20 +531,16 @@ class MainActivity : TauriActivity() {
       q.close()
 
       if (status == DownloadManager.STATUS_SUCCESSFUL) {
-        // The file is at the path we told DownloadManager to use.
-        val file = File(getExternalFilesDir(null), "rivulet-update.apk")
-        val path = if (file.exists()) file.absolutePath else {
-          // Fallback: resolve from the URI the DownloadManager recorded.
-          if (uriStr.isNotEmpty()) Uri.parse(uriStr).path else null
+        val path = if (onDisk.exists()) onDisk.absolutePath else {
+          if (!uriStr.isNullOrEmpty()) Uri.parse(uriStr).path else null
         }
         if (path != null) {
           updateApkPath = path
+          saveUpdateState()
           obj.put("done", true).put("path", path)
             .put("bytes", downloaded).put("total", total)
           return obj.toString()
         }
-        // Last resort: report done without a path — the About page will
-        // fall back to the manual download link.
         obj.put("done", true).put("path", updateApkPath ?: "")
           .put("bytes", downloaded).put("total", total)
         return obj.toString()
@@ -434,25 +552,17 @@ class MainActivity : TauriActivity() {
     }
 
     /**
-     * Open the previously downloaded APK so the user can install it.
-     * Uses FileProvider to hand a `content://` URI to the package installer.
+     * Open the previously downloaded APK so the user can install it. Same
+     * package name means Android replaces the running app with the new build.
      */
     @JavascriptInterface
     fun installUpdate(): Boolean {
-      val path = updateApkPath ?: return false
+      val path = updateApkPath ?: updateApkFile().takeIf { it.exists() }?.absolutePath ?: return false
       val file = File(path)
       if (!file.exists()) return false
-      val uri = FileProvider.getUriForFile(
-        this@MainActivity,
-        "${packageName}.fileprovider",
-        file
-      )
-      val intent = Intent(Intent.ACTION_VIEW).apply {
-        setDataAndType(uri, "application/vnd.android.package-archive")
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-      }
-      return runCatching { startActivity(intent) }.isSuccess
+      updateApkPath = path
+      runOnUiThread { launchInstaller(file) }
+      return true
     }
 
     /**
@@ -465,14 +575,16 @@ class MainActivity : TauriActivity() {
         this@MainActivity,
         0,
         Intent(this@MainActivity, MainActivity::class.java).apply {
+          action = Intent.ACTION_MAIN
           putExtra("openSettings", true)
+          addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         },
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
       )
       val note = NotificationCompat.Builder(this@MainActivity, UPDATE_CHANNEL)
         .setSmallIcon(android.R.drawable.stat_sys_download_done)
-        .setContentTitle("Rivulet $version is available")
-        .setContentText("Tap to update")
+        .setContentTitle("Rivulet $version is out")
+        .setContentText("Tap to download and install")
         .setAutoCancel(true)
         .setPriority(NotificationCompat.PRIORITY_DEFAULT)
         .setContentIntent(open)
@@ -492,33 +604,114 @@ class MainActivity : TauriActivity() {
     @JavascriptInterface
     fun setPlayerMode(on: Boolean) {
       runOnUiThread {
-        // A phone held upright turns the film the right way up. A TV is
-        // landscape already and ignores this.
-        requestedOrientation = if (on) {
-          ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        } else {
-          ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        }
-
-        // Two hours of film is two hours of no input on a phone, which the
-        // screen timeout reads as nobody being there.
-        if (on) {
-          window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        } else {
-          window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        }
-
-        val bars = WindowCompat.getInsetsController(window, web ?: window.decorView)
-        if (on) {
-          bars.hide(WindowInsetsCompat.Type.systemBars())
-          // A swipe brings them back for as long as it takes to use them,
-          // rather than dropping out of fullscreen for the rest of the film.
-          bars.systemBarsBehavior =
-            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        } else {
-          bars.show(WindowInsetsCompat.Type.systemBars())
-        }
+        playerMode = on
+        applyPlayerMode()
       }
+    }
+
+    /** STREAM_MUSIC as 0–100, so a swipe matches the phone's own volume rocker. */
+    @JavascriptInterface
+    fun mediaVolume(): Int {
+      val am = getSystemService(AudioManager::class.java) ?: return 100
+      val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+      return ((am.getStreamVolume(AudioManager.STREAM_MUSIC) * 100f) / max).toInt().coerceIn(0, 100)
+    }
+
+    @JavascriptInterface
+    fun setMediaVolume(level: Double) {
+      runOnUiThread {
+        val am = getSystemService(AudioManager::class.java) ?: return@runOnUiThread
+        val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        if (max <= 0) return@runOnUiThread
+        val v = ((level.coerceIn(0.0, 100.0) / 100.0) * max).toInt().coerceIn(0, max)
+        am.setStreamVolume(AudioManager.STREAM_MUSIC, v, 0)
+      }
+    }
+
+    /** This window's brightness, or the system value before the player overrode it. */
+    @JavascriptInterface
+    fun brightness(): Int {
+      val override = runCatching { window.attributes.screenBrightness }.getOrDefault(-1f)
+      if (override >= 0f)
+        return (override * 100f).toInt().coerceIn(0, 100)
+      val raw = runCatching {
+        Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS)
+      }.getOrDefault(128)
+      return ((raw / 255f) * 100f).toInt().coerceIn(0, 100)
+    }
+
+    @JavascriptInterface
+    fun setBrightness(level: Double) {
+      runOnUiThread {
+        val lp = window.attributes
+        lp.screenBrightness = (level.coerceIn(1.0, 100.0) / 100.0).toFloat()
+        window.attributes = lp
+      }
+    }
+
+    /** Hand the screen back to the system after the player closes. */
+    @JavascriptInterface
+    fun clearBrightness() {
+      runOnUiThread {
+        val lp = window.attributes
+        lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        window.attributes = lp
+      }
+    }
+  }
+
+  /**
+   * Hide the status and navigation bars, keep the screen on, lock a phone to
+   * landscape. The WebView has no Fullscreen API, so the player page has to
+   * ask here. Re-applied from `onResume` / `onWindowFocusChanged` because
+   * several OEM skins (MIUI among them) show the bars again on every focus.
+   */
+  private fun applyPlayerMode() {
+    val on = playerMode
+    requestedOrientation = if (on) {
+      ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+    } else {
+      ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+    }
+
+    if (on) {
+      window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+      window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+    } else {
+      window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+      window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+    }
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+      val lp = window.attributes
+      lp.layoutInDisplayCutoutMode =
+        WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+      window.attributes = lp
+    }
+
+    val bars = WindowCompat.getInsetsController(window, web ?: window.decorView)
+    if (on) {
+      bars.hide(WindowInsetsCompat.Type.systemBars())
+      // A swipe brings them back for as long as it takes to use them,
+      // rather than dropping out of fullscreen for the rest of the film.
+      bars.systemBarsBehavior =
+        WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+    } else {
+      bars.show(WindowInsetsCompat.Type.systemBars())
+    }
+
+    @Suppress("DEPRECATION")
+    window.decorView.systemUiVisibility = if (on) {
+      (View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+        or View.SYSTEM_UI_FLAG_FULLSCREEN
+        or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+        or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+        or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION)
+    } else {
+      (View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+        or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION)
     }
   }
 

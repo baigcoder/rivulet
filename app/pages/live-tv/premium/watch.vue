@@ -25,7 +25,7 @@ import { mdiArrowLeft, mdiCheck, mdiClose, mdiReload } from '@mdi/js'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { usePlaybackSource } from '~/composables/usePlaybackSource'
 import { MAX_RECONNECT_ATTEMPTS } from '~/stores/premiumTv'
-import { applyAspect, cycleAspect } from '~/utils/aspectRatio'
+import { cycleAspect } from '~/utils/aspectRatio'
 import { friendlyPlaybackError } from '~/utils/playbackError'
 import { premiumApi } from '~/utils/premiumTv'
 
@@ -478,10 +478,7 @@ function onActivity(): void {
 
 function cycleAspectRatio(): void {
   aspectRatio.value = cycleAspect(aspectRatio.value)
-  applyAspect(playerRef.value, aspectRatio.value)
 }
-watch(aspectRatio, mode => applyAspect(playerRef.value, mode))
-watch(playerRef, player => applyAspect(player, aspectRatio.value))
 
 function toggleFav(): void {
   const ch = channel.value
@@ -491,13 +488,9 @@ function toggleFav(): void {
 
 const isFavorite = computed(() => channel.value ? premium.isFavorite(channel.value) : false)
 
-const isFullscreen = ref(false)
+const isFullscreen = ref(isAndroid())
 function toggleFullscreen(): void {
   isFullscreen.value = !isFullscreen.value
-  if (isFullscreen.value)
-    document.documentElement.requestFullscreen?.()
-  else
-    document.exitFullscreen?.()
 }
 
 // ── Navigation ───────────────────────────────────────────────────
@@ -555,6 +548,8 @@ onMounted(() => {
   window.addEventListener('click', onActivity)
   window.addEventListener('touchstart', onActivity, { passive: true })
   window.addEventListener('pointermove', onActivity, { passive: true })
+  if (isAndroid())
+    setAndroidPlayerMode(true)
   void load({ fresh: true })
   pollHandle = setInterval(syncPlayerState, POLL_MS)
 })
@@ -576,6 +571,8 @@ onUnmounted(() => {
   clearReconnect()
   playback.clear()
   premium.resetPlayer()
+  if (isAndroid())
+    setAndroidPlayerMode(false)
 })
 </script>
 
@@ -611,6 +608,8 @@ onUnmounted(() => {
         :status="statusLine"
         :title="channelName"
         :mode="playerMode"
+        :aspect="aspectRatio"
+        :fullscreen="isFullscreen"
         :user-agent="playback.source.value.userAgent"
         :referer="playback.source.value.referer"
         @failed="reason => void onPlaybackFailed(reason)"

@@ -1357,8 +1357,9 @@ export async function startTorrent(options: {
           found = options.fast
             ? await findReleasesFast(imdbId, options.season ?? 0, options.episode ?? 0, {
                 // Engine on: start on the first magnet, don't wait 2s for a
-                // Direct URL. Engine off: wait for a link, that's the stream.
-                graceMs: attempt === 1 ? 250 : 100,
+                // Direct URL. Engine off: first link plays at once — no extra
+                // grace for a second server that is still resolving.
+                graceMs: attempt === 1 ? (allowTorrents ? 250 : 0) : 100,
                 needUrl: !allowTorrents,
                 onLate: late => {
                   const more = serverCandidates(late, options.maxBytes ?? MAX_BYTES, options.compatible ?? !hasNativePlayer(), allowTorrents)

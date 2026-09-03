@@ -29,6 +29,8 @@ const props = defineProps<{
   recentCount: number
   /** Free TV's iptv-org list is short — keep it open so the rail matches Premium. */
   categoriesOpen?: boolean
+  /** Sheet already titled Categories — skip the fold header. */
+  bare?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -46,7 +48,8 @@ const filter = ref('')
  * wall. Open by default — hiding the catalog behind a click would be the
  * opposite mistake.
  */
-const groupsOpen = ref(props.categoriesOpen === true)
+const groupsOpen = ref(props.bare || props.categoriesOpen === true)
+const groupsShown = computed(() => props.bare || groupsOpen.value)
 
 watch(
   () => props.view,
@@ -132,8 +135,9 @@ function fmt(n: number): string {
       </button>
     </div>
 
-    <div v-if="categories.length > 0" class="flex min-h-0 flex-1 flex-col gap-2 border-t border-outline/20 pt-2">
+    <div v-if="categories.length > 0" class="flex min-h-0 flex-1 flex-col gap-2" :class="bare ? '' : 'border-t border-outline/20 pt-2'">
       <button
+        v-if="!bare"
         type="button"
         class="flex items-center gap-2 px-1.5 py-1 text-label-medium font-medium opacity-55 hover:opacity-100 focus-visible:opacity-100 transition-opacity"
         :aria-expanded="groupsOpen"
@@ -144,7 +148,7 @@ function fmt(n: number): string {
         <span class="tabular-nums opacity-70">{{ fmt(categories.length) }}</span>
       </button>
 
-      <template v-if="groupsOpen">
+      <template v-if="groupsShown">
         <search-field
           v-model="filter"
           :placeholder="$t('Find a category…')"

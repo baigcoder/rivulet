@@ -7,6 +7,9 @@ const props = defineProps<{ media: Media }>()
 const ui = useUiStore()
 const library = useLibraryStore()
 
+const coarsePointer = useMediaQuery('(pointer: coarse)')
+const finger = computed(() => coarsePointer.value || isAndroid())
+
 const progress = computed(() => library.cardProgress(props.media))
 const played = computed(() => fraction(progress.value))
 const watched = computed(() => library.isWatched(props.media))
@@ -16,6 +19,13 @@ const watched = computed(() => library.isWatched(props.media))
 // sees the same row it would with a pointer.
 const hover = ref(false)
 const pressed = ref(false)
+
+function onEnter() {
+  if (finger.value)
+    return
+  hover.value = true
+  ui.preview(props.media)
+}
 </script>
 
 <template>
@@ -23,7 +33,7 @@ const pressed = ref(false)
     :to="mediaLink(media)"
     class="group flex select-none items-center gap-3 rounded-xl px-3 py-2 outline-none transition-colors duration-200 odd:bg-surface-container/30 hover:bg-surface-container-high/70 focus-visible:ring-2 focus-visible:ring-primary"
     :style="{ transform: pressed ? 'scale(0.98)' : 'scale(1)' }"
-    @mouseenter="hover = true; ui.preview(media)"
+    @mouseenter="onEnter"
     @mouseleave="hover = false; pressed = false"
     @focus="hover = true; ui.hover(media)"
     @blur="hover = false"

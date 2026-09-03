@@ -21,6 +21,10 @@ export default defineNuxtPlugin(() => {
     const t = e.changedTouches[0]
     if (!t)
       return
+    // The player owns left-edge volume; opening the drawer over a film is the
+    // gesture the OS already reserved for Back.
+    if (document.documentElement.classList.contains('rivulet-video'))
+      return
     x0 = t.clientX
     y0 = t.clientY
     live = !ui.drawer && inSwipeZone(x0)

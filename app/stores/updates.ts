@@ -1,7 +1,8 @@
 import type { Update } from '~/utils/updates'
 import { invoke } from '@tauri-apps/api/core'
+import { sendNotification } from '@tauri-apps/plugin-notification'
 import { key } from '~/brand'
-import { androidDismissUpdateNotification, androidDownloadUpdate, androidGetUpdateProgress, androidInstallUpdate, androidNotifyUpdate, isAndroid } from '~/utils/platform'
+import { androidDismissUpdateNotification, androidDownloadUpdate, androidGetUpdateProgress, androidInstallUpdate, androidNotifyUpdate, isAndroid, isDesktop } from '~/utils/platform'
 
 /**
  * Whether a newer Rivulet exists, and what this particular install can do with
@@ -29,6 +30,10 @@ export const useUpdatesStore = defineStore('updates', () => {
    * than a permanent decoration — the About panel still offers it.
    */
   const skipped = useLocalStorage(key('updateSkipped'), '')
+  /** Last version an OS notification was posted for, so a 6-hour recheck does not nag. */
+  const notified = useLocalStorage(key('updateNotified'), '')
+  /** Version whose APK is on disk — so Install survives a restart, and an old file is not offered as a new one. */
+  const pendingApk = useLocalStorage(key('updateApkVersion'), '')
 
   const available = computed(() =>
     release.value && isNewer(current.value, release.value.version) ? release.value : null)
@@ -37,6 +42,32 @@ export const useUpdatesStore = defineStore('updates', () => {
 
   function dismiss() {
     skipped.value = available.value?.version ?? ''
+    androidDismissUpdateNotification()
+  }
+
+  /**
+   * One OS notification per version. The toolbar badge is separate and stays
+   * until they open About or tap Not now.
+   */
+  function ping() {
+    const next = available.value
+    const settings = useSettingsStore()
+    if (!next || dismissed.value || !settings.notifyUpdates || notified.value === next.version)
+      return
+    const title = $t('Rivulet {version} is out', { version: next.version })
+    const body = next.notes.split('\n').find(line => line.trim()) || $t('Open Settings → About to update.')
+    if (isAndroid()) {
+      androidNotifyUpdate(next.version)
+    }
+    else if (isDesktop()) {
+      try {
+        sendNotification({ title, body })
+      }
+      catch {
+        // No permission, or the plugin is missing in this build.
+      }
+    }
+    notified.value = next.version
   }
 
   /**
@@ -55,27 +86,27 @@ export const useUpdatesStore = defineStore('updates', () => {
     release.value = await latestUpdate()
     status.value = 'idle'
 
-    // On Android: notify the user when a new version is found (once per version).
-    if (isAndroid() && available.value && !dismissed.value) {
-      androidNotifyUpdate(available.value.version)
+    // An APK already on disk for *this* release: skip the download and show
+    // Install, which is what replaces the running package.
+    if (isAndroid() && available.value && pendingApk.value === available.value.version) {
+      const snap = androidGetUpdateProgress()
+      if (snap?.done && snap.path)
+        status.value = 'ready'
     }
+
+    ping()
   }
 
   /**
-   * Re-check periodically while the app is open (every 6 hours).
-   * Only runs on Android where `can_self_update` is false but we still
-   * want to notify the user.
+   * Re-check while the app is open so a release published after launch still
+   * surfaces — desktop and Android both, the badge and the OS notification.
    */
   let recheckTimer: ReturnType<typeof setInterval> | null = null
   function startRecheckTimer() {
     if (recheckTimer)
       return
     const SIX_HOURS = 6 * 60 * 60 * 1000
-    recheckTimer = setInterval(() => {
-      if (!isAndroid())
-        return
-      check()
-    }, SIX_HOURS)
+    recheckTimer = setInterval(check, SIX_HOURS)
   }
 
   /**
@@ -101,6 +132,7 @@ export const useUpdatesStore = defineStore('updates', () => {
       status.value = 'downloading'
       progress.value = 0
       error.value = ''
+      pendingApk.value = available.value.version
       try {
         androidDismissUpdateNotification()
         const downloadId = androidDownloadUpdate(apkUrl)

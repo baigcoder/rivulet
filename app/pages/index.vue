@@ -71,10 +71,7 @@ function runtimeText(min?: number) {
 
 // ── Auto-advance spotlight slider every 6 seconds, pausing on hover or focus ──
 const isHovered = ref(false)
-const progress = ref(0)
 let timer: ReturnType<typeof setInterval> | null = null
-let animFrame: number | null = null
-let startTime = Date.now()
 const DURATION = 6000
 
 function nextSlide() {
@@ -91,40 +88,19 @@ function prevSlide() {
 
 function startTimer() {
   stopTimer()
-  startTime = Date.now()
   timer = setInterval(() => {
-    if (!isHovered.value && spotlight.value.length > 1) {
+    if (!isHovered.value && spotlight.value.length > 1)
       nextSlide()
-      startTime = Date.now()
-    }
   }, DURATION)
-
-  function updateProgress() {
-    if (!isHovered.value && spotlight.value.length > 1) {
-      const elapsed = (Date.now() - startTime) % DURATION
-      progress.value = Math.min(100, (elapsed / DURATION) * 100)
-    }
-    else if (isHovered.value) {
-      startTime = Date.now() - (progress.value / 100) * DURATION
-    }
-    animFrame = requestAnimationFrame(updateProgress)
-  }
-  animFrame = requestAnimationFrame(updateProgress)
 }
 
 function stopTimer() {
   if (timer)
     clearInterval(timer)
-  if (animFrame)
-    cancelAnimationFrame(animFrame)
   timer = null
-  animFrame = null
 }
 
-watch(at, () => {
-  startTime = Date.now()
-  progress.value = 0
-})
+watch(at, () => startTimer())
 
 onMounted(() => {
   startTimer()
@@ -359,14 +335,18 @@ const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
                   <media-poster :src="posterUrl(media.poster, 'w185')" :alt="media.title" />
                   <v-tooltip activator="parent" location="top" :text="media.title" />
 
-                  <!-- Active item timer progress bar. scaleX, not width: the
-                       bar ticks every 75ms for the whole autoplay window, and
-                       a width tween is layout per tick. The glow stays — it
-                       paints once, the scale doesn't touch it. -->
+                  <!-- Active item timer. CSS scaleX, not a Vue tick: the old
+                       rAF wrote a reactive every frame and the home page
+                       re-rendered for a 6px bar. `trace-x` is already the
+                       compositor-only fill this design uses. -->
                   <div v-if="index === at" class="absolute inset-x-0 bottom-0 h-1.5 bg-black/70">
                     <div
-                      class="h-full w-full origin-left bg-primary transition-transform duration-75 ease-linear shadow-[0_0_8px_rgba(111,227,255,0.8)]"
-                      :style="{ transform: `scaleX(${progress / 100})` }"
+                      :key="at"
+                      class="h-full w-full origin-left bg-primary shadow-[0_0_8px_rgba(111,227,255,0.8)]"
+                      :style="{
+                        animation: `trace-x ${DURATION}ms linear both`,
+                        animationPlayState: isHovered ? 'paused' : 'running',
+                      }"
                     />
                   </div>
                 </button>

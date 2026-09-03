@@ -82,6 +82,82 @@ export function openStorageSettings(): boolean {
   return bridge()?.openStorageSettings?.() ?? false
 }
 
+/**
+ * Hide or show Android's status and navigation bars, and lock a phone to
+ * landscape. The WebView implements neither the Fullscreen API nor
+ * `screen.orientation.lock`, so playback has to ask MainActivity instead.
+ *
+ * False when this is not the Android app — the caller then uses the window
+ * Fullscreen API or Tauri's `setFullscreen`.
+ */
+export function setAndroidPlayerMode(on: boolean): boolean {
+  const fn = bridge()?.setPlayerMode
+  if (typeof fn !== 'function')
+    return false
+  fn(on)
+  return true
+}
+
+function asLevel(n: unknown): number | null {
+  const v = Number(n)
+  return Number.isFinite(v) ? v : null
+}
+
+/** Phone media volume 0–100, or null off Android. */
+export function mediaVolume(): number | null {
+  try {
+    return asLevel(bridge()?.mediaVolume?.())
+  }
+  catch {
+    return null
+  }
+}
+
+/** True when Android took the change (STREAM_MUSIC). */
+export function setMediaVolume(level: number): boolean {
+  const fn = bridge()?.setMediaVolume
+  if (typeof fn !== 'function')
+    return false
+  try {
+    fn(level)
+    return true
+  }
+  catch {
+    return false
+  }
+}
+
+/** Window brightness 0–100, or null off Android. */
+export function screenBrightness(): number | null {
+  try {
+    return asLevel(bridge()?.brightness?.())
+  }
+  catch {
+    return null
+  }
+}
+
+export function setScreenBrightness(level: number): boolean {
+  const fn = bridge()?.setBrightness
+  if (typeof fn !== 'function')
+    return false
+  try {
+    fn(level)
+    return true
+  }
+  catch {
+    return false
+  }
+}
+
+export function clearScreenBrightness(): boolean {
+  const fn = bridge()?.clearBrightness
+  if (typeof fn !== 'function')
+    return false
+  fn()
+  return true
+}
+
 /** MainActivity's `Screen`, present only inside the Android app. */
 function bridge() {
   return (globalThis as {
@@ -90,6 +166,12 @@ function bridge() {
       volumes?: () => string
       tv?: () => boolean
       openStorageSettings?: () => boolean
+      setPlayerMode?: (on: boolean) => void
+      mediaVolume?: () => number
+      setMediaVolume?: (level: number) => void
+      brightness?: () => number
+      setBrightness?: (level: number) => void
+      clearBrightness?: () => void
       downloadUpdate?: (url: string) => number
       getUpdateProgress?: () => string
       installUpdate?: () => boolean

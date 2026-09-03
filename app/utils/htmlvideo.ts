@@ -22,6 +22,7 @@
  * that component asks for are implemented; anything else reads back missing,
  * which is also what mpv does for a property it can't produce.
  */
+import { isTauri } from '@tauri-apps/api/core'
 import { platform } from '@tauri-apps/plugin-os'
 import { isDesktop } from './platform'
 
@@ -208,6 +209,34 @@ function looksLikeHls(url: string): boolean {
   return /\.m3u8?$/i.test(path) || /[/.]m3u8?(?:[?#]|$)/i.test(url)
 }
 
+/** Debrid hosts reject a non-browser UA. Same string the IPTV proxy sends. */
+const STREAM_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+
+function isLoopback(url: string) {
+  return /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])[:/]/i.test(url)
+}
+
+/**
+ * Open remote Direct HTTP via the loopback proxy so the element/libVLC
+ * talks to localhost while reqwest follows the 302s. Same string
+ * `proxy_free_stream_url` returns — built here so Android does not wait
+ * on an IPC round-trip, and so a webview where `isTauri()` is late still
+ * wraps (libVLC hitting the resolver itself is the 40s Direct wait).
+ * Loopback and a plain `bun run dev` (no proxy) keep the original URL.
+ */
+function playUrl(url: string): string {
+  if (isLoopback(url) || !/^https?:\/\//i.test(url))
+    return url
+  if (!isTauri() && !hasVlcPlayer())
+    return url
+  let qs = `url=${encodeURIComponent(url)}&X-Rivulet-Ua=${encodeURIComponent(STREAM_UA)}`
+  try {
+    qs += `&X-Rivulet-Referer=${encodeURIComponent(`${new URL(url).origin}/`)}`
+  }
+  catch { /* not a URL */ }
+  return `http://127.0.0.1:3031/stream?${qs}`
+}
+
 /** The slice of hls.js this module uses, so the import needs no `any`. */
 interface HlsInstance {
   loadSource: (url: string) => void
@@ -259,7 +288,16 @@ export function videoEngine(video: HTMLVideoElement): PlayerEngine {
       // A live playlist wants a short back-buffer: the default keeps
       // everything played, which on a channel left on for an hour is hundreds
       // of megabytes of segments a TV does not have to spare.
-      hls = new Hls({ backBufferLength: 30, enableWorker: true }) as unknown as HlsInstance
+      hls = new Hls({
+        backBufferLength: 30,
+        enableWorker: true,
+        // Default maxBufferLength is 30s — Direct play then sits on
+        // "Buffering…" while it prefetches half a minute. A second or two
+        // is enough to start; hls.js grows the buffer after playback.
+        maxBufferLength: 4,
+        maxMaxBufferLength: 16,
+        startFragPrefetch: true,
+      }) as unknown as HlsInstance
       hls.on('hlsError', (_e, data) => {
         // Only a fatal error is a failure. hls.js recovers from the rest on its
         // own, and reporting those would make the player give up on a channel
@@ -310,10 +348,21 @@ export function videoEngine(video: HTMLVideoElement): PlayerEngine {
   const READ: Record<string, () => unknown> = {
     'pause': () => video.paused,
     // Nothing to play with and not paused on purpose: that is a stall.
-    'paused-for-cache': () => !video.paused && video.readyState < 3,
+    'paused-for-cache': () => !video.paused && video.readyState < 2,
     'duration': () => Number.isFinite(video.duration) ? video.duration : 0,
     'time-pos': () => video.currentTime,
     'demuxer-cache-time': () => bufferedTo(),
+    /**
+     * 0–100 fill of the startup buffer (1s, same target as Direct HTTP
+     * mpv `cache-secs`). A whole-file percent stays near 0 for minutes and
+     * reads as a stuck loader; this hits 100 when play can start.
+     */
+    'cache-buffering-state': () => {
+      const ahead = Math.max(0, bufferedTo() - video.currentTime)
+      const dur = Number.isFinite(video.duration) ? video.duration : 0
+      const need = dur > 0 ? Math.min(1, dur) : 1
+      return Math.min(100, Math.round((ahead / need) * 100))
+    },
     'volume': () => Math.round(video.volume * 100),
     'mute': () => video.muted,
     'speed': () => video.playbackRate,
@@ -393,15 +442,15 @@ export function videoEngine(video: HTMLVideoElement): PlayerEngine {
       failure = ''
       running = true
       dropHls()
+      const open = playUrl(url)
       // An HLS playlist the element cannot parse goes through hls.js; anything
       // else — a progressive file from the torrent engine, an MPEG-TS live
-      // stream, a debrid URL — goes straight to the element, which is what
-      // handles those best.
-      if (looksLikeHls(url) && !nativeHls(video) && await attachHls(url)) {
+      // stream, an already-proxied Direct URL — goes straight to the element.
+      if (looksLikeHls(url) && !nativeHls(video) && await attachHls(open)) {
         await video.play().catch(() => {})
         return
       }
-      video.src = url
+      video.src = open
       video.load()
       await video.play().catch(() => {})
     },
@@ -463,7 +512,7 @@ export function vlcEngine(): PlayerEngine | null {
   return {
     async start(url: string) {
       ext.sid = 'no'
-      bridge.start(url)
+      bridge.start(playUrl(url))
     },
 
     stop: () => bridge.stop(),

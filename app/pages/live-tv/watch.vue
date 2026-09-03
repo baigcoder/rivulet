@@ -9,7 +9,7 @@
  *   - Aspect ratio mode switcher (Contain, Cover, Fill)
  */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { applyAspect, cycleAspect } from '~/utils/aspectRatio'
+import { cycleAspect } from '~/utils/aspectRatio'
 import { iptvProxyHealth, liveResolveStream, proxyFreeStreamUrl } from '~/utils/iptv'
 import { MAX_AUTO_SKIPS, nextPlayable } from '~/utils/livehealth'
 import { friendlyPlaybackError } from '~/utils/playbackError'
@@ -433,22 +433,13 @@ async function toggleFavorite() {
     await liveTv.toggleFavorite({ id: channelId.value })
 }
 
-const isFullscreen = ref(false)
+const isFullscreen = ref(isAndroid())
 const aspectRatio = ref<'contain' | 'cover' | 'fill'>('contain')
 function cycleAspectRatio(): void {
   aspectRatio.value = cycleAspect(aspectRatio.value)
-  applyAspect(playerRef.value, aspectRatio.value)
 }
-watch(aspectRatio, mode => applyAspect(playerRef.value, mode))
-watch(playerRef, player => applyAspect(player, aspectRatio.value))
 function toggleFullscreen() {
   isFullscreen.value = !isFullscreen.value
-  if (isFullscreen.value) {
-    document.documentElement.requestFullscreen?.()
-  }
-  else {
-    document.exitFullscreen?.()
-  }
 }
 
 /** Re-show the overlay on any user activity (mouse move, key, click). */
@@ -528,6 +519,11 @@ onMounted(async () => {
   window.addEventListener('click', onActivity)
   window.addEventListener('touchstart', onActivity, { passive: true })
   window.addEventListener('pointermove', onActivity, { passive: true })
+  // The player is already a full-viewport page. Hide Android's status and
+  // navigation bars now, not only after the stream URL exists — the webview
+  // has no Fullscreen API, so this has to go through MainActivity.
+  if (isAndroid())
+    setAndroidPlayerMode(true)
   await resolveStreamUrl()
   // Poll the player state every 500ms so the overlay's playing/volume
   // bound values stay current. mpv's IPC properties are already polled
@@ -557,6 +553,8 @@ onUnmounted(() => {
   window.removeEventListener('pointermove', onActivity)
   if (pollHandle)
     clearInterval(pollHandle)
+  if (isAndroid())
+    setAndroidPlayerMode(false)
 })
 </script>
 
@@ -583,6 +581,8 @@ onUnmounted(() => {
         :src="streamUrl"
         :title="channelName"
         mode="live"
+        :aspect="aspectRatio"
+        :fullscreen="isFullscreen"
         :resolving="resolving || autoSkipping"
         :user-agent="userAgent"
         :referer="referer"

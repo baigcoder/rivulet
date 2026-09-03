@@ -33,7 +33,7 @@ const props = defineProps<{ showBack?: boolean }>()
 const premium = usePremiumTvStore()
 const route = useRoute()
 const router = useRouter()
-const { mdAndUp, lgAndUp } = useDisplay()
+const { smAndUp, mdAndUp, lgAndUp } = useDisplay()
 
 /** The rail is only ever pinned where there is width for it. */
 const railPinned = computed(() => lgAndUp.value)
@@ -508,15 +508,26 @@ async function disconnect(): Promise<void> {
       </v-card>
     </v-dialog>
 
-    <v-dialog v-model="sheetOpen" max-width="320" scrollable>
-      <v-card class="bg-surface-container">
-        <div class="flex items-center justify-between px-4 pt-4">
+    <v-dialog
+      v-model="sheetOpen"
+      scrollable
+      :fullscreen="!smAndUp"
+      :max-width="smAndUp ? 400 : undefined"
+    >
+      <v-card class="flex h-full flex-col bg-surface">
+        <div
+          class="flex items-center justify-between px-4 pt-4"
+          :class="smAndUp ? undefined : 'pt-[max(1rem,var(--safe-top))]'"
+        >
           <h2 class="text-title-large font-bold">
             {{ sheetTitle }}
           </h2>
           <v-btn :icon="mdiClose" variant="text" size="small" :aria-label="$t('Close')" @click="sheetOpen = false" />
         </div>
-        <v-card-text class="flex min-h-0 flex-1 flex-col !pt-2" style="height: min(80vh, 640px)">
+        <v-card-text
+          class="flex min-h-0 flex-1 flex-col !pt-3"
+          :style="smAndUp ? { height: 'min(80vh, 640px)' } : undefined"
+        >
           <premium-tv-premium-sidebar
             v-if="isLive"
             :view="premium.view"
@@ -525,6 +536,7 @@ async function disconnect(): Promise<void> {
             :total-channels="premium.catalog?.channels ?? 0"
             :favorite-count="premium.favoriteIds.size"
             :recent-count="premium.recent.length"
+            bare
             @set-view="pickView"
             @set-category="pickCategory"
           />
@@ -533,6 +545,7 @@ async function disconnect(): Promise<void> {
             :categories="premium.vodCategories"
             :selected-id="premium.selectedVodCategory"
             :kind="isMovies ? 'movie' : 'series'"
+            bare
             @pick="pickVodCategory"
           />
         </v-card-text>

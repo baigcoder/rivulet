@@ -9,5 +9,9 @@
              of them ours. Pinned to the app's own ground, a slow start reads as
              the app arriving rather than as a flash of the wrong colour. -->
         <item name="android:windowBackground">@color/rivulet_ground</item>
+        <!-- Live/film player mode hides the bars and draws into the cutout. The
+             activity already calls enableEdgeToEdge; this keeps the same
+             layout when an OEM restores the default cutout mode. -->
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
     </style>
 </resources>

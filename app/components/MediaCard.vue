@@ -23,6 +23,9 @@ const emit = defineEmits<{ toggleSelect: [] }>()
 const ui = useUiStore()
 const library = useLibraryStore()
 
+const coarsePointer = useMediaQuery('(pointer: coarse)')
+const finger = computed(() => coarsePointer.value || isAndroid())
+
 const progress = computed(() => library.cardProgress(props.media))
 const played = computed(() => fraction(progress.value))
 const episode = computed(() => library.cardLabel(props.media))
@@ -45,6 +48,13 @@ function handleClick(e: MouseEvent) {
 
 function play() {
   return navigateTo(props.resumeTo || props.to || mediaLink(props.media))
+}
+
+function onEnter() {
+  if (finger.value)
+    return
+  hover.value = true
+  ui.preview(props.media)
 }
 
 // Not while hovered, though. The card you're pointing at is the definition of
@@ -73,7 +83,7 @@ const cardStyle = computed(() => {
     class="group relative block select-none outline-none"
     :class="{ '[content-visibility:auto]': !hover }"
     :style="{ containIntrinsicSize: reserve, ...cardStyle }"
-    @mouseenter="hover = true; ui.preview(media)"
+    @mouseenter="onEnter"
     @mouseleave="hover = false"
     @focus="hover = true; ui.hover(media)"
     @blur="hover = false"

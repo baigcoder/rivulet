@@ -61,6 +61,17 @@ function open(url: string) {
     </settings-section>
 
     <settings-section :title="$t('Updates')">
+      <v-switch
+        v-model="settings.notifyUpdates"
+        color="primary"
+        density="comfortable"
+        hide-details
+        :label="$t('Notify me when a new version is out')"
+      />
+      <p class="text-body-small opacity-70">
+        {{ $t('A system notification with the version and what changed. The toolbar still shows a badge until you open this page or tap Not now.') }}
+      </p>
+
       <!-- Three outcomes, and which one shows has nothing to do with which
            platform this is: `capable` is about how the app was *installed*.
            See can_self_update in src-tauri/src/lib.rs. -->
@@ -108,9 +119,9 @@ function open(url: string) {
           >
             {{ $t('Restart to finish') }}
           </v-btn>
-          <!-- Android: open system installer after download completes -->
+          <!-- Android: system installer replaces this package with the new APK -->
           <v-btn
-            v-if="updates.status === 'ready' && platform === 'android'"
+            v-else-if="updates.status === 'ready' && platform === 'android'"
             :prepend-icon="mdiUpdate"
             variant="flat"
             color="primary"
@@ -129,25 +140,33 @@ function open(url: string) {
           >
             {{ $t('Update now') }}
           </v-btn>
-          <!-- Android: in-app download (uses DownloadManager) -->
+          <!-- Android: DownloadManager, then Install now once the file is on disk -->
           <v-btn
-            v-else-if="platform === 'android' && updates.status !== 'ready'"
-            :prepend-icon="mdiUpdate"
+            v-else-if="platform === 'android'"
+            :prepend-icon="mdiTrayArrowDown"
             :loading="updates.status === 'downloading'"
             variant="flat"
             color="primary"
             @click="updates.install()"
           >
-            {{ $t('Update now') }}
+            {{ $t('Download the APK') }}
           </v-btn>
-          <!-- Fallback: manual download -->
+          <!-- Desktop that cannot self-replace, or any failed install: the release page -->
           <v-btn
-            v-if="!updates.capable || updates.status === 'failed'"
-            :prepend-icon="mdiTrayArrowDown"
+            v-if="platform !== 'android' && (!updates.capable || updates.status === 'failed')"
+            :prepend-icon="mdiOpenInNew"
             variant="tonal"
             @click="open(downloadUrl)"
           >
-            {{ $t('Download the APK') }}
+            {{ $t('Open the release') }}
+          </v-btn>
+          <v-btn
+            v-if="platform === 'android' && updates.status === 'failed'"
+            :prepend-icon="mdiOpenInNew"
+            variant="tonal"
+            @click="open(downloadUrl)"
+          >
+            {{ $t('Open the release') }}
           </v-btn>
           <v-btn
             v-if="updates.status !== 'downloading' && updates.status !== 'ready' && !updates.dismissed"
@@ -159,7 +178,7 @@ function open(url: string) {
         </div>
 
         <p v-if="updates.status === 'ready' && platform === 'android'" class="text-body-small opacity-70">
-          {{ $t('The APK has been downloaded. Tap "Install now" to open it — Android will ask you to confirm.') }}
+          {{ $t('The APK has been downloaded. Tap Install now to replace this app with the new build. Android will ask you to confirm.') }}
         </p>
         <p v-else-if="updates.status === 'ready'" class="text-body-small opacity-70">
           {{ $t('Installed. It takes effect the next time Rivulet starts.') }}
@@ -184,10 +203,7 @@ function open(url: string) {
       </template>
 
       <p class="text-body-small opacity-70">
-        {{ platform === 'android'
-          ? $t('Checked each time Rivulet starts, and periodically while the app is open. A system notification will tell you when an update is ready.')
-          : $t('Checked once each time Rivulet starts, against this project\'s GitHub releases. Nothing else is sent — there is no account and no telemetry behind it.')
-        }}
+        {{ $t('Checked each time Rivulet starts, and periodically while the app is open, against this project\'s GitHub releases. Nothing else is sent — there is no account and no telemetry behind it.') }}
       </p>
     </settings-section>
 

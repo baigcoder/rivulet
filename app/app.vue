@@ -112,6 +112,7 @@ watchEffect(() => {
 // reaches Vuetify's own styles, which no prop of ours would.
 watchEffect(() => {
   document.documentElement.classList.toggle('reduce-effects', settings.reduceEffects)
+  document.documentElement.classList.toggle('android', isAndroid())
 })
 
 // The same trick for motion, and a separate class because it answers a separate

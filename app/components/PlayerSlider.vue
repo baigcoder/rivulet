@@ -60,6 +60,8 @@ function onMove(e: PointerEvent) {
 }
 
 function onLeave() {
+  if (el.value?.matches(':focus'))
+    return
   hover.value = null
   emit('hover', null)
 }
@@ -97,25 +99,60 @@ function onKey(e: KeyboardEvent) {
     return
   e.preventDefault()
   const value = Math.max(0, Math.min(props.max, next(props.modelValue)))
+  hover.value = value
+  emit('hover', value)
   emit('update:modelValue', value)
   emit('change', value)
 }
+
+function onFocus() {
+  if (props.disabled)
+    return
+  hover.value = props.modelValue
+  emit('hover', hover.value)
+}
+
+function onBlur() {
+  if (dragging.value)
+    return
+  hover.value = null
+  emit('hover', null)
+}
+
+const chapterTitle = computed(() => {
+  const t = hover.value
+  const list = props.chapters
+  if (t == null || !list?.length)
+    return ''
+  let title = ''
+  for (const ch of list) {
+    if (ch.time <= t)
+      title = ch.title || ''
+    else break
+  }
+  return title
+})
 </script>
 
 <template>
-  <!-- h-4 is the touch target, well beyond the 3px rail, so grabbing it never
-       misses. `group` is what lets the rail thicken and the knob appear on
-       hover; dragging holds both open once the pointer has left the rail. -->
+  <!-- h-10 is the pointer and remote target (~40px at 10 feet). The painted
+       rail stays 3px; `group` thickens it and shows the knob on hover *or*
+       focus, because a TV never hovers. -->
   <div
     ref="el"
-    class="group relative h-4 flex items-center rounded touch-none"
-    :class="disabled ? 'pointer-events-none cursor-default opacity-40' : 'cursor-pointer'"
+    class="group relative flex items-center rounded touch-none"
+    :class="[
+      format ? 'h-10' : 'h-4',
+      disabled ? 'pointer-events-none cursor-default opacity-40' : 'cursor-pointer',
+    ]"
     role="slider"
     :tabindex="disabled ? -1 : 0"
     :aria-valuenow="Math.round(modelValue)"
     :aria-valuemin="0"
     :aria-valuemax="max"
     @keydown="onKey"
+    @focus="onFocus"
+    @blur="onBlur"
     @pointerdown="onDown"
     @pointermove="onMove"
     @pointerup="onUp"
@@ -123,7 +160,7 @@ function onKey(e: KeyboardEvent) {
     @pointerleave="onLeave"
   >
     <div
-      class="relative w-full overflow-hidden rounded-full bg-white/22 transition-[height] duration-120 group-hover:h-[5px]"
+      class="relative w-full overflow-hidden rounded-full bg-white/22 transition-[height] duration-120 group-hover:h-[5px] group-focus-within:h-[5px]"
       :class="dragging ? 'h-[5px]' : 'h-[3px]'"
     >
       <div class="absolute inset-y-0 left-0 bg-white/35" :style="{ width: pct(buffered) }" />
@@ -141,25 +178,36 @@ function onKey(e: KeyboardEvent) {
          inset by its own radius so the ends stay inside the rail — the volume
          slider's parent clips, and half a knob is what showed at 100%. -->
     <div
-      class="absolute top-1/2 size-3.5 rounded-full bg-primary transition-transform duration-120 -translate-x-1/2 -translate-y-1/2 group-hover:scale-100"
+      class="absolute top-1/2 size-3.5 rounded-full bg-primary transition-transform duration-120 -translate-x-1/2 -translate-y-1/2 group-hover:scale-100 group-focus-within:scale-100"
       :class="dragging ? 'scale-100' : 'scale-0'"
       :style="{ left: `calc(7px + (100% - 14px) * ${frac(modelValue)})` }"
     />
 
-    <!-- A frame is taller than the bar, so this one overhangs it and needs a
-         cut of its own — and an opaque fill, because what shows through a hole
-         in the native window is the page, not the picture. Half a frame is 96px:
-         near either end the bubble stops following the cursor rather than hang
-         off the side of the player. -->
+    <!-- Always `data-cut`: on X11/Win32 the card hangs into the picture, and
+         a hole that waits for the JPEG never opens. Half a card is 7.5rem. -->
     <div
       v-if="format && hover !== null"
-      :data-cut="thumb ? '' : null"
-      class="pointer-events-none absolute bottom-4 flex flex-col items-center overflow-hidden rounded -translate-x-1/2"
-      :class="{ 'border border-white/15 bg-black': thumb }"
-      :style="{ left: thumb ? `clamp(96px, ${pct(hover)}, calc(100% - 96px))` : pct(hover) }"
+      data-cut
+      class="pointer-events-none absolute bottom-5 z-10 flex w-60 flex-col overflow-hidden rounded-lg bg-black shadow-lg -translate-x-1/2"
+      :style="{ left: `clamp(7.5rem, ${pct(hover)}, calc(100% - 7.5rem))` }"
     >
-      <img v-if="thumb" :src="thumb" alt="" class="block w-48 transition-opacity duration-100" :class="approx ? 'opacity-55' : 'opacity-100'">
-      <span class="whitespace-nowrap bg-black/85 px-1.5 py-px text-label-small tabular-nums">{{ format(hover) }}</span>
+      <div class="relative aspect-video w-full bg-white/10">
+        <img
+          v-if="thumb"
+          :src="thumb"
+          alt=""
+          class="absolute inset-0 h-full w-full object-cover transition-opacity duration-100"
+          :class="approx ? 'opacity-55' : 'opacity-100'"
+        >
+      </div>
+      <div class="px-2 py-1 text-center">
+        <div class="text-label-large tabular-nums">
+          {{ format(hover) }}
+        </div>
+        <div v-if="chapterTitle" class="truncate text-body-small opacity-70">
+          {{ chapterTitle }}
+        </div>
+      </div>
     </div>
   </div>
 </template>

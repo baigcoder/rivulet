@@ -31,6 +31,7 @@ use std::time::Duration;
 use libmpv2::Mpv;
 use objc2_foundation::MainThreadMarker;
 
+use crate::player_direct;
 use crate::player_render_mac::{self, Geometry};
 use crate::player_socket;
 
@@ -159,6 +160,11 @@ pub fn player_start(
 		return Err(format!("player box not laid out yet ({width}x{height}px) — retrying"));
 	}
 
+	let ua_arg = user_agent.filter(|s| !s.is_empty());
+	let ref_arg = referer.filter(|s| !s.is_empty());
+	let url = player_direct::play_url(&url, ua_arg.as_deref(), ref_arg.as_deref());
+	let engine_stream = player_direct::is_engine_stream(&url);
+
 	let ns_window = window.ns_window().map_err(|e| format!("no NSWindow: {e}"))? as isize;
 
 	let mut player = state.0.lock().unwrap();
@@ -170,8 +176,6 @@ pub fn player_start(
 
 	let ipc_arg = ipc.display().to_string();
 	let log_arg = log.display().to_string();
-	let ua_arg = user_agent.filter(|s| !s.is_empty());
-	let ref_arg = referer.filter(|s| !s.is_empty());
 	let mpv = Mpv::with_initializer(move |init| {
 		// Best effort throughout: a libmpv built without Lua has no `osc`
 		// property at all, and one missing option is not worth refusing to play
@@ -213,12 +217,10 @@ pub fn player_start(
 		// Start the picture as soon as a frame is decoded — do not sit on
 		// "Buffering" while lavf probes a remote HTTP file for several seconds.
 		set("cache-pause-initial", "no");
-		set("cache-pause-wait", "0.4");
-		set("cache-secs", "20");
-		set("demuxer-readahead-secs", "5");
-		set("demuxer-lavf-analyzeduration", "0.4");
-		set("demuxer-lavf-probesize", "524288");
-		set("stream-lavf-o", "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5");
+		for (k, v) in player_direct::cache_kv(engine_stream) {
+			set(k, v);
+		}
+		set("stream-lavf-o", player_direct::stream_lavf_o(engine_stream));
 		set("keep-open", "no");
 		// Per-stream User-Agent / Referer so the upstream sees the same
 		// headers it would see through the IPTV proxy.

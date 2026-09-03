@@ -179,6 +179,10 @@ check('the watch page mounts the shared player with the right mode', () => {
     /@failed="reason =>/.test(watchSrc),
     'and it must carry mpv\'s reason, or a refusal cannot be told from silence',
   )
+  assert.ok(watchSrc.includes(':aspect="aspectRatio"'), 'Fit/Center/Stretch must reach the player')
+  assert.ok(watchSrc.includes(':fullscreen="isFullscreen"'), 'fullscreen is player mode, not a CSS flag')
+  assert.ok(watchSrc.includes('setAndroidPlayerMode'), 'Android bars hide through MainActivity')
+  assert.ok(!watchSrc.includes('requestFullscreen'), 'the WebView has no Fullscreen API')
 })
 
 check('vod playback does not use the live reconnect loop', () => {

@@ -105,7 +105,12 @@ export const useUiStore = defineStore('ui', () => {
   // card has no use for the 342px art. Ratio is reactive: the window can move
   // to a monitor with a different density.
   const { pixelRatio } = useDevicePixelRatio()
-  const posterSize = computed(() => posterFor(cardWidth.value * pixelRatio.value))
+  // A phone at 3× would fetch w780 for a 170px card. Two is sharp enough and
+  // half the decode; Chrome itself often caps image dpr the same way.
+  const posterSize = computed(() => {
+    const dpr = isAndroid() ? Math.min(pixelRatio.value, 2) : pixelRatio.value
+    return posterFor(cardWidth.value * dpr)
+  })
 
   const isGrid = computed(() => layout.value.startsWith('grid'))
   const isDetailed = computed(() => layout.value.endsWith('detail'))

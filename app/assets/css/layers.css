@@ -338,6 +338,21 @@
     filter: brightness(0.5) saturate(1.25) !important;
   }
 
+  /* Android WebView composites the page over a TextureView and pays for every
+     backdrop-filter as a full-surface readback — a phone GPU included. Blur
+     goes; transitions stay unless Improve performance is on (that switch is
+     what a remote needs, because focus moves fire them). */
+  html.android *,
+  html.android *::before,
+  html.android *::after {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  html.android .rivulet-backdrop {
+    filter: brightness(0.5) saturate(1.25) !important;
+  }
+
   /* Left where it is rather than folded into the rule above: the art never
      moves, but it sits behind a scrolling page, and without its own layer the
      compositor re-blurs 1664x936 of it every frame the page scrolls. Promoting
