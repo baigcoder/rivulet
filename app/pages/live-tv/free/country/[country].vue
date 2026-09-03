@@ -87,8 +87,6 @@ onMounted(async () => {
 function playChannel(ch: LiveChannel) {
   if (!ch.streamUrl || ch.streamUrl === 'undefined' || ch.streamUrl === 'null')
     return
-  if (!liveTv.activeSourceId)
-    return
   liveTv.rememberChannel(ch.id)
   const zapList = visibleChannels.value
     .filter(c => c.streamUrl)
@@ -100,16 +98,25 @@ function playChannel(ch: LiveChannel) {
       userAgent: c.userAgent,
       referer: c.referer,
     }))
+  liveTv.setZapList(zapList)
+  saveLivePlay({
+    id: ch.id,
+    title: ch.name,
+    logo: ch.logoUrl ?? '',
+    sourceId: liveTv.activeSourceId || 'free:iptv-org',
+    streamUrl: ch.streamUrl,
+    userAgent: ch.userAgent,
+    referer: ch.referer,
+    zapList,
+  })
   navigateTo({
-    path: '/live-tv/watch',
+    path: localePath('/live-tv/watch'),
     query: {
-      url: ch.streamUrl,
+      id: ch.id,
       title: ch.name,
       logo: ch.logoUrl ?? '',
-      id: ch.id,
       type: 'live',
-      sourceId: liveTv.activeSourceId,
-      list: encodeURIComponent(JSON.stringify(zapList)),
+      sourceId: liveTv.activeSourceId || 'free:iptv-org',
       from: route.fullPath,
     },
   })
@@ -273,7 +280,6 @@ const filteredChannels = computed(() => {
         :get-epg="liveTv.getEpg"
         :is-favorite="liveTv.isFavorite"
         :density="liveTv.density"
-        :load-epg="liveTv.loadEpgBatch"
         :has-more="!!nextCursor && !searchQuery && !selectedCategory"
         :loading="loading"
         @load-more="loadMore"
@@ -286,7 +292,6 @@ const filteredChannels = computed(() => {
         :channels="filteredChannels"
         :get-epg="liveTv.getEpg"
         :is-favorite="liveTv.isFavorite"
-        :load-epg="liveTv.loadEpgBatch"
         :has-more="!!nextCursor && !searchQuery && !selectedCategory"
         :loading="loading"
         @load-more="loadMore"

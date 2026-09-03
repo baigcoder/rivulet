@@ -63,15 +63,27 @@ function onProgram(ch: LiveChannel) {
   const zapList = guideChannels.value
     .filter(c => c.streamUrl)
     .map(c => ({ id: c.id, name: c.name, logoUrl: c.logoUrl, streamUrl: c.streamUrl, userAgent: c.userAgent, referer: c.referer }))
-  navigateTo({
-    path: '/live-tv/watch',
-    query: {
-      url: ch.streamUrl,
+  liveTv.setZapList(zapList)
+  if (ch.streamUrl) {
+    saveLivePlay({
+      id: ch.id,
       title: ch.name,
       logo: ch.logoUrl ?? '',
+      sourceId: liveTv.activeSourceId || 'free:iptv-org',
+      streamUrl: ch.streamUrl,
+      userAgent: ch.userAgent,
+      referer: ch.referer,
+      zapList,
+    })
+  }
+  navigateTo({
+    path: localePath('/live-tv/watch'),
+    query: {
       id: ch.id,
+      title: ch.name,
+      logo: ch.logoUrl ?? '',
       type: 'live',
-      list: encodeURIComponent(JSON.stringify(zapList)),
+      sourceId: liveTv.activeSourceId || 'free:iptv-org',
       from: route.fullPath,
     },
   })

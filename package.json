@@ -35,6 +35,7 @@
     "check:premium-provider": "bun scripts/check-premium-provider.ts",
     "check:premium-api": "bun scripts/check-premium-api.ts",
     "check:premium-player": "bun scripts/check-premium-player.ts",
+    "check:release": "bun run check:types && bun run lint && bun run check:i18n && bun run check:boot && bun run check:dpad && bun run check:player && bun run check:torrents && bun run check:premium-player && bun run check:perf && bun run check:updates",
     "bump": "bumpp",
     "tauri": "tauri",
     "tauri:dev": "npx tsx scripts/build/tauri-dev.ts",

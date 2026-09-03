@@ -250,6 +250,11 @@ export default defineNuxtPlugin(() => {
 
   window.__tvBack = back
 
+  /** Navigate to a path — called from Kotlin when a notification is tapped. */
+  window.__tvNavigate = (path: string) => {
+    router.push(path)
+  }
+
   /**
    * OK, for the one control the key never reaches. A TV's DPAD_CENTER becomes a
    * click on a link or a button, but the readonly `<input>` behind a Vuetify

@@ -358,9 +358,34 @@ export function videoEngine(video: HTMLVideoElement): PlayerEngine {
       case 'sid':
         ext.sid = ext.owns(value) ? value : 'no'
         break
+      case 'video-scale':
+        video.style.objectFit = value === 'cover' ? 'cover' : value === 'fill' ? 'fill' : 'contain'
+        break
       // sub-delay and the sub-* look are applied where the cues are drawn, and
       // `aid` has nothing to select between.
     }
+  }
+
+  /**
+   * mpv's `seek` flags, enough for the live "go live" jump. A live window
+   * has no finite duration, so percent-seek is the end of `seekable`, not
+   * `duration * pct` — Infinity * 1 is still Infinity and the element
+   * throws.
+   */
+  function seek(amount: number, flags: string) {
+    if (flags.includes('absolute-percent')) {
+      const ranges = video.seekable
+      if (ranges && ranges.length > 0)
+        video.currentTime = ranges.end(ranges.length - 1)
+      else if (Number.isFinite(video.duration) && video.duration > 0)
+        video.currentTime = video.duration * (Number.isFinite(amount) ? amount / 100 : 1)
+      return
+    }
+    if (flags.includes('absolute')) {
+      video.currentTime = amount
+      return
+    }
+    video.currentTime += amount
   }
 
   return {
@@ -395,6 +420,8 @@ export function videoEngine(video: HTMLVideoElement): PlayerEngine {
       const [name, ...rest] = cmd as [string, ...unknown[]]
       if (name === 'set_property')
         setProp(String(rest[0]), rest[1])
+      else if (name === 'seek')
+        seek(Number(rest[0]), String(rest[1] || ''))
       else if (name === 'sub-add')
         return ext.add(String(rest[0]), rest[2] as string, rest[3] as string)
       // `keybind` has no native window to bind on, and `show-text` is drawn by
@@ -456,7 +483,7 @@ export function vlcEngine(): PlayerEngine | null {
         return null
       }
 
-      if (name === 'set_property')
+      if (name === 'set_property' || name === 'seek')
         send(cmd)
       // As in videoEngine: `keybind` has no window and `show-text` is the page's.
       return null

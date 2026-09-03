@@ -24,6 +24,7 @@ use rusqlite::Connection;
 use super::crypto::{CredentialVault, EncryptedBlob};
 use super::errors::PremiumError;
 use super::models::{IPTVCategory, IPTVChannel};
+use super::vod_cache::VodCache;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS iptv_premium_connections (
@@ -173,6 +174,8 @@ pub struct PremiumState {
     /// starting a competing full download — a 500K-line playlist takes
     /// long enough that an impatient double-click is likely.
     pub syncing: Arc<std::sync::atomic::AtomicBool>,
+    /// Xtream VOD lists are one giant download; cache them in-process.
+    pub vod_cache: Arc<VodCache>,
 }
 
 impl PremiumState {
@@ -191,6 +194,7 @@ impl PremiumState {
             db: arc,
             vault,
             syncing: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            vod_cache: Arc::new(VodCache::new()),
         })
     }
 }

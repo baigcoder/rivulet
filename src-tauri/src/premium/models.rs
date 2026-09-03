@@ -222,3 +222,89 @@ pub struct CatalogState {
     pub syncing: bool,
 }
 
+// ── On-demand (Xtream VOD / series) ────────────────────────────────
+// Fetched live from the panel — not cached in SQLite yet. The same
+// pagination shape as channels keeps one infinite-scroll component.
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VodCategory {
+    pub id: String,
+    pub name: String,
+    /// `movie` or `series` — which Xtream action produced the row.
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PremiumVodItem {
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub poster_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plot: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rating: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub container_extension: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_adult: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PremiumSeriesItem {
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub poster_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plot: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rating: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category_id: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_adult: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PremiumEpisode {
+    pub id: String,
+    pub season: u32,
+    pub episode: u32,
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plot: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub container_extension: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PremiumSeriesDetail {
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub poster_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plot: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rating: Option<String>,
+    pub episodes: Vec<PremiumEpisode>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VodPage<T> {
+    pub items: Vec<T>,
+    pub total: usize,
+    pub next_cursor: Option<String>,
+}
+

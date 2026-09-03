@@ -32,6 +32,18 @@ const kind = computed(() =>
   props.account.providerType === 'm3u' ? $t('M3U / M3U+') : $t('Xtream Codes'),
 )
 
+const serverHost = computed(() => {
+  const raw = props.account.serverUrl?.trim()
+  if (!raw)
+    return ''
+  try {
+    return new URL(raw.includes('://') ? raw : `http://${raw}`).host
+  }
+  catch {
+    return raw.replace(/^https?:\/\//, '').split('/')[0] ?? raw
+  }
+})
+
 /**
  * Xtream reports expiry as a Unix-seconds string; an M3U has no notion of
  * one. Anything that does not parse is dropped rather than shown raw —
@@ -76,9 +88,9 @@ const syncing = computed(() => props.catalog?.syncing === true)
 </script>
 
 <template>
-  <section class="flex flex-wrap items-center gap-x-6 gap-y-3 rounded-2xl bg-surface-container px-4 py-3 ring-1 ring-white/6">
+  <section class="flex flex-col gap-4 rounded-2xl bg-surface-container-high/60 p-4 ring-1 ring-white/6">
     <div class="flex min-w-0 items-center gap-3">
-      <v-icon :icon="mdiAccountCircle" size="28" class="shrink-0 text-primary" />
+      <v-icon :icon="mdiAccountCircle" size="32" class="shrink-0 text-primary" />
       <div class="min-w-0">
         <p class="truncate text-title-small font-semibold">
           {{ label }}
@@ -88,17 +100,54 @@ const syncing = computed(() => props.catalog?.syncing === true)
           <template v-if="account.isTrial">
             · {{ $t('Trial') }}
           </template>
-          <template v-if="expiry">
-            · {{ $t('Expires {date}', { date: expiry }) }}
-          </template>
-          <template v-if="connections">
-            · {{ $t('{connections} connections', { connections }) }}
-          </template>
         </p>
       </div>
     </div>
 
-    <dl v-if="catalog" class="flex flex-wrap items-center gap-x-5 gap-y-1 text-label-small">
+    <dl class="grid gap-2 text-body-small sm:grid-cols-2">
+      <div v-if="serverHost" class="rounded-xl bg-surface-container px-3 py-2">
+        <dt class="text-label-small opacity-45">
+          {{ $t('Server') }}
+        </dt>
+        <dd class="truncate font-medium">
+          {{ serverHost }}
+        </dd>
+      </div>
+      <div v-if="account.username" class="rounded-xl bg-surface-container px-3 py-2">
+        <dt class="text-label-small opacity-45">
+          {{ $t('Username') }}
+        </dt>
+        <dd class="truncate font-medium">
+          {{ account.username }}
+        </dd>
+      </div>
+      <div v-if="expiry" class="rounded-xl bg-surface-container px-3 py-2">
+        <dt class="text-label-small opacity-45">
+          {{ $t('Expires') }}
+        </dt>
+        <dd class="font-medium">
+          {{ expiry }}
+        </dd>
+      </div>
+      <div v-if="connections" class="rounded-xl bg-surface-container px-3 py-2">
+        <dt class="text-label-small opacity-45">
+          {{ $t('Connections') }}
+        </dt>
+        <dd class="font-medium tabular-nums">
+          {{ connections }}
+        </dd>
+      </div>
+      <div class="rounded-xl bg-surface-container px-3 py-2">
+        <dt class="text-label-small opacity-45">
+          {{ $t('Status') }}
+        </dt>
+        <dd class="font-medium capitalize">
+          {{ account.status || $t('Connected') }}
+        </dd>
+      </div>
+    </dl>
+
+    <dl v-if="catalog" class="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-outline/15 pt-3 text-label-small">
       <div class="flex items-baseline gap-1.5">
         <dt class="opacity-45">
           {{ $t('Channels') }}
@@ -123,8 +172,6 @@ const syncing = computed(() => props.catalog?.syncing === true)
           {{ catalogAge }}
         </dd>
       </div>
-      <!-- No guide, no row: a provider without XMLTV should not be shown
-           an "EPG: never" line on every visit. -->
       <div v-if="epgAge" class="flex items-baseline gap-1.5">
         <dt class="opacity-45">
           {{ $t('Guide') }}
@@ -135,26 +182,25 @@ const syncing = computed(() => props.catalog?.syncing === true)
       </div>
     </dl>
 
-    <div class="ms-auto flex items-center gap-1">
-      <v-btn
-        variant="text"
-        size="small"
-        :prepend-icon="mdiRefresh"
-        :loading="busy || syncing"
+    <div class="flex flex-wrap items-center gap-2 border-t border-outline/15 pt-3">
+      <button
+        type="button"
+        class="inline-flex min-h-10 items-center gap-2 rounded-xl bg-surface-container px-3 text-body-small font-medium transition-colors hover:bg-surface-container-highest focus-visible:bg-surface-container-highest focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-40"
+        :disabled="busy || syncing"
         @click="emit('refresh')"
       >
+        <v-icon :icon="mdiRefresh" size="18" :class="(busy || syncing) ? 'animate-spin' : undefined" />
         {{ $t('Refresh') }}
-      </v-btn>
-      <v-btn
-        variant="text"
-        size="small"
-        color="error"
-        :prepend-icon="mdiLogout"
+      </button>
+      <button
+        type="button"
+        class="inline-flex min-h-10 items-center gap-2 rounded-xl bg-error/10 px-3 text-body-small font-medium text-error transition-colors hover:bg-error/20 focus-visible:bg-error/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-error disabled:opacity-40"
         :disabled="busy"
         @click="emit('disconnect')"
       >
+        <v-icon :icon="mdiLogout" size="18" />
         {{ $t('Disconnect') }}
-      </v-btn>
+      </button>
     </div>
   </section>
 </template>

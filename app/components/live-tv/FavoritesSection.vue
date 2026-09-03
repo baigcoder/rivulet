@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { LiveChannel } from '~/utils/iptv'
 import { mdiPlay, mdiTelevision } from '@mdi/js'
+import { proxyLogo } from '~/utils/premiumTv'
 
 defineProps<{
   channels: LiveChannel[]
@@ -30,7 +31,7 @@ const emit = defineEmits<{
         <div class="aspect-square w-full overflow-hidden bg-surface-container">
           <img
             v-if="ch.logoUrl"
-            :src="ch.logoUrl"
+            :src="proxyLogo(ch.logoUrl)"
             :alt="ch.name"
             loading="lazy"
             decoding="async"

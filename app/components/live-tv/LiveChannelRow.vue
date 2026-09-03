@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { LiveChannel } from '~/utils/iptv'
 import { mdiPlay, mdiStar, mdiTelevision } from '@mdi/js'
+import { proxyLogo } from '~/utils/premiumTv'
 
 const props = defineProps<{
   channel: LiveChannel
@@ -17,6 +18,7 @@ const epg = computed(() => props.getEpg(props.channel.id))
 const nowProgram = computed(() => epg.value[0] ?? null)
 const fav = computed(() => props.isFavorite(props.channel))
 const imgError = ref(false)
+const proxyLogoUrl = computed(() => proxyLogo(props.channel.logoUrl))
 
 const epgProgress = computed(() => {
   if (!nowProgram.value?.start)
@@ -43,7 +45,7 @@ const epgProgress = computed(() => {
     <div class="grid size-10 shrink-0 place-items-center overflow-hidden rounded bg-surface-container">
       <img
         v-if="channel.logoUrl && !imgError"
-        :src="channel.logoUrl"
+        :src="proxyLogoUrl"
         :alt="channel.name"
         loading="lazy"
         decoding="async"

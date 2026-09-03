@@ -3,15 +3,10 @@
  * Premium TV's browsing surface: one header row, the category rail and
  * the virtualized grid.
  *
- * The header is deliberately *one row*. What was here before opened with
- * the full account panel — provider, expiry, trial, connection count,
- * catalog and guide ages — which is a page about the subscription sitting
- * on top of a page about channels, and it pushed the first row of cards
- * off a 768px-tall screen. The account panel still exists, in
- * *Settings → Premium TV*, which is where an account is managed. What a
- * viewer needs while browsing is where they are, how many channels that
- * is, a box to search it, and one dot saying the provider is still
- * answering; that is what the row carries.
+ * The header is `LiveBrowseHeader` — the same chrome as Free TV. The
+ * account panel still lives in *Settings → Premium TV*; this row only
+ * carries where you are, a search the remote can walk past, and a pill
+ * for the provider.
  *
  * The three viewports are designed, not scaled. Desktop keeps the rail
  * open beside the grid, because a mouse can reach it and a remote can
@@ -23,9 +18,9 @@
  * you hold in one hand.
  */
 import type { PremiumView } from '~/stores/premiumTv'
-import type { IPTVChannel } from '~/types/premium'
-import { mdiArrowLeft, mdiClose, mdiDeleteSweepOutline, mdiLogout, mdiMagnify, mdiRefresh, mdiTelevisionOff, mdiTune } from '@mdi/js'
-import { computed, onMounted, ref } from 'vue'
+import type { IPTVChannel, PremiumSeriesItem, PremiumVodItem } from '~/types/premium'
+import { mdiAccountCircle, mdiClose, mdiDeleteSweepOutline, mdiTelevisionOff } from '@mdi/js'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 
 /**
  * `showBack` is set by the deep-linked category route, which used to draw
@@ -36,30 +31,67 @@ import { computed, onMounted, ref } from 'vue'
 const props = defineProps<{ showBack?: boolean }>()
 
 const premium = usePremiumTvStore()
+const route = useRoute()
 const router = useRouter()
 const { mdAndUp, lgAndUp } = useDisplay()
 
 /** The rail is only ever pinned where there is width for it. */
 const railPinned = computed(() => lgAndUp.value)
 const sheetOpen = ref(false)
+const accountOpen = ref(false)
 const busy = ref(false)
 
 const density = computed<'compact' | 'comfortable'>(() => mdAndUp.value ? 'comfortable' : 'compact')
 
 onMounted(async () => {
+  window.addEventListener('keydown', onKey)
   await premium.ensureLoaded()
-  if (premium.connected && premium.channels.length === 0)
-    await premium.loadChannels({ reset: true })
+  if (premium.connected) {
+    if (premium.contentSection === 'live' && premium.channels.length === 0) {
+      await premium.loadChannels({ reset: true })
+    }
+    else if (premium.contentSection !== 'live') {
+      const section = premium.contentSection
+      const hasData = section === 'movies' ? premium.vodMovies.length > 0 : premium.vodSeries.length > 0
+      await Promise.all([
+        premium.loadVodCategories(section),
+        premium.loadVod({ reset: !hasData, keepVisible: hasData }),
+      ])
+    }
+    else if (premium.supportsVod) {
+      void premium.prefetchVod()
+    }
+  }
 })
 
+onUnmounted(() => window.removeEventListener('keydown', onKey))
+
+const contentTabs = computed(() => [
+  { id: 'live' as const, label: $t('Live channels') },
+  { id: 'movies' as const, label: $t('Movies') },
+  { id: 'series' as const, label: $t('TV shows') },
+])
+
+const isLive = computed(() => premium.contentSection === 'live')
+const isMovies = computed(() => premium.contentSection === 'movies')
+const isSeries = computed(() => premium.contentSection === 'series')
+
 const heading = computed(() => {
+  if (isMovies.value) {
+    const cat = premium.vodCategories.find(c => c.id === premium.selectedVodCategory)
+    return cat?.name || $t('Movies')
+  }
+  if (isSeries.value) {
+    const cat = premium.vodCategories.find(c => c.id === premium.selectedVodCategory)
+    return cat?.name || $t('TV shows')
+  }
   switch (premium.view) {
     case 'favorites':
       return $t('Favorites')
     case 'recent':
       return $t('Recently watched')
     case 'category':
-      return premium.selectedCategory || $t('All channels')
+      return categoryLabel(premium.selectedCategory) || $t('All channels')
     default:
       return $t('All channels')
   }
@@ -70,52 +102,71 @@ const heading = computed(() => {
  * showing: "1,432 channels" while 60 are loaded is the truth about the
  * filter, and the count of what happens to be in memory is not.
  */
-const count = computed(() => premium.total)
+const count = computed(() => isLive.value ? premium.total : premium.vodTotal)
+
+const countLine = computed(() => {
+  const n = count.value.toLocaleString()
+  if (isMovies.value)
+    return $t('{count} movies', { count: n })
+  if (isSeries.value)
+    return $t('{count} TV shows', { count: n })
+  return $t('{count} channels', { count: n })
+})
+
+const searchPlaceholder = computed(() => {
+  if (isMovies.value)
+    return $t('Search movies')
+  if (isSeries.value)
+    return $t('Search TV shows')
+  return $t('Search channels')
+})
+
+const tuneLabel = computed(() => {
+  if (isMovies.value)
+    return $t('Movie categories')
+  if (isSeries.value)
+    return $t('TV show categories')
+  return $t('Categories')
+})
+
+const sheetTitle = computed(() => tuneLabel.value)
 
 /**
- * The provider, in one dot and one line. Green is not decoration here:
- * amber is the one state a viewer can *act* on — every connection the
+ * The provider, in one dot and one line. Primary is the catalog answering;
+ * tertiary is the one state a viewer can *act* on — every connection the
  * account allows is in use, so the next channel they click will be
  * refused by the panel and not by us.
  */
 const status = computed(() => {
   if (!premium.connected)
-    return { tone: 'bg-white/25', label: $t('Not connected') }
+    return { tone: 'bg-outline', label: $t('Not connected') }
   if (premium.atConnectionLimit === true)
-    return { tone: 'bg-amber-400', label: $t('All connections in use') }
-  return { tone: 'bg-emerald-400', label: $t('Connected') }
+    return { tone: 'bg-tertiary', label: $t('All connections in use') }
+  return { tone: 'bg-primary', label: $t('Connected') }
 })
 
 const providerLabel = computed(() =>
   premium.account?.accountName?.trim() || premium.account?.username || $t('Premium TV'),
 )
 
-/** How stale the on-disk catalog is; the only account fact worth a header. */
-const syncedAgo = computed(() => {
-  const secs = premium.catalog?.catalogSyncedAt
-  if (!secs)
-    return ''
-  const mins = Math.floor((Date.now() / 1000 - secs) / 60)
-  if (mins < 1)
-    return $t('just now')
-  if (mins < 60)
-    return $t('{minutes} min ago', { minutes: mins })
-  const hours = Math.floor(mins / 60)
-  if (hours < 24)
-    return $t('{hours} h ago', { hours })
-  return $t('{days} d ago', { days: Math.floor(hours / 24) })
+const showEmpty = computed(() => {
+  if (!premium.connected || premium.importing)
+    return false
+  if (isLive.value)
+    return !premium.listLoading && premium.channels.length === 0
+  if (isMovies.value)
+    return !premium.vodLoading && premium.vodMovies.length === 0
+  return !premium.vodLoading && premium.vodSeries.length === 0
 })
 
-const showEmpty = computed(() =>
-  premium.connected
-  && !premium.listLoading
-  && !premium.importing
-  && premium.channels.length === 0,
-)
-
 const emptyMessage = computed(() => {
-  if (premium.searchDebounced)
-    return $t('No channels match that search.')
+  if (premium.searchDebounced) {
+    return isLive.value
+      ? $t('No channels match that search.')
+      : $t('Nothing matches that search.')
+  }
+  if (!isLive.value)
+    return $t('This provider returned nothing for that category.')
   if (premium.view === 'favorites')
     return $t('Star a channel and it shows up here.')
   if (premium.view === 'recent')
@@ -123,15 +174,63 @@ const emptyMessage = computed(() => {
   return $t('This provider returned no channels for that filter.')
 })
 
+/** Favorites strip on All only — Recent has its own sidebar section. */
+const resumeStrip = computed(() => {
+  if (premium.contentSection !== 'live' || premium.view !== 'all' || premium.searchQuery)
+    return null
+  if (premium.favoriteChannels.length)
+    return { title: $t('Favorites'), channels: premium.favoriteChannels }
+  return null
+})
+
 function play(channel: IPTVChannel): void {
   void router.push({
     path: localePath('/live-tv/premium/watch'),
-    query: { id: channel.id },
+    query: { id: channel.id, from: route.fullPath },
   })
 }
 
+function openMovie(item: PremiumVodItem): void {
+  void router.push({
+    path: localePath(`/live-tv/premium/movie/${item.id}`),
+    query: {
+      from: route.fullPath,
+      ext: item.containerExtension || 'mkv',
+    },
+  })
+}
+
+function openSeries(item: PremiumSeriesItem): void {
+  void router.push({
+    path: localePath(`/live-tv/premium/series/${item.id}`),
+    query: { from: route.fullPath },
+  })
+}
+
+function pickSection(section: 'live' | 'movies' | 'series'): void {
+  premium.setContentSection(section)
+  sheetOpen.value = false
+}
+
+function pickVodCategory(id: string): void {
+  premium.setVodCategory(id)
+  sheetOpen.value = false
+}
+
 function goBack(): void {
-  void router.replace(localePath('/live-tv/premium'))
+  void router.replace(localePath(props.showBack ? '/live-tv/premium' : '/live-tv'))
+}
+
+function onKey(e: KeyboardEvent) {
+  if (e.key === 'Escape' && accountOpen.value) {
+    e.preventDefault()
+    accountOpen.value = false
+    return
+  }
+  if (e.key === 'Escape' && sheetOpen.value) {
+    e.preventDefault()
+    sheetOpen.value = false
+  }
 }
 
 function pickView(view: PremiumView): void {
@@ -168,125 +267,83 @@ async function disconnect(): Promise<void> {
 
 <template>
   <div class="flex h-full min-h-0 flex-col gap-3">
-    <!--
-      One row: where you are, how many that is, the search box, the
-      provider dot and the two controls that belong to the catalog. It
-      wraps rather than scrolls, so a 1366px screen loses nothing and a
-      phone stacks the search under the heading.
-    -->
-    <header class="flex flex-wrap items-center gap-x-3 gap-y-2">
-      <v-btn
-        v-if="props.showBack"
-        :icon="mdiArrowLeft"
-        variant="text"
-        size="small"
-        class="shrink-0"
-        :aria-label="$t('Back')"
-        @click="goBack"
-      />
-
-      <div class="flex min-w-0 items-baseline gap-2">
-        <h1 class="truncate text-title-medium font-bold">
-          {{ heading }}
-        </h1>
-        <span class="shrink-0 text-label-small tabular-nums opacity-45">
-          {{ $t('{count} channels', { count: count.toLocaleString() }) }}
-        </span>
-        <!-- The heading *is* the active filter, so the way out of it sits
-             on the heading. Only rendered when there is one to clear. -->
-        <v-btn
-          v-if="premium.view === 'category' || premium.searchQuery"
-          :icon="mdiClose"
-          variant="text"
-          size="x-small"
-          class="shrink-0"
-          :aria-label="$t('Clear filters')"
-          @click="premium.clearFilters()"
-        />
-      </div>
-
-      <!-- `order-last` on a phone: the heading reads first and the box it
-           searches sits under it, full width. -->
-      <div class="order-last w-full min-w-0 sm:order-none sm:ms-auto sm:w-64 md:w-72">
-        <v-text-field
-          v-model="premium.searchQuery"
-          :label="$t('Search channels')"
-          :prepend-inner-icon="mdiMagnify"
-          density="compact"
-          variant="outlined"
-          hide-details
-          clearable
-          autocomplete="off"
-        />
-      </div>
-
-      <div class="flex items-center gap-1.5">
-        <!-- Dot plus a title, not a pill of text: the state is almost
-             always "fine", and "fine" should cost one glyph. -->
+    <live-tv-live-browse-header
+      v-model:search="premium.searchQuery"
+      :heading="heading"
+      :count="count"
+      :count-line="countLine"
+      :search-placeholder="searchPlaceholder"
+      :tune-label="tuneLabel"
+      :status-tone="status.tone"
+      :status-label="status.label"
+      :status-text="status.label"
+      :show-clear="(isLive && premium.view === 'category') || !!premium.searchQuery || (!isLive && !!premium.selectedVodCategory)"
+      :refreshing="busy || premium.catalog?.syncing === true"
+      :show-tune="!railPinned"
+      @back="goBack"
+      @clear="isLive ? premium.clearFilters() : premium.clearVodFilters()"
+      @refresh="refresh"
+      @tune="sheetOpen = true"
+    >
+      <button
+        v-if="premium.account"
+        type="button"
+        class="relative grid size-11 shrink-0 place-items-center rounded-lg text-on-surface/70 transition-colors hover:bg-surface-container-highest hover:text-on-surface focus-visible:bg-surface-container-highest focus-visible:text-on-surface"
+        :aria-label="$t('Account details')"
+        :title="providerLabel"
+        @click="accountOpen = true"
+      >
+        <v-icon :icon="mdiAccountCircle" size="22" />
         <span
-          class="size-2 shrink-0 rounded-full"
+          class="absolute end-1.5 top-1.5 size-2 rounded-full ring-2 ring-surface-container-high"
           :class="status.tone"
-          role="img"
-          :aria-label="status.label"
-          :title="status.label"
+          aria-hidden="true"
         />
-        <span class="hidden max-w-40 truncate text-label-small opacity-55 lg:inline">
-          {{ providerLabel }}
-        </span>
-        <span v-if="syncedAgo" class="hidden text-label-small opacity-35 xl:inline">
-          · {{ syncedAgo }}
-        </span>
+      </button>
+      <button
+        v-if="premium.view === 'recent' && premium.recent.length"
+        type="button"
+        class="grid size-11 shrink-0 place-items-center rounded-lg text-on-surface/70 transition-colors hover:bg-surface-container-highest hover:text-on-surface focus-visible:bg-surface-container-highest focus-visible:text-on-surface"
+        :aria-label="$t('Clear recently watched')"
+        @click="premium.clearRecent()"
+      >
+        <v-icon :icon="mdiDeleteSweepOutline" size="22" />
+      </button>
 
-        <v-btn
-          v-if="premium.view === 'recent' && premium.recent.length"
-          :icon="mdiDeleteSweepOutline"
-          variant="text"
-          size="small"
-          :aria-label="$t('Clear recently watched')"
-          :title="$t('Clear recently watched')"
-          @click="premium.clearRecent()"
-        />
-        <v-btn
-          :icon="mdiRefresh"
-          variant="text"
-          size="small"
-          :loading="busy || premium.catalog?.syncing === true"
-          :aria-label="$t('Refresh')"
-          :title="$t('Refresh')"
-          @click="refresh"
-        />
-        <v-btn
-          v-if="!railPinned"
-          :icon="mdiTune"
-          variant="text"
-          size="small"
-          :aria-label="$t('Categories')"
-          :title="$t('Categories')"
-          @click="sheetOpen = true"
-        />
-        <v-btn
-          :icon="mdiLogout"
-          variant="text"
-          size="small"
-          color="error"
-          :disabled="busy"
-          :aria-label="$t('Disconnect')"
-          :title="$t('Disconnect')"
-          @click="disconnect"
-        />
-      </div>
-    </header>
+      <template v-if="premium.supportsVod" #below>
+        <div
+          class="-mx-1 flex gap-1 border-t border-outline/10 px-1 pt-2"
+          role="tablist"
+          :aria-label="$t('Browse')"
+        >
+          <button
+            v-for="tab in contentTabs"
+            :key="tab.id"
+            type="button"
+            role="tab"
+            class="min-h-9 flex-1 shrink-0 rounded-lg px-3 py-1.5 text-label-medium font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:flex-none"
+            :class="premium.contentSection === tab.id
+              ? 'bg-primary text-on-primary'
+              : 'text-on-surface/70 hover:bg-surface-container-high hover:text-on-surface focus-visible:bg-surface-container-high focus-visible:text-on-surface'"
+            :aria-selected="premium.contentSection === tab.id ? 'true' : 'false'"
+            @click="pickSection(tab.id)"
+          >
+            {{ tab.label }}
+          </button>
+        </div>
+      </template>
+    </live-tv-live-browse-header>
 
     <!-- Phone: the three fixed views as chips, so the common hop is one tap. -->
-    <div v-if="!railPinned" class="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+    <div v-if="!railPinned && isLive" class="flex gap-1 overflow-x-auto rounded-2xl bg-surface-container/40 p-1">
       <button
         v-for="v in (['all', 'favorites', 'recent'] as const)"
         :key="v"
         type="button"
-        class="shrink-0 rounded-full px-3 py-1.5 text-label-medium font-medium ring-1 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        class="min-h-10 shrink-0 rounded-xl px-3 py-2 text-label-medium font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
         :class="premium.view === v
-          ? 'bg-primary text-on-primary ring-primary'
-          : 'bg-surface-container-high text-white/70 ring-white/10 hover:text-white'"
+          ? 'bg-primary text-on-primary shadow-sm'
+          : 'text-on-surface/70 hover:bg-surface-container-high hover:text-on-surface focus-visible:bg-surface-container-high focus-visible:text-on-surface'"
         :aria-current="premium.view === v ? 'true' : undefined"
         @click="pickView(v)"
       >
@@ -298,7 +355,19 @@ async function disconnect(): Promise<void> {
         class="shrink-0 rounded-full bg-primary px-3 py-1.5 text-label-medium font-medium text-on-primary ring-1 ring-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
         @click="premium.clearFilters()"
       >
-        {{ premium.selectedCategory }}
+        {{ categoryLabel(premium.selectedCategory) }}
+        <v-icon :icon="mdiClose" size="14" class="ms-1" />
+      </button>
+    </div>
+
+    <!-- Phone: VOD category chip when a filter is active. -->
+    <div v-if="!railPinned && !isLive && premium.selectedVodCategory" class="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+      <button
+        type="button"
+        class="shrink-0 rounded-full bg-primary px-3 py-1.5 text-label-medium font-medium text-on-primary ring-1 ring-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        @click="premium.clearVodFilters()"
+      >
+        {{ heading }}
         <v-icon :icon="mdiClose" size="14" class="ms-1" />
       </button>
     </div>
@@ -307,8 +376,9 @@ async function disconnect(): Promise<void> {
       <!-- Narrow on purpose: the rail is a list of short group names
            and a count, and every pixel it takes is a pixel the grid does
            not have for a sixth column. -->
-      <aside v-if="railPinned" class="w-52 shrink-0 xl:w-56">
+      <aside v-if="railPinned" class="flex w-56 shrink-0 flex-col xl:w-60">
         <premium-tv-premium-sidebar
+          v-if="isLive"
           :view="premium.view"
           :selected-category="premium.selectedCategory"
           :categories="premium.categoryCounts"
@@ -317,6 +387,13 @@ async function disconnect(): Promise<void> {
           :recent-count="premium.recent.length"
           @set-view="premium.setView($event)"
           @set-category="premium.setCategory($event)"
+        />
+        <premium-tv-premium-vod-sidebar
+          v-else
+          :categories="premium.vodCategories"
+          :selected-id="premium.selectedVodCategory"
+          :kind="isMovies ? 'movie' : 'series'"
+          @pick="premium.setVodCategory($event)"
         />
       </aside>
 
@@ -337,7 +414,7 @@ async function disconnect(): Promise<void> {
         <!-- First load: cards' worth of skeleton rather than a spinner in
              a void, so the grid does not jump when the page lands. -->
         <div
-          v-else-if="premium.listLoading && premium.channels.length === 0"
+          v-else-if="isLive && premium.listLoading && premium.channels.length === 0"
           class="grid flex-1 auto-rows-max grid-cols-2 gap-3 overflow-hidden sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6"
           role="status"
           :aria-label="$t('Loading channels…')"
@@ -345,7 +422,7 @@ async function disconnect(): Promise<void> {
           <div
             v-for="n in 24"
             :key="n"
-            class="h-[132px] animate-pulse rounded-xl bg-surface-container-high/60"
+            class="h-[176px] animate-pulse rounded-lg bg-surface-container-high/60"
           />
         </div>
 
@@ -353,7 +430,7 @@ async function disconnect(): Promise<void> {
           <div class="flex flex-col items-center gap-2">
             <v-icon :icon="mdiTelevisionOff" size="44" class="opacity-20" />
             <p class="text-body-large font-medium opacity-70">
-              {{ $t('No channels found') }}
+              {{ isLive ? $t('No channels found') : $t('Nothing found') }}
             </p>
             <p class="max-w-sm text-body-small opacity-45">
               {{ emptyMessage }}
@@ -361,53 +438,105 @@ async function disconnect(): Promise<void> {
           </div>
         </div>
 
-        <premium-tv-premium-channel-grid
-          v-else
-          :channels="premium.channels"
-          :now-next="premium.nowNext"
-          :favorite="premium.isFavorite"
-          :density="density"
-          :load-epg="premium.loadNowNext"
-          :has-more="premium.hasMore"
-          :loading="premium.listLoading"
-          @load-more="premium.loadMore()"
-          @play="play"
-          @toggle-favorite="premium.toggleFavorite($event)"
-        />
+        <template v-else-if="isLive">
+          <premium-tv-premium-channel-scroll-row
+            v-if="resumeStrip"
+            class="shrink-0"
+            :title="resumeStrip.title"
+            :channels="resumeStrip.channels"
+            :now-next="premium.nowNext"
+            :favorite="premium.isFavorite"
+            @play="play"
+            @toggle-favorite="premium.toggleFavorite($event)"
+          />
+          <premium-tv-premium-channel-grid
+            class="min-h-0 flex-1"
+            :channels="premium.channels"
+            :now-next="premium.nowNext"
+            :favorite="premium.isFavorite"
+            :density="density"
+            :load-epg="premium.loadNowNext"
+            :has-more="premium.hasMore"
+            :loading="premium.listLoading"
+            @load-more="premium.loadMore()"
+            @play="play"
+            @toggle-favorite="premium.toggleFavorite($event)"
+          />
+        </template>
+
+        <template v-else>
+          <premium-tv-premium-vod-grid
+            class="min-h-0 flex-1"
+            :kind="isMovies ? 'movie' : 'series'"
+            :movies="premium.vodMovies"
+            :series="premium.vodSeries"
+            :loading="premium.vodLoading"
+            :has-more="premium.vodHasMore"
+            :density="density"
+            @load-more="premium.loadMoreVod()"
+            @open-movie="openMovie"
+            @open-series="openSeries"
+          />
+        </template>
       </section>
     </div>
 
-    <!-- Tablet / phone category sheet. Teleported so the page's own
-         scrollers cannot clip it. -->
-    <teleport to="body">
-      <transition name="fade">
-        <div
-          v-if="sheetOpen"
-          class="fixed inset-0 z-50 flex items-end justify-end bg-black/50 md:items-stretch"
-          @click.self="sheetOpen = false"
-        >
-          <div class="flex max-h-[80vh] w-full flex-col gap-3 rounded-t-2xl bg-surface-container p-4 md:max-h-none md:h-full md:w-80 md:rounded-none">
-            <div class="flex items-center justify-between">
-              <h2 class="text-title-large font-bold">
-                {{ $t('Categories') }}
-              </h2>
-              <v-btn :icon="mdiClose" variant="text" size="small" :aria-label="$t('Close')" @click="sheetOpen = false" />
-            </div>
-            <div class="min-h-0 flex-1">
-              <premium-tv-premium-sidebar
-                :view="premium.view"
-                :selected-category="premium.selectedCategory"
-                :categories="premium.categoryCounts"
-                :total-channels="premium.catalog?.channels ?? 0"
-                :favorite-count="premium.favoriteIds.size"
-                :recent-count="premium.recent.length"
-                @set-view="pickView"
-                @set-category="pickCategory"
-              />
-            </div>
-          </div>
+    <v-dialog v-model="accountOpen" max-width="520" scrollable>
+      <v-card class="bg-surface-container">
+        <div class="flex items-center justify-between gap-3 px-4 pt-4">
+          <h2 class="text-title-large font-bold">
+            {{ $t('IPTV account') }}
+          </h2>
+          <v-btn :icon="mdiClose" variant="text" size="small" :aria-label="$t('Close')" @click="accountOpen = false" />
         </div>
-      </transition>
-    </teleport>
+        <v-card-text class="flex flex-col gap-3 !pt-2">
+          <p
+            v-if="premium.atConnectionLimit === true"
+            class="rounded-xl bg-tertiary/15 px-3 py-2 text-body-small text-tertiary"
+          >
+            {{ $t('All connections are in use on this account. Stop playback on your other devices before starting a new stream.') }}
+          </p>
+          <premium-tv-premium-account-card
+            v-if="premium.account"
+            :account="premium.account"
+            :catalog="premium.catalog"
+            :busy="busy"
+            @refresh="refresh"
+            @disconnect="disconnect(); accountOpen = false"
+          />
+        </v-card-text>
+      </v-card>
+    </v-dialog>
+
+    <v-dialog v-model="sheetOpen" max-width="320" scrollable>
+      <v-card class="bg-surface-container">
+        <div class="flex items-center justify-between px-4 pt-4">
+          <h2 class="text-title-large font-bold">
+            {{ sheetTitle }}
+          </h2>
+          <v-btn :icon="mdiClose" variant="text" size="small" :aria-label="$t('Close')" @click="sheetOpen = false" />
+        </div>
+        <v-card-text class="flex min-h-0 flex-1 flex-col !pt-2" style="height: min(80vh, 640px)">
+          <premium-tv-premium-sidebar
+            v-if="isLive"
+            :view="premium.view"
+            :selected-category="premium.selectedCategory"
+            :categories="premium.categoryCounts"
+            :total-channels="premium.catalog?.channels ?? 0"
+            :favorite-count="premium.favoriteIds.size"
+            :recent-count="premium.recent.length"
+            @set-view="pickView"
+            @set-category="pickCategory"
+          />
+          <premium-tv-premium-vod-sidebar
+            v-else
+            :categories="premium.vodCategories"
+            :selected-id="premium.selectedVodCategory"
+            :kind="isMovies ? 'movie' : 'series'"
+            @pick="pickVodCategory"
+          />
+        </v-card-text>
+      </v-card>
+    </v-dialog>
   </div>
 </template>

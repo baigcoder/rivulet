@@ -6,6 +6,7 @@ import type { EpgProgram, LiveChannel } from '~/utils/iptv'
  * strip that holds program blocks.
  */
 import { mdiPlay } from '@mdi/js'
+import { proxyLogo } from '~/utils/premiumTv'
 
 const props = defineProps<{
   channel: LiveChannel
@@ -57,7 +58,7 @@ function programStyle(p: EpgProgram) {
       <div class="grid size-8 shrink-0 place-items-center overflow-hidden rounded bg-surface-container">
         <img
           v-if="channel.logoUrl"
-          :src="channel.logoUrl"
+          :src="proxyLogo(channel.logoUrl)"
           :alt="channel.name"
           class="size-full object-contain p-0.5"
           @error="($event.target as HTMLImageElement).style.display = 'none'"

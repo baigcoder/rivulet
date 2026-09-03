@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import process from 'node:process'
-import { diskBudget, ENGINE, findReleases, haveAt, isAwkward, normalizeSource, NoServerStream, parseRelease, pickBest, pickSubtitleFiles, pickVideoFile, planEviction, planNetwork, ranked, releaseKey, serverCandidates, setSources, startTorrent, streamParts, toRelease, uploadLimit, usedBytes } from '../app/utils/torrents'
+import { diskBudget, ENGINE, findReleases, haveAt, isAwkward, normalizeSource, NoServerStream, parseRelease, pickBest, pickPlay, pickSubtitleFiles, pickVideoFile, planEviction, planNetwork, ranked, releaseFileName, releaseKey, releaseLangs, releaseQuality, serverCandidates, setSources, startTorrent, streamParts, toRelease, uploadLimit, usedBytes, withoutUhd } from '../app/utils/torrents'
 // Self-check for the torrent parser/ranker: `bun scripts/check-torrents.ts`.
 // The fixture is the response shape a source answers with, filled in with a
 // public-domain film. `--live <source-url> <imdb-id>` also searches for real.
@@ -67,6 +67,16 @@ assert.equal(pickBest(parsed.filter(t => t.hash === 'ccc')), null)
 // With no sane-sized 1080p left, the fat one still beats dropping a tier.
 assert.equal(pickBest(parsed.filter(t => ['fff', 'eee'].includes(t.hash)))!.hash, 'fff')
 
+// Debrid addons often label the provider in `name` and bury the resolution in
+// the release title — MediaFusion is one of them.
+const mf = toRelease({
+  name: 'MediaFusion',
+  title: 'Movie.Title.2024.1080p.WEB-DL.H265\n👤 0 💾 10.7 GB',
+  url: 'https://mediafusion.example/manifest.json',
+})
+assert.equal(mf!.quality, '1080p')
+assert.equal(releaseQuality({ rawName: 'Example\n4k HDR', name: 'Sintel 2010 Bluray 2160p AV1 HDR10' }), '4k HDR')
+
 // --- Links a source resolved itself -------------------------------------------
 // The same protocol carries plain HTTP streams: a debrid addon has already
 // fetched the torrent on its own servers and answers with a link to the file.
@@ -110,6 +120,51 @@ assert.equal(hosted!.size, '858.3 MB')
 // list keys and the "already added" mark all hang on it.
 assert.equal(releaseKey(debrid!), debrid!.url)
 assert.equal(releaseKey(sameTier!), 'bbb')
+assert.equal(releaseFileName(debrid!), 'Sintel.2010.1080p.WEB-DL.mkv')
+assert.equal(releaseFileName({ name: 'ok', url: 'https://x.example/film.mp4' }), 'ok.mp4')
+assert.ok(!releaseFileName({ name: '../../etc/passwd', url: 'https://x.example/a.mkv' }).includes('/'))
+
+// A play URL does not mean there is no torrent. Indexer addons often send
+// both, or hide the hash in `dht:` / a magnet `url` — Download must still
+// get a magnet for the engine.
+const HASH40 = 'b'.repeat(40)
+const wrapped = toRelease({
+  name: 'Example\n1080p',
+  title: 'Sintel.2010.1080p.BluRay.x264\n👤 40 💾 2.1 GB ⚙️ ThePirateBay',
+  url: 'https://debrid.example/dl/abc/Sintel.mkv',
+  sources: [`dht:${HASH40}`],
+})
+assert.equal(wrapped!.hash, HASH40)
+assert.ok(wrapped!.magnet.includes(HASH40))
+assert.equal(wrapped!.url, 'https://debrid.example/dl/abc/Sintel.mkv')
+assert.equal(toRelease({
+  title: 'Sintel.2010.1080p',
+  url: `magnet:?xt=urn:btih:${HASH40}&dn=Sintel`,
+})!.hash, HASH40)
+assert.equal(toRelease({
+  title: 'Sintel.2010.1080p',
+  infohash: HASH40,
+})!.hash, HASH40)
+
+// Debrid addons often omit `infoHash` and bury it in the resolve URL after
+// the API token — which is itself frequently 40 hex. Taking the first match
+// would hand the engine the token; the `{service}/{token}/{hash}` slot is
+// the hash, and that is what Releases Download has to file.
+const TOKEN40 = 'a'.repeat(40)
+const debridResolve = toRelease({
+  name: 'Example\n1080p',
+  title: 'Sintel.2010.1080p.WEB-DL\n👤 12 💾 2.2 GB ⚙️ ThePirateBay',
+  url: `https://addon.example/resolve/realdebrid/${TOKEN40}/${HASH40}/null/0/Sintel.2010.1080p.WEB-DL.mkv`,
+})
+assert.equal(debridResolve!.hash, HASH40, 'the hash in the resolve URL, not the token')
+assert.ok(debridResolve!.magnet.includes(HASH40))
+assert.equal(debridResolve!.fileIdx, 0, 'file index from the /null/0/filename slot')
+assert.ok(debridResolve!.url.startsWith('https://addon.example/'), 'Play still has the Direct URL')
+assert.equal(toRelease({
+  title: 'Sintel.2010.1080p',
+  behaviorHints: { bingeGroup: `addon|1080p|${HASH40}` },
+  url: 'https://addon.example/play/sintel.mkv',
+})!.hash, HASH40, 'and out of bingeGroup when the URL has none')
 
 // Same tier, same size class: the copy that needs no swarm wins. Its zero
 // seeders would have dropped it outright before — that filter is about torrents.
@@ -124,6 +179,23 @@ assert.equal(pickBest([sameTier!], 100), null, 'which a torrent does not get awa
 // Torrents off, playback resolves through direct links only — and whatever the
 // sources answered becomes the player's failover chain, best first.
 const MAX_BYTES_TEST = 25 * 1024 ** 3
+// Engine on: a magnet beats a Direct link so Play uses the torrent engine.
+assert.equal(pickPlay(links, MAX_BYTES_TEST, false, true)!.hash, 'bbb')
+assert.equal(pickPlay(links, MAX_BYTES_TEST, false, false)!.url, debrid!.url, 'engine off: Direct only')
+assert.equal(pickPlay([sameTier!], MAX_BYTES_TEST, false, true)!.hash, 'bbb', 'no link: the magnet still plays')
+assert.equal(pickPlay([sameTier!], MAX_BYTES_TEST, false, false), null, 'torrents off and no link: nothing to play')
+assert.equal(toRelease({ url: '/dl/abc.mkv', title: 'Sintel.2010.1080p' }, 'https://mediafusion.example/token')!.url, 'https://mediafusion.example/token/dl/abc.mkv')
+assert.equal(toRelease({ url: 'https://debrid.example/file.mkv' })!.name, 'Stream')
+assert.deepEqual(releaseLangs('Avengers Endgame 1080p Dual Audio Hindi English'), ['hi', 'en'])
+assert.deepEqual(withoutUhd([
+  { ...debrid!, quality: '2160p', name: 'Film.2160p' },
+  { ...hosted!, quality: '1080p', name: 'Film.1080p' },
+]).map(t => t.quality), ['1080p'])
+assert.equal(withoutUhd([{ ...debrid!, quality: '2160p', name: 'Film.2160p' }])[0]!.quality, '2160p', '4K-only stays 4K')
+assert.equal(pickPlay([
+  { ...debrid!, quality: '2160p', name: 'Film.2160p' },
+  { ...hosted!, quality: '1080p', name: 'Film.1080p' },
+], MAX_BYTES_TEST)!.quality, '1080p', 'Play on a webview skips 4K when a lighter copy exists')
 const candidates = serverCandidates(links, MAX_BYTES_TEST, false, false)
 assert.deepEqual(candidates.map(t => t.url), [debrid!.url, hosted!.url], 'only links, best first')
 assert.equal(serverCandidates(parsed.filter(t => t.hash === 'aaa'), MAX_BYTES_TEST, false, false).length, 0, 'a torrent is no candidate at all')
@@ -132,6 +204,7 @@ assert.equal(serverCandidates(parsed.filter(t => t.hash === 'aaa'), MAX_BYTES_TE
 // menu can never disagree with what auto-play chose.
 assert.deepEqual(ranked(links).map(t => releaseKey(t)), [releaseKey(debrid!), releaseKey(sameTier!), releaseKey(hosted!)])
 assert.equal(ranked(links)[0], pickBest(links), 'the head of the list is what pickBest picks')
+assert.equal(ranked(links, MAX_BYTES_TEST, false, true)[0]!.hash, 'bbb', 'engine on: ranked prefers the magnet')
 
 // Stream-only's empty answer is its own kind, so the watch page can tell it
 // apart from a search that genuinely failed and offer the toggle instead —
@@ -414,6 +487,13 @@ assert.equal(uploadLimit(4 * MBPS, false, false, 0), 2 * MBPS, '0 means "work it
 
 await assert.rejects(() => findReleases('tt0000001'), /No sources configured/)
 
+const sourcesPage = await Bun.file('app/pages/settings/sources.vue').text()
+assert.ok(!/strem\.fun/i.test(sourcesPage), 'Settings → Sources names no particular source host')
+assert.ok(!sourcesPage.includes('Quick Presets'), 'and offers no bundled addons to click')
+assert.ok(sourcesPage.includes('Torrent engine'), 'and names the engine Play mode')
+assert.ok(sourcesPage.includes('Direct play'), 'and the Direct play mode')
+assert.ok(!sourcesPage.includes('Best available (Torrent Engine ON)'), 'old switch labels are gone')
+
 // Whatever a user copies has to end up as a base we can append /stream/… to.
 assert.equal(normalizeSource('  https://a.example/  '), 'https://a.example')
 assert.equal(normalizeSource('https://a.example/manifest.json'), 'https://a.example')
@@ -426,6 +506,11 @@ assert.equal(normalizeSource('rivulet://a.example/opt=x,y/manifest.json'), 'http
 // silently hand back someone else's defaults.
 assert.equal(normalizeSource('https://a.example/opt=x,y/manifest.json'), 'https://a.example/opt=x,y')
 assert.equal(normalizeSource('https://a.example/opt=x/manifest.json?v=2'), 'https://a.example/opt=x')
+assert.equal(
+  normalizeSource('https://a.example/sort=qualitysize|qualityfilter=cam,scr/manifest.json'),
+  'https://a.example/sort=qualitysize|qualityfilter=cam,scr',
+  'addon settings in the path, including a pipe, stay on the base',
+)
 assert.equal(normalizeSource('http://192.168.1.9:11470'), 'http://192.168.1.9:11470')
 // Not URLs.
 assert.equal(normalizeSource(''), '')
@@ -563,7 +648,8 @@ const resumed = await startTorrent({ imdbId: 'tt0000001', cached })
 assert.equal(resumed.id, 7)
 assert.equal(resumed.index, 1)
 assert.ok(!requests.some(u => u.startsWith('https://a.example')), 'the release is already decided')
-assert.ok(requests.some(u => u.includes('overwrite=true')), 'handed back to the engine to finish')
+assert.ok(!requests.some(u => u.includes('overwrite=true')), 'a hash the engine is already fetching is not re-added')
+assert.ok(requests.some(u => u.includes('update_only_files')), 'the wanted file is handed to the copy already there')
 
 // Evicted since: the bytes are gone, so the sources are worth asking again —
 // re-adding a hash nobody seeds any more would just hang.
@@ -610,6 +696,96 @@ assert.equal(direct.url, 'https://debrid.example/dl/abc/Sintel.mkv')
 assert.equal(direct.id, -1)
 assert.equal(direct.hash, '')
 assert.deepEqual(requests, [], 'the engine was not asked anything at all')
+
+// Download of a debrid row that still carries a hash must hit the engine —
+// Play opens the URL and keeps nothing, which is why the picker used to
+// grey the download button out on every Direct row.
+engine.held = false
+requests = []
+globalThis.fetch = (async (input: string | URL | Request) => {
+  const url = String(input)
+  requests.push(url)
+  if (url.startsWith(`${ENGINE}/torrents?with_stats`))
+    return Response.json({ torrents: [] })
+  if (url.startsWith(`${ENGINE}/torrents?overwrite`))
+    return Response.json({ id: 7, details: { name: 'pack', info_hash: 'bbb', files: PACK } })
+  if (url.startsWith(ENGINE))
+    return Response.json({})
+  return Response.json({
+    streams: [{
+      name: 'Example\n1080p',
+      title: 'Sintel.2010.1080p.WEB-DL\n👤 0 💾 2.2 GB ⚙️ debrid',
+      url: 'https://debrid.example/dl/abc/Sintel.mkv',
+      infoHash: 'bbb',
+    }],
+  })
+}) as typeof fetch
+const saved = await startTorrent({ imdbId: 'tt0000001', save: true })
+assert.ok(saved.hash, 'a save files a copy the engine holds')
+assert.equal(saved.url || '', '', 'and is not the debrid link Play would open')
+assert.ok(requests.some(u => u.includes('overwrite')), 'handed to the engine')
+
+requests = []
+const mixedOn = await startTorrent({ imdbId: 'tt0000001', allowTorrents: true })
+assert.ok(mixedOn.hash, 'engine on: Play files the magnet even when the same row has a Direct URL')
+assert.equal(mixedOn.url || '', '')
+
+requests = []
+const mixedOff = await startTorrent({ imdbId: 'tt0000001', allowTorrents: false })
+assert.equal(mixedOff.url, 'https://debrid.example/dl/abc/Sintel.mkv', 'engine off: Play opens the Direct URL')
+assert.equal(mixedOff.id, -1)
+
+engine.held = false
+requests = []
+globalThis.fetch = (async (input: string | URL | Request) => {
+  const url = String(input)
+  requests.push(url)
+  if (url.startsWith(`${ENGINE}/torrents?with_stats`))
+    return Response.json({ torrents: [] })
+  if (url.startsWith(`${ENGINE}/torrents?overwrite`))
+    return Response.json({ id: 7, details: { name: 'pack', info_hash: HASH40, files: PACK } })
+  if (url.startsWith(ENGINE))
+    return Response.json({})
+  return Response.json({
+    streams: [{
+      name: 'Example\n1080p',
+      title: 'Sintel.2010.1080p.WEB-DL\n👤 12 💾 2.2 GB ⚙️ ThePirateBay',
+      url: `https://addon.example/resolve/realdebrid/${TOKEN40}/${HASH40}/null/0/Sintel.mkv`,
+    }],
+  })
+}) as typeof fetch
+const hashedUrl = await startTorrent({ imdbId: 'tt0000001', save: true })
+assert.ok(hashedUrl.hash, 'a debrid URL that only names the hash in the path is still a download')
+assert.ok(requests.some(u => u.includes('overwrite')), 'and is handed to the engine')
+
+requests = []
+globalThis.fetch = (async (input: string | URL | Request) => {
+  const url = String(input)
+  requests.push(url)
+  if (url.startsWith(ENGINE))
+    return Response.json({ torrents: [] })
+  return Response.json({ streams: [linkStreams[0]] })
+}) as typeof fetch
+await assert.rejects(
+  () => startTorrent({ imdbId: 'tt0000001', save: true }),
+  /only stream/,
+  'a link with no hash is not a download',
+)
+
+engine.held = true
+globalThis.fetch = (async (input: string | URL | Request) => {
+  const url = String(input)
+  requests.push(url)
+  if (url.startsWith(`${ENGINE}/torrents?with_stats`))
+    return Response.json({ torrents: engine.held ? [HELD] : [] })
+  if (url === `${ENGINE}/torrents/7`)
+    return Response.json({ ...HELD, files: PACK })
+  if (url.startsWith(`${ENGINE}/torrents?overwrite`))
+    return Response.json({ id: 7, details: { name: HELD.name, info_hash: 'bbb', files: PACK } })
+  if (url.startsWith(ENGINE))
+    return Response.json({})
+  return Response.json({ streams: [streams[1]] })
+}) as typeof fetch
 
 // Strict on purpose: a near-miss name would play the wrong film, which is worse
 // than the search it saves.

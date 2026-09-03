@@ -50,6 +50,16 @@ export type LiveTvTab = 'favorites' | 'recent' | 'live' | 'countries' | 'categor
  */
 export type LiveView = 'all' | 'favorites' | 'recent' | 'category'
 
+/** What channel-up walks on the Free TV player. Session-only — not in the URL. */
+export interface LiveZapEntry {
+  id: string
+  name: string
+  logoUrl?: string | null
+  streamUrl?: string | null
+  userAgent?: string | null
+  referer?: string | null
+}
+
 const DEFAULT_LIMIT = 60
 
 export const useLiveTvStore = defineStore('liveTv', () => {
@@ -436,16 +446,19 @@ export const useLiveTvStore = defineStore('liveTv', () => {
   }
 
   async function clearRecent(): Promise<void> {
+    // Empty the list the page actually renders first. Waiting on IPC
+    // left Recently watched full when the command was slow or failed,
+    // because `recentChannels` reads `dashboard.recentPreviews`.
+    recentChannelIds.value = []
+    if (dashboard.value)
+      dashboard.value = { ...dashboard.value, recentPreviews: [] }
     const id = activeSourceId.value
     if (!id)
       return
     try {
       await liveClearRecent(id)
-      recentChannelIds.value = []
-      if (dashboard.value)
-        dashboard.value = { ...dashboard.value, recentPreviews: [] }
     }
-    catch { /* ignore */ }
+    catch { /* the page is already empty */ }
   }
 
   // ── EPG ─────────────────────────────────────────────────────────
@@ -536,6 +549,11 @@ export const useLiveTvStore = defineStore('liveTv', () => {
     addRecent(channelId)
   }
 
+  const zapList = shallowRef<LiveZapEntry[]>([])
+  function setZapList(list: LiveZapEntry[]): void {
+    zapList.value = list
+  }
+
   function showMiniPlayer(ch: LiveChannel, url: string): void {
     miniChannel.value = ch
     miniStreamUrl.value = url
@@ -549,14 +567,29 @@ export const useLiveTvStore = defineStore('liveTv', () => {
   }
 
   function expandMiniPlayer(): void {
-    if (miniChannel.value && miniStreamUrl.value) {
-      const ch = miniChannel.value
-      hideMiniPlayer()
-      navigateTo({
-        path: '/live-tv/watch',
-        query: { url: miniStreamUrl.value, title: ch.name, logo: ch.logoUrl ?? '', id: ch.id, type: 'live', sourceId: activeSourceId.value },
-      })
-    }
+    const ch = miniChannel.value
+    const url = miniStreamUrl.value
+    if (!ch || !url)
+      return
+    hideMiniPlayer()
+    setZapList([{
+      id: ch.id,
+      name: ch.name,
+      logoUrl: ch.logoUrl,
+      streamUrl: ch.streamUrl ?? url,
+      userAgent: ch.userAgent,
+      referer: ch.referer,
+    }])
+    navigateTo({
+      path: '/live-tv/watch',
+      query: {
+        id: ch.id,
+        title: ch.name,
+        logo: ch.logoUrl ?? '',
+        type: 'live',
+        sourceId: activeSourceId.value || 'free:iptv-org',
+      },
+    })
   }
 
   // ── Filter setters (drive the visible-page query) ──────────────
@@ -904,6 +937,8 @@ export const useLiveTvStore = defineStore('liveTv', () => {
     // Player
     resolveStream,
     rememberChannel,
+    zapList,
+    setZapList,
     showMiniPlayer,
     hideMiniPlayer,
     expandMiniPlayer,

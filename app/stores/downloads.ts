@@ -145,6 +145,19 @@ export const useDownloadsStore = defineStore('downloads', () => {
     // offline copy to file — and filing an empty hash would shadow a real one.
     if (key && started.hash)
       cached.value[key] = { hash: started.hash, file: started.index }
+    // The add can land paused (session restore, a metered poll). Download is
+    // the ask to pull bytes, so start it and refresh so the list is not a lie.
+    if (started.id >= 0 && started.hash) {
+      touched.value[started.hash] = Date.now()
+      await torrentAction(started.id, 'start').catch(() => {})
+      await waitForEngineHash(started.hash)
+      for (let attempt = 0; attempt < 4; attempt++) {
+        await refresh()
+        if (torrents.value.some(t => t.info_hash.toLowerCase() === started.hash.toLowerCase()))
+          break
+        await new Promise(r => setTimeout(r, 500))
+      }
+    }
     return started
   }
 

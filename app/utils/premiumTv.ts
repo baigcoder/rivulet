@@ -8,8 +8,13 @@ import type {
   PlaybackSource,
   PremiumAccount,
   PremiumDashboard,
+  PremiumSeriesDetail,
+  PremiumSeriesItem,
   PremiumStatus,
+  PremiumVodItem,
   SyncReport,
+  VodCategory,
+  VodPage,
 } from '~/types/premium'
 import { invoke, isTauri } from '@tauri-apps/api/core'
 
@@ -21,6 +26,25 @@ import { invoke, isTauri } from '@tauri-apps/api/core'
  * `tauri://localhost`, which has no server behind it.
  */
 const API_BASE = 'http://127.0.0.1:3032'
+
+/**
+ * Proxy a channel logo URL through the local API to avoid mixed-content
+ * blocking on Android, where the webview origin is `https://tauri.localhost`
+ * and `http://` image URLs from the provider are silently rejected.
+ *
+ * Pass the original provider URL; returns a `/api/premium-tv/proxy/image`
+ * path that the local server will fetch and relay with proper headers.
+ * Returns the original URL unchanged if it is already on localhost (e.g.
+ * dev server) or is falsy.
+ */
+export function proxyLogo(url: string | null | undefined): string {
+  if (!url)
+    return ''
+  // Already local — don't double-proxy
+  if (url.startsWith('http://127.') || url.startsWith('http://localhost') || url.startsWith('/'))
+    return url
+  return `${API_BASE}/api/premium-tv/proxy/image?url=${encodeURIComponent(url)}`
+}
 
 let token: string | null = null
 
@@ -323,6 +347,75 @@ export const premiumApi = {
    */
   qualityVariants(channelId: string, signal?: AbortSignal): Promise<IPTVChannel[]> {
     return request('GET', `/api/premium-tv/channels/${encodeURIComponent(channelId)}/qualities`, { signal })
+  },
+
+  /** Xtream movie categories from the panel (not cached locally). */
+  vodMovieCategories(): Promise<VodCategory[]> {
+    return request('GET', '/api/premium-tv/vod/movies/categories')
+  },
+
+  vodSeriesCategories(): Promise<VodCategory[]> {
+    return request('GET', '/api/premium-tv/vod/series/categories')
+  },
+
+  vodMovies(args: {
+    category?: string
+    search?: string
+    cursor?: string
+    hideAdult?: boolean
+    limit?: number
+    signal?: AbortSignal
+  } = {}): Promise<VodPage<PremiumVodItem>> {
+    const params = new URLSearchParams()
+    if (args.category)
+      params.set('category', args.category)
+    if (args.search)
+      params.set('search', args.search)
+    if (args.cursor)
+      params.set('cursor', args.cursor)
+    if (args.hideAdult)
+      params.set('hideAdult', 'true')
+    if (args.limit)
+      params.set('limit', String(args.limit))
+    const qs = params.toString()
+    return request('GET', `/api/premium-tv/vod/movies${qs ? `?${qs}` : ''}`, { signal: args.signal })
+  },
+
+  vodSeries(args: {
+    category?: string
+    search?: string
+    cursor?: string
+    hideAdult?: boolean
+    limit?: number
+    signal?: AbortSignal
+  } = {}): Promise<VodPage<PremiumSeriesItem>> {
+    const params = new URLSearchParams()
+    if (args.category)
+      params.set('category', args.category)
+    if (args.search)
+      params.set('search', args.search)
+    if (args.cursor)
+      params.set('cursor', args.cursor)
+    if (args.hideAdult)
+      params.set('hideAdult', 'true')
+    if (args.limit)
+      params.set('limit', String(args.limit))
+    const qs = params.toString()
+    return request('GET', `/api/premium-tv/vod/series${qs ? `?${qs}` : ''}`, { signal: args.signal })
+  },
+
+  vodSeriesDetail(id: string): Promise<PremiumSeriesDetail> {
+    return request('GET', `/api/premium-tv/vod/series/${encodeURIComponent(id)}`)
+  },
+
+  vodPlayMovie(id: string, ext?: string, signal?: AbortSignal): Promise<PlaybackSource> {
+    const params = ext ? `?ext=${encodeURIComponent(ext)}` : ''
+    return request('POST', `/api/premium-tv/vod/movies/${encodeURIComponent(id)}/play${params}`, { signal })
+  },
+
+  vodPlayEpisode(id: string, ext?: string, signal?: AbortSignal): Promise<PlaybackSource> {
+    const params = ext ? `?ext=${encodeURIComponent(ext)}` : ''
+    return request('POST', `/api/premium-tv/vod/episodes/${encodeURIComponent(id)}/play${params}`, { signal })
   },
 }
 

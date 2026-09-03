@@ -24,6 +24,7 @@ function fakeVideo() {
     error: null as { code: number } | null,
     src: '',
     buffered: { length: 1, start: () => 0, end: () => 90 },
+    seekable: { length: 1, start: () => 0, end: () => 95 },
     play() {
       this.paused = false
       return Promise.resolve()
@@ -120,6 +121,16 @@ player.command(['set_property', 'speed', 1.5])
 assert.equal(video.playbackRate, 1.5)
 player.command(['set_property', 'mute', true])
 assert.equal(video.muted, true)
+
+// Live "go live": percent-seek is the end of `seekable`, not duration * pct.
+// A live window's duration is Infinity and the element would throw.
+video.currentTime = 10
+player.command(['seek', 100, 'absolute-percent'])
+assert.equal(video.currentTime, 95, 'percent-seek on live is the seekable end')
+player.command(['seek', 5, 'relative'])
+assert.equal(video.currentTime, 100, 'relative seek is a delta')
+player.command(['seek', 12, 'absolute'])
+assert.equal(video.currentTime, 12)
 
 // Unknown commands are ignored rather than thrown: `keybind` has no window to
 // bind on and `show-text` is drawn by the page.

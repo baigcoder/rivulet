@@ -1,4 +1,4 @@
-<script lang="ts" setup>
+<script setup lang="ts">
 /**
  * Live TV player (IPTV Smarters Pro style).
  * Features:
@@ -8,35 +8,58 @@
  *   - TV Remote key navigation (Up/Down/Left/Right/ChannelUp/ChannelDown)
  *   - Aspect ratio mode switcher (Contain, Cover, Fill)
  */
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { applyAspect, cycleAspect } from '~/utils/aspectRatio'
 import { iptvProxyHealth, liveResolveStream, proxyFreeStreamUrl } from '~/utils/iptv'
 import { MAX_AUTO_SKIPS, nextPlayable } from '~/utils/livehealth'
+import { friendlyPlaybackError } from '~/utils/playbackError'
 
 definePageMeta({ layout: false })
 
 const route = useRoute()
 const router = useRouter()
+const liveTv = useLiveTvStore()
 
-/** Ref to the <mpv-player> so the overlay can call its methods. */
+/** `defineExpose` unwraps refs, so these are the values, not `{ value }`. */
 const playerRef = ref<{
   togglePlay: () => void
   toggleMute: () => void
   setVolume: (v: number) => void
-  paused: { value: boolean }
-  volume: { value: number }
-  muted: { value: boolean }
-  started: { value: boolean }
-  /** The player's own chrome flag — fed by the native pointer poll on X11/Win32. */
-  ui: { value: boolean }
-  /** Current native-level error (play() failures, IPC errors) — lives on the mpv component, cleared when playback starts or a new src is loaded. */
-  catchError?: { value: string }
+  paused: boolean
+  volume: number
+  muted: boolean
+  started: boolean
+  ui: boolean
+  catchError?: string
+  errorMsg?: string
   zapTo: () => void | Promise<void>
+  goLive: () => void | Promise<void>
+  behindLive?: boolean
+  ipc: (command: unknown[]) => Promise<unknown>
 } | null>(null)
+
+/** Not `flag` — that name is already `app/utils/flag.ts` and auto-import
+ *  colliding with it crashed this page's setup, so Free TV never mounted. */
+function asBool(v: boolean | { value?: boolean } | undefined): boolean {
+  if (v && typeof v === 'object' && 'value' in v)
+    return !!v.value
+  return !!v
+}
+
+function asText(v: string | { value?: string } | undefined): string {
+  if (typeof v === 'string')
+    return v
+  if (v && typeof v === 'object' && 'value' in v)
+    return v.value ?? ''
+  return ''
+}
 
 /** Ref to <live-tv-live-player-overlay> for `show()` on activity. */
 const overlayRef = ref<{ show: () => void } | null>(null)
 
 /** Reactive mirror of the player's state, polled every 500ms while mounted. */
 const playerPlaying = ref(false)
+const playerBehindLive = ref(false)
 const playerVolume = ref(100)
 const playerMuted = ref(false)
 /**
@@ -52,16 +75,22 @@ const playerCatchError = ref('')
 
 let pollHandle: ReturnType<typeof setInterval> | null = null
 
+const statusLine = ref('')
+const resolving = ref(false)
+const resolveError = ref('')
+const errorMsg = ref('')
+
 function syncPlayerState() {
   const p = playerRef.value
   if (!p)
     return
   const wasPlaying = playerPlaying.value
-  playerPlaying.value = !p.paused?.value && p.started?.value
-  playerVolume.value = p.volume?.value ?? 100
-  playerMuted.value = p.muted?.value ?? false
-  playerChrome.value = p.ui?.value === true
-  playerCatchError.value = p.catchError?.value ?? ''
+  playerPlaying.value = asBool(p.started) && !asBool(p.paused)
+  playerBehindLive.value = asBool(p.behindLive)
+  playerVolume.value = typeof p.volume === 'number' ? p.volume : 100
+  playerMuted.value = asBool(p.muted)
+  playerChrome.value = asBool(p.ui)
+  playerCatchError.value = asText(p.errorMsg ?? p.catchError)
 
   // If the stream just crossed from not-playing to actually playing, clear
   // any stale errors from the previous attempt. Without this an auto-skip
@@ -72,33 +101,9 @@ function syncPlayerState() {
     resolveError.value = ''
     playerCatchError.value = ''
     statusLine.value = ''
-    if (p.catchError?.value != null)
-      p.catchError!.value = ''
   }
 }
 
-// ── Channel + stream URL ──────────────────────────────────────────
-const rawUrl = computed(() => {
-  const v = String(route.query.url ?? '')
-  if (!v || v === 'undefined' || v === 'null')
-    return ''
-  return v
-})
-const sourceId = computed(() => String(route.query.sourceId ?? ''))
-/**
- * The URL the player receives. Phase 1 puts the raw upstream URL
- * here so native mpv (Linux/Windows/macOS) plays it directly with
- * ffmpeg decoders. The webview fallback (`proxiedStreamUrl`) is kept
- * for browser dev and the rare stream mpv refuses to open.
- */
-const streamUrl = ref('')
-/**
- * The proxy-wrapped URL — only used by the webview `<video>` path
- * when native mpv isn't available.
- */
-const proxiedStreamUrl = ref('')
-const userAgent = ref<string | null>(null)
-const referer = ref<string | null>(null)
 interface ZapEntry {
   id: string
   name: string
@@ -109,6 +114,32 @@ interface ZapEntry {
 }
 const channelList = ref<ZapEntry[]>([])
 const channelIndex = ref(-1)
+const channelId = computed(() => String(route.query.id ?? ''))
+
+// ── Channel + stream URL ──────────────────────────────────────────
+const rawUrl = computed(() => {
+  const v = String(route.query.url ?? '')
+  if (v && v !== 'undefined' && v !== 'null')
+    return v
+  const fromList = channelList.value[channelIndex.value]?.streamUrl
+  if (fromList && fromList !== 'undefined' && fromList !== 'null')
+    return fromList
+  const staged = readLivePlay()
+  if (staged && staged.id === channelId.value && staged.streamUrl)
+    return staged.streamUrl
+  return ''
+})
+const sourceId = computed(() => String(route.query.sourceId ?? ''))
+/**
+ * The URL the player receives. Always the loopback proxy (`127.0.0.1:3031`)
+ * so upstream UA, CORS and dead-host handling stay on the Rust side — handing
+ * mpv a raw M3U link is what produced DNS errors like the wurl.tv failures.
+ */
+const streamUrl = ref('')
+/** Same as `streamUrl` — kept for the webview `<video>` fallback path. */
+const proxiedStreamUrl = ref('')
+const userAgent = ref<string | null>(null)
+const referer = ref<string | null>(null)
 const channelTotal = computed(() => channelList.value.length)
 
 const channelName = computed(() => {
@@ -118,13 +149,24 @@ const channelName = computed(() => {
   return channelList.value[channelIndex.value]?.name ?? ''
 })
 const channelLogo = computed(() => String(route.query.logo ?? ''))
-const channelId = computed(() => String(route.query.id ?? ''))
-const statusLine = ref('')
-
-const resolving = ref(false)
-const resolveError = ref('')
+const nowPlaying = computed(() => {
+  const now = Date.now()
+  return liveTv.getEpg(channelId.value).find(p => {
+    const start = Date.parse(p.start)
+    const stop = p.stop ? Date.parse(p.stop) : Number.POSITIVE_INFINITY
+    return Number.isFinite(start) && start <= now && now < stop
+  })?.title ?? ''
+})
 
 function loadChannelList() {
+  const staged = readLivePlay()
+  if (staged?.zapList?.length && !liveTv.zapList?.length)
+    liveTv.setZapList(staged.zapList)
+  if (liveTv.zapList?.length) {
+    channelList.value = liveTv.zapList.filter(c => c.streamUrl)
+    channelIndex.value = channelList.value.findIndex(c => c.id === channelId.value)
+    return
+  }
   const raw = String(route.query.list ?? '')
   if (!raw)
     return
@@ -133,6 +175,7 @@ function loadChannelList() {
     if (Array.isArray(parsed)) {
       channelList.value = parsed.filter(c => c.streamUrl)
       channelIndex.value = channelList.value.findIndex(c => c.id === channelId.value)
+      liveTv.setZapList(channelList.value)
     }
   }
   catch {
@@ -143,8 +186,6 @@ function loadChannelList() {
 
 const hasPrev = computed(() => channelIndex.value > 0)
 const hasNext = computed(() => channelIndex.value >= 0 && channelIndex.value < channelList.value.length - 1)
-
-const errorMsg = ref('')
 
 /**
  * Aggregated error prop for the overlay's center modal.
@@ -158,11 +199,16 @@ const errorMsg = ref('')
  *                     that mpv itself recovers from (and flips started=true)
  *                     vanishes of its own accord instead of getting stuck.
  */
-const overlayError = computed(() =>
-  resolveError.value
-  || errorMsg.value
-  || (!playerPlaying.value ? playerCatchError.value : ''))
+const overlayError = computed(() => {
+  const raw = resolveError.value
+    || errorMsg.value
+    || (!playerPlaying.value ? playerCatchError.value : '')
+  if (!raw)
+    return ''
+  return friendlyPlaybackError(raw)
+})
 
+const autoSkips = ref(0)
 /**
  * Auto-skip is in progress. While true, a center-screen "trying the next
  * channel…" notice shows below the spinner so the viewer sees a reason for
@@ -174,71 +220,98 @@ const autoSkipping = computed<boolean>(() =>
   && errorMsg.value === ''
   && resolveError.value === '')
 
+/**
+ * The player must get the loopback proxy URL, not the raw M3U link.
+ * `liveResolveStream` wraps the channel through 127.0.0.1:3031 and
+ * rewrites a `.ts` into `.m3u8` — handing mpv/VLC the upstream is what
+ * made Play open a black screen. Results are cached so a zap does not
+ * wait on the same IPC again.
+ */
+const resolvedById = new Map<string, { url: string, ua: string | null, referer: string | null }>()
+
+function playNow(url: string, ua?: string | null, ref?: string | null) {
+  userAgent.value = ua ?? null
+  referer.value = ref ?? null
+  streamUrl.value = url
+  proxiedStreamUrl.value = url
+  resolving.value = false
+}
+
 async function resolveStreamUrl() {
-  if (!rawUrl.value) {
+  if (!rawUrl.value && !channelId.value) {
     streamUrl.value = ''
     proxiedStreamUrl.value = ''
     return
   }
 
-  resolving.value = true
+  const id = channelId.value
+  const cached = id ? resolvedById.get(id) : undefined
+  if (cached) {
+    playNow(cached.url, cached.ua, cached.referer)
+    return
+  }
+
   resolveError.value = ''
   errorMsg.value = ''
-  streamUrl.value = ''
-  proxiedStreamUrl.value = ''
+  resolving.value = true
+  const current = channelList.value[channelIndex.value]
+  const channelUa = current?.userAgent ?? null
+  const channelReferer = current?.referer ?? null
 
   try {
-    if (sourceId.value && channelId.value) {
+    if (sourceId.value && id) {
       try {
-        const resolved = await liveResolveStream(sourceId.value, channelId.value)
+        const resolved = await liveResolveStream(sourceId.value, id)
         if (resolved.streamUrl) {
-          streamUrl.value = resolved.streamUrl
-          proxiedStreamUrl.value = resolved.streamUrl
-          userAgent.value = resolved.userAgent ?? null
-          referer.value = resolved.referer ?? null
+          const next = {
+            url: resolved.streamUrl,
+            ua: resolved.userAgent ?? null,
+            referer: resolved.referer ?? null,
+          }
+          resolvedById.set(id, next)
+          playNow(next.url, next.ua, next.referer)
           return
         }
       }
       catch {
-        // Fall through to explicit proxy path
+        // Fall through to an explicit proxy of the M3U URL.
       }
     }
 
-    const current = channelList.value[channelIndex.value]
-    const channelUa = current?.userAgent || undefined
-    const channelReferer = current?.referer || undefined
-    userAgent.value = channelUa ?? null
-    referer.value = channelReferer ?? null
-
-    try {
-      const proxied = await proxyFreeStreamUrl(rawUrl.value, channelUa, channelReferer)
-      streamUrl.value = rawUrl.value
-      proxiedStreamUrl.value = proxied
+    if (!rawUrl.value) {
+      resolveError.value = $t('This channel\'s stream is not available. Try another channel.')
       return
     }
+
+    try {
+      const proxied = await proxyFreeStreamUrl(rawUrl.value, channelUa ?? undefined, channelReferer ?? undefined)
+      if (proxied) {
+        if (id)
+          resolvedById.set(id, { url: proxied, ua: channelUa, referer: channelReferer })
+        playNow(proxied, channelUa, channelReferer)
+        return
+      }
+    }
     catch {
-      // Browser dev mode fallback
+      // Browser / proxy-down fallback below.
     }
 
     const healthy = await iptvProxyHealth().catch(() => false)
     if (!healthy) {
       await new Promise(r => setTimeout(r, 400))
-      const retry = await iptvProxyHealth().catch(() => false)
-      if (!retry) {
-        streamUrl.value = rawUrl.value
-        proxiedStreamUrl.value = ''
-        return
-      }
+      await iptvProxyHealth().catch(() => false)
     }
-    streamUrl.value = rawUrl.value
-    proxiedStreamUrl.value = await proxyFreeStreamUrl(rawUrl.value, channelUa, channelReferer).catch(() => '')
+    const proxied = await proxyFreeStreamUrl(rawUrl.value, channelUa ?? undefined, channelReferer ?? undefined).catch(() => '')
+    if (proxied) {
+      if (id)
+        resolvedById.set(id, { url: proxied, ua: channelUa, referer: channelReferer })
+      playNow(proxied, channelUa, channelReferer)
+      return
+    }
+    resolveError.value = $t('This channel\'s stream is not available. Try another channel.')
   }
   catch (e) {
-    resolveError.value = String(e)
-    if (rawUrl.value) {
-      streamUrl.value = rawUrl.value
-      proxiedStreamUrl.value = ''
-    }
+    resolveError.value = friendlyPlaybackError(e instanceof Error ? e.message : String(e))
   }
   finally {
     resolving.value = false
@@ -250,15 +323,7 @@ function goBack() {
   errorMsg.value = ''
   playerCatchError.value = ''
   statusLine.value = ''
-  const from = String(route.query.from ?? '')
-  if (from) {
-    router.replace(from)
-    return
-  }
-  if (window.history.length > 1)
-    router.back()
-  else
-    router.replace('/live-tv')
+  void router.replace(localePath(liveTvFrom(String(route.query.from ?? ''), '/live-tv/free')))
 }
 
 function zap(direction: 1 | -1) {
@@ -271,11 +336,9 @@ function zap(direction: 1 | -1) {
 }
 
 /**
- * Switch the player to a new channel. Phase 3 calls the player's
- * own `zapTo()` so the swap is in-process — no full route
- * navigation, no component remount, no fresh layout. The previous
- * version navigated to `/live-tv/watch?url=…` which remounted the
- * `<mpv-player>` and made channel-up feel sluggish.
+ * Switch channel. The player stays mounted; `watch(src)` restarts it
+ * with the new URL. The query is only identity (id/url/title) — the
+ * lineup already lives on the store.
  */
 function zapTo(index: number) {
   if (index < 0 || index >= channelList.value.length)
@@ -283,22 +346,15 @@ function zapTo(index: number) {
   const ch = channelList.value[index]
   if (!ch?.streamUrl)
     return
-  // Push the route query. `resolveStreamUrl` is wired as a watcher
-  // on `route.query.url` via the `onMounted` hook, so the channel
-  // swap goes through the same resolution pipeline as a fresh
-  // navigation. The player's `:key="streamUrl"` triggers a remount
-  // when the URL changes; the new mpv child window gets the
-  // updated UA/Referer and the channel name from the new query.
+  liveTv.rememberChannel(ch.id)
   router.replace({
-    path: '/live-tv/watch',
+    path: localePath('/live-tv/watch'),
     query: {
-      url: ch.streamUrl,
+      id: ch.id,
       title: ch.name,
       logo: ch.logoUrl ?? '',
-      id: ch.id,
       type: 'live',
-      sourceId: sourceId.value,
-      list: encodeURIComponent(JSON.stringify(channelList.value)),
+      sourceId: sourceId.value || 'free:iptv-org',
       from: String(route.query.from ?? ''),
     },
   })
@@ -324,8 +380,6 @@ const attemptedFallback = ref(false)
  * stops and shows the error, which is the honest answer — the list is
  * dead, not this channel. The counter resets as soon as one plays.
  */
-const liveTv = useLiveTvStore()
-const autoSkips = ref(0)
 
 watch(playerPlaying, playing => {
   if (playing)
@@ -348,9 +402,20 @@ function autoSkip(): boolean {
 }
 
 function onTogglePlay() {
-  playerRef.value?.togglePlay()
-  // Read the new state immediately so the overlay reflects the click
-  // without waiting for the next 500ms poll.
+  const p = playerRef.value
+  if (!p) {
+    void resolveStreamUrl()
+    return
+  }
+  p.togglePlay()
+  setTimeout(syncPlayerState, 0)
+}
+
+function onGoLive() {
+  const p = playerRef.value
+  if (!p?.goLive)
+    return
+  void p.goLive()
   setTimeout(syncPlayerState, 0)
 }
 
@@ -371,6 +436,13 @@ async function toggleFavorite() {
 }
 
 const isFullscreen = ref(false)
+const aspectRatio = ref<'contain' | 'cover' | 'fill'>('contain')
+function cycleAspectRatio(): void {
+  aspectRatio.value = cycleAspect(aspectRatio.value)
+  applyAspect(playerRef.value, aspectRatio.value)
+}
+watch(aspectRatio, mode => applyAspect(playerRef.value, mode))
+watch(playerRef, player => applyAspect(player, aspectRatio.value))
 function toggleFullscreen() {
   isFullscreen.value = !isFullscreen.value
   if (isFullscreen.value) {
@@ -386,14 +458,26 @@ function onActivity() {
   overlayRef.value?.show()
 }
 
-function onPlaybackFailed() {
+async function onPlaybackFailed() {
   if (!attemptedFallback.value && rawUrl.value) {
     attemptedFallback.value = true
-    if (streamUrl.value.includes('.m3u8')) {
-      const fallbackUrl = rawUrl.value.replace(/\.m3u8$/i, '.ts')
-      if (fallbackUrl !== rawUrl.value) {
-        streamUrl.value = fallbackUrl
-        return
+    if (streamUrl.value.includes('.m3u8') || /\.m3u8$/i.test(rawUrl.value)) {
+      const tsUrl = rawUrl.value.replace(/\.m3u8$/i, '.ts')
+      if (tsUrl !== rawUrl.value) {
+        const current = channelList.value[channelIndex.value]
+        try {
+          const proxied = await proxyFreeStreamUrl(
+            tsUrl,
+            userAgent.value ?? current?.userAgent ?? undefined,
+            referer.value ?? current?.referer ?? undefined,
+          )
+          if (proxied) {
+            streamUrl.value = proxied
+            proxiedStreamUrl.value = proxied
+            return
+          }
+        }
+        catch { /* auto-skip below */ }
       }
     }
   }
@@ -436,22 +520,19 @@ onMounted(async () => {
   // bound values stay current. mpv's IPC properties are already polled
   // inside the player, so this is just mirroring into the overlay's
   // local reactive state.
-  pollHandle = setInterval(syncPlayerState, 500)
+  if (channelId.value)
+    void liveTv.loadEpg(channelId.value)
+  pollHandle = setInterval(syncPlayerState, 250)
 })
 
-/**
- * Channel zaps push a new `?url=...` via `router.replace` instead of
- * navigating, so the page itself doesn't unmount. The route query
- * change is what triggers a fresh `liveResolveStream` for the new
- * channel and the player's `:key="streamUrl"` remounts mpv with
- * the new URL. Without this watcher, the channel-up key would land
- * on the same stream.
- */
-watch(() => route.query.url, () => {
+watch(() => route.query.id, (id, prev) => {
+  if (!id || id === prev)
+    return
   loadChannelList()
   // Per channel, not per page: without this the first channel to fail
   // spent the one `.m3u8` → `.ts` retry for every channel after it.
   attemptedFallback.value = false
+  void liveTv.loadEpg(String(id))
   void resolveStreamUrl()
 })
 
@@ -476,10 +557,15 @@ onUnmounted(() => {
          box a real size on first mount: flex centering collapses the
          child to its intrinsic height, which is 0 before the player
          reports its box, and `waitForBox()` then refuses to start mpv. -->
-    <div class="absolute inset-0">
+    <div
+      class="absolute inset-0"
+      :class="{
+        '[&_video]:!object-cover': aspectRatio === 'cover',
+        '[&_video]:!object-fill': aspectRatio === 'fill',
+      }"
+    >
       <mpv-player
         v-if="streamUrl"
-        :key="streamUrl"
         ref="playerRef"
         :src="streamUrl"
         :status="statusLine"
@@ -496,12 +582,14 @@ onUnmounted(() => {
       ref="overlayRef"
       class="!z-40"
       :playing="playerPlaying"
+      :behind-live="playerBehindLive"
       :volume="playerVolume"
       :muted="playerMuted"
       :has-prev="hasPrev"
       :has-next="hasNext"
       :busy="resolving"
       :channel-name="channelName"
+      :now-playing="nowPlaying"
       :channel-logo="channelLogo"
       :channel-index="channelIndex >= 0 ? channelIndex : 0"
       :channel-total="channelList.length"
@@ -510,16 +598,19 @@ onUnmounted(() => {
       :chrome-up="playerChrome"
       :is-fullscreen="isFullscreen"
       :error="overlayError"
+      :aspect-ratio="aspectRatio"
       @back="goBack"
       @prev="zap(-1)"
       @next="zap(1)"
       @zap-to="zapTo"
       @retry="resolveStreamUrl"
       @toggle-play="onTogglePlay"
+      @go-live="onGoLive"
       @toggle-mute="onToggleMute"
       @set-volume="onSetVolume"
       @toggle-favorite="toggleFavorite"
       @toggle-fullscreen="toggleFullscreen"
+      @cycle-aspect-ratio="cycleAspectRatio"
     />
 
     <!-- Resolving spinner + auto-skip notice — sits above overlay so it

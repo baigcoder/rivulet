@@ -92,7 +92,7 @@ shows. Rivulet embeds the real thing and keeps the library around it honest and 
   file pickers, seeding, speed limits and a disk budget, not a hidden cache.
 - **Streaming while it downloads.** Playback starts on the first bytes; already-downloaded
   titles replay with no TMDB lookup, no source search and no peers.
-- **One player, three backends.** Where mpv can't be embedded, ExoPlayer (Android) or the
+- **One player, three backends.** Where mpv can't be embedded, libVLC (Android) or the
   webview's `<video>` answers the *same* command protocol, so there is one player component and
   one set of controls rather than three.
 - **Your library stays yours.** History, progress, favourites and the watchlist live in this
@@ -120,7 +120,7 @@ throughout — posters, backdrops, cast, ratings, per-episode watched state and 
 
 **Play anything**
 
-Embedded mpv on the desktop, ExoPlayer on Android, `<video>` everywhere else. Subtitle search
+Embedded mpv on the desktop, libVLC on Android, `<video>` everywhere else. Subtitle search
 with audio auto-sync, seek-preview thumbnails, audio and subtitle track menus, speed control.
 
 </td>
@@ -194,7 +194,7 @@ One component, one set of controls, three backends underneath.
 
 | Capability | Detail |
 | --- | --- |
-| **Backends** | Embedded mpv (Linux, Windows, macOS), ExoPlayer (Android), webview `<video>` (browser) — all answering the same command/property protocol |
+| **Backends** | Embedded mpv (Linux, Windows, macOS), libVLC (Android), webview `<video>` (browser) — all answering the same command/property protocol |
 | **Start early** | Playback begins on the first bytes; the engine is polled for a real byte before mpv launches, so a fresh torrent never opens a black box |
 | **Seek preview** | Frames pulled with ffmpeg and cached, warmed only while the control bar is up |
 | **Tracks** | The file's own audio and subtitle tracks, the release's subtitle files, and OpenSubtitles — in one menu |
@@ -216,7 +216,7 @@ clicks included, while the video window itself never resizes.
 | --- | --- | --- |
 | Linux | mpv | Needs `mpv` and `ffmpeg` on PATH |
 | Windows | mpv | Ships its own `mpv.exe` and `ffmpeg.exe` — nothing to install |
-| Android phone / TV | ExoPlayer | The device's own decoders; landscape and immersive while playing |
+| Android phone / TV | libVLC | Ships VLC's decoders; landscape and immersive while playing |
 | macOS | mpv | Ships its own libmpv, linked rather than launched; see below. Seek previews and auto-sync want `brew install ffmpeg` — an .app launched from Finder inherits no shell PATH, so Homebrew's own prefixes are checked directly |
 | `bun run dev` in a browser | `<video>` | Which is what makes the mobile player testable without a device |
 
@@ -226,9 +226,9 @@ clicks included, while the video window itself never resizes.
   not a process there: the app links libmpv, asks for `vo=libmpv`, and draws the frames itself
   into an OpenGL view *under* the webview, with the page made see-through down to the video box.
   Same picture in the same place, same controls, same IPC protocol underneath.
-- **ExoPlayer plays what the device has.** A TV box: Dolby (AC-3, E-AC-3/DDP), HEVC, usually AV1.
-  A mid-range phone: often none of those, because Dolby is licensed per device. DTS and TrueHD
-  are rare on both — they need Media3's FFmpeg extension, an NDK build that isn't bundled here.
+- **libVLC plays what VLC can.** AC-3, E-AC-3, HEVC and most container formats work out of the
+  box on Android TV and phones — broader than the webview `<video>` path, though still not as
+  wide as desktop mpv.
 - **`<video>` is the narrow one.** Chromium is built with Dolby and DTS off whatever the hardware
   can do, so a release carrying one plays as a picture with no sound. **x264 + AAC always plays.**
   It also offers only external subtitles and no audio-track menu, because Chromium's demuxer
@@ -773,7 +773,7 @@ flowchart TD
   end
 
   subgraph Android["Android"]
-    Exo["ExoPlayer (Player.kt)"]
+    Vlc["libVLC (VlcPlayer.kt)"]
     Svc["DownloadService (Downloads.kt)"]
   end
 
@@ -785,7 +785,7 @@ flowchart TD
   end
 
   Player --> Mpv
-  Player --> Exo
+  Player --> Vlc
   Player --> Engine
   Player --> Ff
   UI --> Engine
@@ -806,7 +806,7 @@ flowchart TD
 - **Shell:** Tauri 2 (Rust), system webview
 - **Frontend:** Nuxt 4, Vue 3, Vuetify 4, UnoCSS, Pinia, TypeScript
 - **Engine:** [librqbit][librqbit], in-process, HTTP API on `127.0.0.1:3030`
-- **Player:** libmpv embedded natively; ExoPlayer on Android; webview `<video>` elsewhere
+- **Player:** libmpv embedded natively; libVLC on Android; webview `<video>` elsewhere
 
 **Repo layout**
 
@@ -820,7 +820,7 @@ app/
   theme/           MD3 palette generation and the 26 presets
 src-tauri/
   src/             lib.rs, player.rs (X11), player_windows.rs, player_unsupported.rs
-  gen/android/     MainActivity.kt, Player.kt (ExoPlayer), Downloads.kt (foreground service)
+  gen/android/     MainActivity.kt, VlcPlayer.kt (libVLC), Downloads.kt (foreground service)
 scripts/           build, mpv fetch, and the check:* self-checks
 ```
 

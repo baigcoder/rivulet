@@ -20,6 +20,7 @@ import type { EpgProgram, IPTVChannel } from '~/types/premium'
 import { useVirtualizer } from '@tanstack/vue-virtual'
 import { useDebounceFn, useElementSize } from '@vueuse/core'
 import { computed, nextTick, ref, shallowRef, triggerRef, watch } from 'vue'
+import { liveGridColumnCount, liveGridRowEstimate } from '~/utils/liveGridColumns'
 
 const props = defineProps<{
   channels: IPTVChannel[]
@@ -48,33 +49,18 @@ const scrollRef = ref<HTMLElement>()
 const { width: gridWidth } = useElementSize(scrollRef)
 
 /**
- * Must mirror the template's breakpoint classes exactly. The virtualizer
- * groups cards into rows itself, so a `cols` that disagrees with the CSS
- * leaves empty columns or wraps a row in two.
+ * Column count from the scroll width — keeps the virtualizer aligned with
+ * `gridTemplateColumns` once a sidebar is taking horizontal space.
  */
-const cols = computed(() => {
-  const width = gridWidth.value
-  if (props.density === 'compact') {
-    if (width >= 1280)
-      return 8
-    if (width >= 1024)
-      return 6
-    if (width >= 768)
-      return 5
-    if (width >= 640)
-      return 4
-    return 3
-  }
-  if (width >= 1280)
-    return 6
-  if (width >= 1024)
-    return 5
-  if (width >= 768)
-    return 4
-  if (width >= 640)
-    return 3
-  return 2
-})
+const cols = computed(() => liveGridColumnCount(gridWidth.value, props.density ?? 'comfortable'))
+
+const rowStyle = computed(() => ({
+  gridTemplateColumns: `repeat(${cols.value}, minmax(0, 1fr))`,
+}))
+
+const rowEstimate = computed(() =>
+  liveGridRowEstimate(gridWidth.value, cols.value, props.density ?? 'comfortable', true),
+)
 
 const rows = shallowRef<IPTVChannel[][]>([])
 
@@ -132,8 +118,8 @@ const virtualizer = useVirtualizer(computed(() => ({
   // row is remeasured once it mounts. The numbers are the card's own
   // fixed logo box plus its text block plus the row gap — a card is a
   // fixed height now, so these are close rather than a guess.
-  estimateSize: () => props.density === 'compact' ? 160 : 200,
-  overscan: 4,
+  estimateSize: () => rowEstimate.value,
+  overscan: 2,
 })))
 
 watch(cols, () => {
@@ -174,22 +160,33 @@ const triggerEpg = useDebounceFn(() => {
 // page of unchanged length still brings new channels into view.
 let lastFirst = -1
 let lastLast = -1
+function maybeLoadMore() {
+  if (!props.hasMore || props.loading)
+    return
+  const el = scrollRef.value
+  if (!el)
+    return
+  if (el.scrollHeight - el.scrollTop - el.clientHeight < 480)
+    emit('loadMore')
+}
+
 watch(
-  () => virtualizer.value?.getVirtualItems(),
-  items => {
-    if (!items || items.length === 0)
+  () => {
+    const items = virtualizer.value?.getVirtualItems()
+    if (!items?.length)
+      return ''
+    return `${items[0]?.index}:${items[items.length - 1]?.index}`
+  },
+  range => {
+    if (!range)
       return
-    const firstItem = items[0]
-    const lastItem = items[items.length - 1]
-    if (!firstItem || !lastItem)
-      return
-    if (firstItem.index !== lastFirst || lastItem.index !== lastLast) {
-      lastFirst = firstItem.index
-      lastLast = lastItem.index
+    const [first, last] = range.split(':').map(Number)
+    if (first !== lastFirst || last !== lastLast) {
+      lastFirst = first ?? -1
+      lastLast = last ?? -1
       void triggerEpg()
     }
-    if (props.hasMore && !props.loading && lastItem.index >= rows.value.length - 2)
-      emit('loadMore')
+    maybeLoadMore()
   },
 )
 
@@ -217,10 +214,7 @@ defineExpose({
       >
         <div
           class="grid gap-3 pb-3"
-          :class="{
-            'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6': density !== 'compact',
-            'grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8': density === 'compact',
-          }"
+          :style="rowStyle"
         >
           <premium-tv-premium-channel-card
             v-for="ch in rows[virtualRow.index]"

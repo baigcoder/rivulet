@@ -557,6 +557,14 @@ pub fn player_start(
 		// drops the connection outright. Cache what we have and reconnect
 		// instead of ending playback.
 		.arg("--cache=yes")
+		// Start the picture as soon as a frame is decoded — do not sit on
+		// "Buffering" while lavf probes a remote HTTP file for several seconds.
+		.arg("--cache-pause-initial=no")
+		.arg("--cache-pause-wait=0.4")
+		.arg("--cache-secs=20")
+		.arg("--demuxer-readahead-secs=5")
+		.arg("--demuxer-lavf-analyzeduration=0.4")
+		.arg("--demuxer-lavf-probesize=524288")
 		.arg("--stream-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=5")
 		.arg("--keep-open=no")
 		.arg("--no-terminal")

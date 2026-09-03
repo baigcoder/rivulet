@@ -107,3 +107,35 @@ pub fn build_source(
         quality: row.quality,
     })
 }
+
+/// Same redirector as live channels, but the token names a synthetic
+/// play id (`movie:…` or `series:…`) that only the Xtream adapter
+/// resolves. No SQLite row exists for VOD.
+pub fn build_vod_source(
+    state: Arc<PremiumState>,
+    connection_id: &str,
+    play_id: &str,
+    ext: &str,
+) -> Result<super::models::PlaybackSource, PremiumError> {
+    let redirect = mint_redirector_token(&state, connection_id, play_id, None)?;
+    let mime = vod_mime(ext);
+    Ok(super::models::PlaybackSource {
+        url: format!("http://{}/premium-stream/{}", crate::api::ADDR, redirect.token),
+        mime_type: Some(mime),
+        expires_at: Some(redirect.expires_at),
+        user_agent: None,
+        referer: None,
+        quality: None,
+    })
+}
+
+fn vod_mime(ext: &str) -> String {
+    match ext.trim_start_matches('.').to_lowercase().as_str() {
+        "mp4" => "video/mp4".into(),
+        "mkv" => "video/x-matroska".into(),
+        "avi" => "video/x-msvideo".into(),
+        "m3u8" => "application/x-mpegURL".into(),
+        "ts" => "video/mp2t".into(),
+        _ => "video/mp4".into(),
+    }
+}

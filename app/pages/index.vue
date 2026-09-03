@@ -25,7 +25,10 @@ watch(featured, media => media && ui.ambient(media), { immediate: true })
 // Fetch detail for the featured item (for logo, trailer, runtime, certification)
 const featuredDetail = ref<{ logo: string | null, trailer: string | null, runtime: number, certification: string, genres: { name: string }[] } | null>(null)
 watch(featured, async m => {
-  if (!m) { featuredDetail.value = null; return }
+  if (!m) {
+    featuredDetail.value = null
+    return
+  }
   try {
     const data = await tmdb<any>(`/${m.type}/${m.id}`)
     featuredDetail.value = {
@@ -48,7 +51,9 @@ watch(featured, (_m, _old, onCleanup) => {
   if (next?.backdrop) {
     const img = new Image()
     img.src = backdropUrl(next.backdrop, 'w1280') ?? ''
-    onCleanup(() => { img.src = '' })
+    onCleanup(() => {
+      img.src = ''
+    })
   }
 })
 

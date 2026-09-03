@@ -95,6 +95,38 @@ export function isNewer(current: string, latest: string) {
 }
 
 /**
+ * Pick the highest-versioned `.apk` from a release's assets.
+ *
+ * Multiple APKs can live on the same release (e.g. `Rivulet.apk` from an older
+ * build alongside `Rivulet_0.6.1.apk`).  `Array.find` picked whichever came
+ * first — often the stale one.  Sorting by the version embedded in the
+ * filename ensures the download button always points at the newest build.
+ */
+function pickLatestApk(assets?: { name?: string, browser_download_url?: string }[]): string {
+  const apks = assets?.filter(a => a.name?.endsWith('.apk')) ?? []
+  if (!apks.length)
+    return ''
+  if (apks.length === 1)
+    return apks[0]!.browser_download_url ?? ''
+  // Extract a version number from the filename (e.g. "Rivulet_0.6.1.apk" → "0.6.1").
+  const ver = (name: string) => {
+    const m = name.match(/(\d+\.\d+(?:\.\d+)?)/)
+    return m ? m[1]!.split('.').map(Number) : [0]
+  }
+  apks.sort((a, b) => {
+    const av = ver(a.name ?? '')
+    const bv = ver(b.name ?? '')
+    for (let i = 0; i < Math.max(av.length, bv.length); i++) {
+      const d = (av[i] ?? 0) - (bv[i] ?? 0)
+      if (d)
+        return d
+    }
+    return 0
+  })
+  return apks[apks.length - 1]!.browser_download_url ?? ''
+}
+
+/**
  * The fields worth keeping out of a GitHub release object.
  *
  * Separate from the fetch so the check script can feed it a recorded payload —
@@ -121,7 +153,7 @@ export function parseUpdate(data: unknown): Update | null {
     version,
     notes: r.body?.trim() ?? '',
     url: r.html_url || RELEASES_URL,
-    apk: r.assets?.find(a => a.name?.endsWith('.apk'))?.browser_download_url ?? '',
+    apk: pickLatestApk(r.assets),
   }
 }
 

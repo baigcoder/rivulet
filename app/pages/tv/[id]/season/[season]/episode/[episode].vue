@@ -29,6 +29,14 @@ const credits = computed(() => {
     { label: e.writers.length > 1 ? $t('Writers') : $t('Writer'), value: e.writers.join(', ') },
   ].filter(row => row.value)
 })
+
+const torrentPickerRef = ref<{ open: () => void } | null>(null)
+
+const playHandoff = computed(() => ({
+  imdb: show.value?.imdbId ?? undefined,
+  title: show.value?.title,
+  year: show.value?.year,
+}))
 </script>
 
 <template>
@@ -93,7 +101,7 @@ const credits = computed(() => {
             </dl>
 
             <div class="flex flex-wrap items-center gap-2 pt-2">
-              <v-btn :prepend-icon="mdiPlay" size="large" :to="watchLink('tv', id, seasonNumber, episodeNumber)">
+              <v-btn :prepend-icon="mdiPlay" size="large" :to="watchLink('tv', id, seasonNumber, episodeNumber, playHandoff)">
                 {{ $t('Play') }}
               </v-btn>
               <download-button
@@ -103,9 +111,11 @@ const credits = computed(() => {
                 :season="seasonNumber"
                 :episode="episodeNumber"
                 size="large"
+                @pick="torrentPickerRef?.open()"
               />
               <torrent-picker
                 :id="id"
+                ref="torrentPickerRef"
                 type="tv"
                 :imdb-id="show?.imdbId"
                 :season="seasonNumber"

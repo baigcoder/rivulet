@@ -7,14 +7,14 @@ import {
   mdiAlertCircleOutline,
   mdiAlphaA,
   mdiAutoFix,
-  mdiBookOpenPageVariant,
   mdiChartTimeline,
   mdiCheck,
   mdiChevronDown,
   mdiChevronUp,
-  mdiCloud,
   mdiClose,
+  mdiCloud,
   mdiCog,
+  mdiCropFree,
   mdiEarHearing,
   mdiFastForward10,
   mdiFullscreen,
@@ -27,15 +27,13 @@ import {
   mdiPlaySpeed,
   mdiPlus,
   mdiReload,
-  mdiRepeat,
   mdiRewind10,
   mdiSkipNext,
-  mdiSleep,
   mdiStar,
   mdiStepForward,
   mdiSubtitles,
   mdiSubtitlesOutline,
-  mdiSurroundSound,
+  mdiTranslate,
   mdiVolumeHigh,
   mdiVolumeLow,
   mdiVolumeMedium,
@@ -43,10 +41,13 @@ import {
 } from '@mdi/js'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 /** Remembered, so the next episode comes up in the same language — Plex-style. */
 import { key } from '~/brand'
+import { applyAspect, cycleAspect } from '~/utils/aspectRatio'
 import { inCredits, inIntro, progressKey, saveCredits, saveIntro } from '~/utils/library'
+import { friendlyPlaybackError } from '~/utils/playbackError'
 
 // Player for the embedded native mpv engine. mpv renders into a surface that
 // the Rust backend keeps glued to `boxEl` below (see `player_start` /
@@ -97,7 +98,7 @@ const props = defineProps<{
    * there is no other server to be had.
    */
   candidates?: {
-    servers: { index: number, label: string, detail?: string }[]
+    servers: { index: number, label: string, quality?: string, langs?: string[], detail?: string }[]
     qualities: { index: number, label: string, detail?: string }[]
   } | null
   /** Which candidate is playing — the check mark in both menus. */
@@ -256,7 +257,7 @@ const SURFACE = computed(() => {
 })
 
 /** Square icon button in the bars and the menu head. */
-const ICO = computed(() => `inline-flex items-center justify-center border-0 bg-transparent text-white opacity-86 transition-colors transition-opacity duration-120 hover:bg-white/12 hover:opacity-100 disabled:pointer-events-none disabled:opacity-30 rounded-lg ${touch.value ? 'h-11 min-w-11' : 'h-9.5 min-w-9.5'}`)
+const ICO = computed(() => `inline-flex items-center justify-center border-0 bg-transparent text-white/90 transition duration-150 hover:bg-white/14 hover:text-white focus-visible:bg-white/14 focus-visible:text-white disabled:pointer-events-none disabled:opacity-30 rounded-xl ${touch.value ? 'h-11 min-w-11' : 'h-10 min-w-10'}`)
 
 /**
  * The transport, dead centre. Play is where a remote lands and where a thumb
@@ -264,15 +265,15 @@ const ICO = computed(() => `inline-flex items-center justify-center border-0 bg-
  * square in a corner — and at ten feet that is the difference between pausing a
  * film and hunting for the button that would.
  */
-const ROUND = 'inline-flex items-center justify-center border-0 rounded-full bg-white/10 text-white transition-colors duration-120 hover:bg-white/22 disabled:pointer-events-none disabled:opacity-30'
+const ROUND = 'inline-flex items-center justify-center border-0 rounded-full bg-white/10 text-white transition-colors duration-120 hover:bg-white/22 focus-visible:bg-white/22 disabled:pointer-events-none disabled:opacity-30'
 const SEEK_BTN = computed(() => `${ROUND} ${touch.value ? 'h-13 w-13' : 'h-12 w-12'}`)
 const PLAY_BTN = computed(() => `${ROUND} ${touch.value ? 'h-17 w-17' : 'h-16 w-16'}`)
 
 /** Filled button in the centre notice. */
-const BTN = 'inline-flex items-center gap-1.5 border-0 rounded-lg bg-white/12 px-3.5 py-1.75 text-label-large transition-colors duration-120 hover:bg-white/20'
+const BTN = 'inline-flex items-center gap-1.5 border-0 rounded-lg bg-white/12 px-3.5 py-1.75 text-label-large transition-colors duration-120 hover:bg-white/20 focus-visible:bg-white/20'
 
 /** One choice inside the speed / audio / subtitle menu. */
-const MENU_ROW = 'flex w-full items-center justify-between gap-2.5 border-0 bg-transparent rounded-lg px-2.5 py-2 text-left text-label-large transition-colors duration-100 hover:bg-white/9'
+const MENU_ROW = 'flex w-full items-center justify-between gap-2.5 border-0 bg-transparent rounded-lg px-2.5 py-2 text-left text-label-large transition-colors duration-100 hover:bg-white/9 focus-visible:bg-white/9'
 
 /** Section heading between groups of menu rows. */
 const MENU_GROUP = 'px-2.5 pb-1 pt-2.5 text-label-small uppercase opacity-45'
@@ -292,6 +293,7 @@ const boxEl = ref<HTMLElement | null>(null)
 const playBtn = ref<HTMLButtonElement | null>(null)
 
 const videoEl = ref<HTMLVideoElement | null>(null)
+const aspectRatio = ref<'contain' | 'cover' | 'fill'>('contain')
 let engine: PlayerEngine | null = null
 /** The no-sound notice is said once per file, not every poll. See `poll`. */
 let silentSaid = false
@@ -300,7 +302,12 @@ const started = ref(false)
 const busy = ref(false)
 const waiting = ref(false)
 const paused = ref(false)
-watch(paused, (p) => { if (p) captureFrame(); else pauseFrame.value = '' })
+/**
+ * Set only from the user's play/pause, never from the polled `pause`
+ * property. Live mpv/HLS/libVLC often report `paused=true` while frames
+ * are still coming, which is why the live HUD must not key off that flag.
+ */
+const behindLive = ref(false)
 const buffering = ref(false)
 const ended = ref(false)
 const duration = ref(0)
@@ -314,6 +321,7 @@ const scrubbing = ref(false)
 /** While the volume slider is being dragged, the poll must not fight it back. */
 const volumeHeld = ref(false)
 const errorMsg = ref('')
+const friendlyError = computed(() => friendlyPlaybackError(errorMsg.value))
 /** The current stream was a debrid stub clip (quota/key error) — remembered for the failover verdict. */
 const stubSeen = ref(false)
 /** Chapter list fetched once when the file opens. */
@@ -400,6 +408,18 @@ const fromIptv = computed(() => {
   return IPTV_PROTOCOLS.some(p => props.src.startsWith(p))
 })
 
+/** Debrid hosts reject mpv's default `Lavf/…` UA. Same browser string the IPTV proxy uses. */
+const STREAM_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+
+function streamOrigin(url: string) {
+  try {
+    return `${new URL(url).origin}/`
+  }
+  catch {
+    return undefined
+  }
+}
+
 const showStats = ref(false)
 const statsData = ref<{ download: string, upload: string, peers: number, progress: number } | null>(null)
 
@@ -448,6 +468,20 @@ async function ipc(command: unknown[]): Promise<any> {
   }
 }
 
+const aspectLabel = computed(() =>
+  aspectRatio.value === 'contain'
+    ? $t('Fit')
+    : aspectRatio.value === 'cover' ? $t('Center') : $t('Stretch'))
+function applyAspectMode() {
+  applyAspect({ ipc }, aspectRatio.value)
+}
+function cycleAspectRatio() {
+  aspectRatio.value = cycleAspect(aspectRatio.value)
+  applyAspectMode()
+}
+watch(aspectRatio, applyAspectMode)
+watch(started, value => value && applyAspectMode())
+
 /** Several properties over one socket round trip. Missing/failed ones read null. */
 async function readProps<T = Record<string, any>>(names: string[]): Promise<T | null> {
   if (!native)
@@ -463,23 +497,21 @@ async function readProps<T = Record<string, any>>(names: string[]): Promise<T | 
 /** Capture the frozen video frame as a JPEG data-URL for the pause overlay. */
 const pauseFrame = ref('')
 async function captureFrame() {
-  if (!native) return
+  if (!native)
+    return
   try {
     pauseFrame.value = await invoke<string>('player_screenshot')
   }
   catch { pauseFrame.value = '' }
 }
-/** Background style that sizes the screenshot to the full player-box dimensions
- *  so the left portion visible through the data-cut hole aligns with the native video. */
-const pauseFrameStyle = computed(() => {
-  if (!pauseFrame.value || !boxWidth.value || !boxHeight.value) return undefined
-  return {
-    backgroundImage: `url(${pauseFrame.value})`,
-    backgroundSize: `${boxWidth.value}px ${boxHeight.value}px`,
-    backgroundRepeat: 'no-repeat' as const,
-    backgroundPosition: '0 0',
-  }
+watch(paused, p => {
+  if (p)
+    void captureFrame()
+  else
+    pauseFrame.value = ''
 })
+const pauseFit = computed(() =>
+  aspectRatio.value === 'fill' ? 'object-fill' : aspectRatio.value === 'cover' ? 'object-cover' : 'object-contain')
 
 /**
  * Is the chrome up? Declared this high because both the cursor poll below and
@@ -634,6 +666,8 @@ watch(() => settings.subs, applySubtitleStyle, { deep: true })
 // offers none.
 /** Cues from a track inside the file, which only libVLC can read out. */
 const subText = ref('')
+/** Guard: provider error slates loop their subtitle cue every few seconds. */
+let slateHandled = false
 /** Actual decoded video dimensions, read from mpv's video-params. */
 const videoWidth = ref(0)
 const videoHeight = ref(0)
@@ -1344,16 +1378,59 @@ function skipIntro() {
 const menuTitle = computed(() => menu.value ? MENU_TITLES[menu.value]() : '')
 
 /** Labelled pill for the Server / Quality selectors — text, not an icon, since "which one am I on" is their whole point. */
-const PILL = computed(() => `inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/6 px-3 font-medium transition-colors duration-120 hover:bg-white/14 disabled:pointer-events-none disabled:opacity-30 ${touch.value ? 'h-10 px-4' : 'h-8'} ${menu.value === 'server' || menu.value === 'quality' ? '!border-primary !text-primary' : ''}`)
+const PILL = computed(() => `inline-flex items-center gap-1 rounded-full border border-white/20 bg-white/10 px-3 font-semibold tracking-wide transition-colors duration-150 hover:bg-white/16 focus-visible:bg-white/16 disabled:pointer-events-none disabled:opacity-30 ${touch.value ? 'h-10 px-4' : 'h-8'} ${menu.value === 'server' || menu.value === 'quality' || menu.value === 'audio' ? '!border-primary !text-primary' : ''}`)
 
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
 
 /** Server playback only — the failover list and the resolution shortcuts. */
 const hasCandidates = computed(() => !!props.candidates?.servers?.length)
 
-/** Labels for the two pills: what's playing right now, or nothing before candidates land. */
-const activeQuality = computed(() => props.candidates?.qualities?.find(q => q.index === props.activeCandidate))
+function shortQuality(text: string) {
+  const m = text.toLowerCase().match(/\b(2160p|1440p|1080p|720p|480p|4k|2k)\b/)
+  if (!m)
+    return text.toUpperCase()
+  if (m[1] === '2160p' || m[1] === '4k')
+    return '4K'
+  if (m[1] === '1440p' || m[1] === '2k')
+    return '2K'
+  return (m[1] ?? text).toUpperCase()
+}
+
+/** Current resolution: the playing server's tier, or the decoded picture. */
+const activeQuality = computed(() => {
+  const quals = props.candidates?.qualities ?? []
+  const idx = props.activeCandidate ?? 0
+  const server = props.candidates?.servers?.[idx]
+  if (server?.quality)
+    return quals.find(q => q.label === server.quality) ?? { index: idx, label: server.quality }
+  const exact = quals.find(q => q.index === idx)
+  if (exact)
+    return exact
+  const fallback = props.quality || resolutionLabel.value
+  return fallback ? { index: idx, label: shortQuality(fallback) } : quals[0] ?? null
+})
 const activeServer = computed(() => props.candidates?.servers?.[Math.max(0, props.activeCandidate ?? 0)])
+
+const audioLangs = computed(() => {
+  const current = props.activeCandidate ?? 0
+  const seen = new Map<string, number>()
+  for (const s of props.candidates?.servers ?? []) {
+    if (s.index === current)
+      continue
+    for (const code of s.langs ?? []) {
+      if (!seen.has(code))
+        seen.set(code, s.index)
+    }
+  }
+  return [...seen.entries()].map(([code, index]) => ({ code, index, name: langName(code) }))
+})
+
+const audioPill = computed(() => {
+  const t = audioTracks.value.find(a => a.id === aid.value)
+  if (t?.lang)
+    return t.lang.slice(0, 2).toUpperCase()
+  return activeServer.value?.langs?.[0]?.toUpperCase() ?? ''
+})
 
 /**
  * When the parent says so, the Quality menu introduces itself the first time
@@ -1725,7 +1802,7 @@ async function waitForStream(url: string, timeoutMs = 60000): Promise<{ ok: bool
   // (10s) — enough for a slow upstream to answer the first manifest
   // request, but not so long the user stares at a spinner for a dead channel.
   const proxy = url.startsWith(PROXY)
-  const deadline = Date.now() + (local ? timeoutMs : proxy ? 10000 : 15000)
+  const deadline = Date.now() + (local ? timeoutMs : proxy ? 10000 : timeoutMs)
   let status = 0
   while (Date.now() < deadline) {
     try {
@@ -1773,12 +1850,9 @@ async function waitForStream(url: string, timeoutMs = 60000): Promise<{ ok: bool
     }
     catch {
       if (!local && !proxy) {
-        // Debrid URLs often lack CORS headers (fetch throws) or need a moment
-        // to activate — keep retrying within the window instead of giving up
-        // on the first probe. If every attempt fails, fall through with
-        // `unknown: true` so mpv opens it directly (media elements bypass CORS).
-        if (Date.now() + 150 < deadline)
-          continue
+        // Debrid hosts almost never send CORS — `fetch` throws on the first
+        // hop and never stops throwing. Retrying here is a 15s black screen
+        // before mpv even starts; the player itself is the verdict.
         return { ok: false, unknown: true, status: 0 }
       }
       // Engine momentarily unreachable — keep waiting.
@@ -1811,6 +1885,7 @@ async function startPlayer() {
     return
   busy.value = true
   errorMsg.value = ''
+  slateHandled = false
   ended.value = false
   try {
     if (!props.src)
@@ -1836,12 +1911,11 @@ async function startPlayer() {
       // A torrent stream gets the patient window (peers need time to appear);
       // a proxied live stream gets a medium window (upstream may be slow to
       // answer the first HLS manifest request); a direct debrid/server link
-      // is a server that answers or doesn't — six seconds and the candidate
-      // list moves on.
+      // is one probe (or an instant CORS miss) and then mpv opens it.
       waiting.value = true
       probe = await waitForStream(
         props.src,
-        fromEngine.value ? 60_000 : localLive.value ? 10_000 : 6_000,
+        fromEngine.value ? 60_000 : localLive.value ? 3_000 : 800,
       )
       waiting.value = false
       // A stub clip is a *verdict* — quota gone or key rejected. Fail over like
@@ -1895,14 +1969,14 @@ async function startPlayer() {
       const dpr = pxRatio
       // IPTV streams carry their own User-Agent / Referer (parsed from
       // the M3U's #EXTVLCOPT or set per-stream by the Xtream provider).
-      // Without these, mpv's default `Lavf/...` UA gets rejected by
-      // upstreams that whitelist only specific clients.
-      const iptvHeaders = fromIptv.value
-        ? {
-            userAgent: props.userAgent ?? undefined,
-            referer: props.referer ?? undefined,
+      // Debrid resolve links (Torrentio, Meteor, MediaFusion) also reject
+      // mpv's default `Lavf/…` string — they only answer a browser UA.
+      const iptvHeaders = fromEngine.value
+        ? {}
+        : {
+            userAgent: props.userAgent || STREAM_UA,
+            referer: props.referer || streamOrigin(props.src),
           }
-        : {}
       await invoke('player_start', {
         url: props.src,
         ...viewport(dpr),
@@ -1942,6 +2016,14 @@ async function startPlayer() {
     syncNote.value = ''
     guess.value = null
     lastKey = '' // force a geometry + shape push on the next frame
+    if (!fromEngine.value && !localLive.value) {
+      window.setTimeout(() => {
+        if (!started.value || duration.value || errorMsg.value)
+          return
+        if (!streamDied())
+          errorMsg.value = $t('This stream did not start. Try another quality, or change How Play works in Settings → Sources.')
+      }, 12_000)
+    }
     // Push geometry and cutouts immediately so the stalled overlay's data-cut
     // hole appears in the native window before the next paint — waiting for
     // the next RAF leaves a frame where the mpv surface covers the webview
@@ -1956,7 +2038,13 @@ async function startPlayer() {
     // instead. Where the picture is *behind* the page there is nothing to
     // arrange: the events were the document's all along.
     if (overlay) {
-      ipc(['keybind', 'MBTN_LEFT', 'cycle pause'])
+      // Live pause has to go through `togglePlay` so we know the user
+      // actually paused — mpv's own `cycle pause` would skip the behind-live
+      // flag, and the poll cannot recover it because live backends lie about
+      // `pause`. The HUD and Space still pause. Windows already routes the
+      // picture click through `onNativeClick` → `togglePlay`.
+      if (!isLive.value)
+        ipc(['keybind', 'MBTN_LEFT', 'cycle pause'])
       ipc(['keybind', 'WHEEL_UP', 'add volume 5'])
       ipc(['keybind', 'WHEEL_DOWN', 'add volume -5'])
     }
@@ -1973,11 +2061,17 @@ async function startPlayer() {
   }
   catch (e) {
     started.value = false
-    errorMsg.value = String(e)
-    // A URL the backend refused outright is a dead server, same as a probe
-    // miss — hand the failure to whoever holds the candidate list.
-    if (streamDied())
+    const raw = e instanceof Error ? e.message : String(e)
+    if (isLive.value) {
+      if (!streamDied(refusal(raw) ? 'refused' : undefined))
+        errorMsg.value = ''
+    }
+    else if (!streamDied()) {
+      errorMsg.value = friendlyPlaybackError(raw)
+    }
+    else {
       errorMsg.value = ''
+    }
   }
   finally {
     busy.value = false
@@ -2006,7 +2100,40 @@ function refusal(tail: string): boolean {
   return /\b(?:401|403)\b|unauthori[sz]ed|forbidden/i.test(tail)
 }
 
+/**
+ * IPTV panels at their connection limit often serve a looping error clip
+ * with "Max Connection Limit Reached" burned in or muxed as subtitles.
+ * Stop mpv immediately so the slot can free and the page can say why.
+ */
+function providerSlateDetected(text: string, dur: number): boolean {
+  if (isProviderConnectionLimit(text))
+    return true
+  // Text is burned into the frame with no subtitle track — the clip is
+  // always under two minutes (often ~30–45s) while a real episode is not.
+  if (!isLive.value && isProviderVodSlateDuration(dur))
+    return true
+  return false
+}
+
+function handleProviderSlate(text: string, dur = duration.value): boolean {
+  if (slateHandled || !fromPremium.value || !providerSlateDetected(text, dur))
+    return false
+  slateHandled = true
+  errorMsg.value = connectionLimitMessage()
+  void stopPlayer().then(() => {
+    if (isLive.value)
+      streamDied('refused')
+  })
+  return true
+}
+
 function streamDied(reason?: 'stub' | 'dead' | 'refused') {
+  // Premium movies and episodes are finite files — the watch page's live
+  // reconnect loop would remint tokens mid-playback and fight a stream that
+  // is still advancing. Failures stay in the player; the page only hears
+  // `failed` for live channels and debrid failover queues.
+  if (fromPremium.value && !isLive.value)
+    return false
   if (!hasCandidates.value && !localLive.value)
     return false
   emit('failed', reason)
@@ -2022,6 +2149,7 @@ async function stopPlayer() {
   clearAutoPlayCountdown()
   chapters.value = []
   currentChapter.value = -1
+  behindLive.value = false
   if (native)
     await invoke('player_stop').catch(() => {})
   else
@@ -2052,7 +2180,28 @@ async function zapTo() {
 // `ui` is exposed because a page-level HUD (Live TV) cannot compute it itself:
 // where mpv paints over the page no mousemove ever reaches the DOM, and this
 // flag is the one fed by the native pointer poll.
-defineExpose({ osd, zapTo, togglePlay, toggleMute, setVolume, paused, volume, muted, started, buffering, ui, videoWidth, videoHeight, resolutionLabel })
+defineExpose({
+  osd,
+  zapTo,
+  togglePlay,
+  goLive,
+  behindLive,
+  toggleMute,
+  setVolume,
+  paused,
+  volume,
+  muted,
+  started,
+  buffering,
+  ui,
+  videoWidth,
+  videoHeight,
+  resolutionLabel,
+  ipc,
+  position,
+  duration,
+  errorMsg: friendlyError,
+})
 
 // ---------------------------------------------------------------------------
 // Polling: playback props, plus a liveness check so a dead mpv reports itself
@@ -2098,7 +2247,9 @@ async function poll() {
       }
       else {
         const tail = st.log_tail?.trim() || ''
-        errorMsg.value = tail || (native ? $t('mpv exited unexpectedly.') : $t('Playback stopped unexpectedly.'))
+        if (!isLive.value) {
+          errorMsg.value = friendlyPlaybackError(tail || (native ? $t('mpv exited unexpectedly.') : $t('Playback stopped unexpectedly.')))
+        }
         // A server stream that stops mid-film is the server dying, not the
         // film ending — same failover as a link that never opened.
         if (!fromEngine.value)
@@ -2160,6 +2311,8 @@ async function poll() {
     speed.value = p.speed
   cacheEnd.value = typeof p['demuxer-cache-time'] === 'number' ? p['demuxer-cache-time'] : 0
   subText.value = typeof p['sub-text'] === 'string' ? p['sub-text'] : ''
+  if (handleProviderSlate(subText.value, duration.value))
+    return
 
   // Video dimensions — read once per poll to show the resolution badge and
   // detect 4K content for HDR tone mapping.
@@ -2174,6 +2327,14 @@ async function poll() {
   // really drifted, so the bar never stutters backwards a frame.
   if (!scrubbing.value && typeof p['time-pos'] === 'number' && Math.abs(p['time-pos'] - position.value) > 0.4)
     position.value = p['time-pos']
+
+  // A start-up log line can land before the first frame; once time is
+  // moving the message is stale and must not sit over a playing picture.
+  // Provider connection-limit slates keep their cue for the whole loop.
+  if (errorMsg.value && typeof p['time-pos'] === 'number' && p['time-pos'] > 0.5 && !buffering.value
+    && !providerSlateDetected(subText.value, duration.value)) {
+    errorMsg.value = ''
+  }
 
   // Track which chapter we're in for the chapter menu highlight.
   if (chapters.value.length) {
@@ -2280,8 +2441,35 @@ async function poll() {
 // Controls
 // ---------------------------------------------------------------------------
 function togglePlay() {
+  if (!started.value) {
+    void startPlayer()
+    return
+  }
+  const willPause = !paused.value
   paused.value = !paused.value
   ipc(['set_property', 'pause', paused.value])
+  // The LIVE jump has to appear on pause, not only after resume: the
+  // header already says LIVE, and clicking that label while paused is
+  // the whole gesture. Gate on this flag, never on polled `pause`.
+  if (isLive.value && willPause)
+    behindLive.value = true
+}
+
+/**
+ * Jump a live channel back to the live edge. Percent-seek only walks the
+ * 20s demuxer cache, which is still the pause point once the stream has
+ * stopped filling; reopening the URL is what IPTV actually means by live.
+ */
+async function goLive() {
+  if (!isLive.value)
+    return
+  behindLive.value = false
+  paused.value = false
+  if (!started.value && !busy.value) {
+    void startPlayer()
+    return
+  }
+  await restart()
 }
 
 function seekTo(t: number) {
@@ -2641,7 +2829,9 @@ const stalled = ref(false)
 watchDebounced(() => buffering.value && started.value, v => (stalled.value = v), { debounce: 500 })
 
 const centre = computed(() => {
-  if (errorMsg.value)
+  // Live TV owns failure UI on its overlay — mpv's ffmpeg tail is not
+  // actionable and reads like the app is broken.
+  if (errorMsg.value && !isLive.value)
     return 'error'
   if (ended.value)
     return 'ended'
@@ -2651,7 +2841,13 @@ const centre = computed(() => {
   // played yet (position and duration both zero) — the poll clears
   // `buffering` before the debounce catches up, leaving a dead window with
   // a black screen and no feedback.
-  if (started.value && !paused.value && (buffering.value || stalled.value || (!position.value && !duration.value)))
+  //
+  // When buffering is true the player is stalling for data even though it may
+  // report paused (libVLC stops outputting frames while buffering). Show the
+  // spinner instead of the pause overlay in that case.
+  if (started.value && !duration.value && !ended.value)
+    return 'stalled'
+  if (started.value && (buffering.value || stalled.value))
     return 'stalled'
   return ''
 })
@@ -2938,8 +3134,12 @@ async function listenToNativeMouse() {
   }
 }
 
-watch(() => props.src, src => {
+watch(() => props.src, (src, prev) => {
   dropThumbs() // a different file, and the buckets meant seconds into the old one
+  // First run is onMounted's job. A mount-time fire here races
+  // `startPlayer` (busy guard) and can stop the stream before it starts.
+  if (prev === undefined)
+    return
   if (src)
     restart()
   else
@@ -3010,10 +3210,12 @@ function fmt(s: number) {
 
 /** Duration in human-readable form: "1h 54m" or "42m". */
 function fmtDuration(s: number) {
-  if (!Number.isFinite(s) || s <= 0) return ''
+  if (!Number.isFinite(s) || s <= 0)
+    return ''
   const h = Math.floor(s / 3600)
   const m = Math.floor((s % 3600) / 60)
-  if (h > 0) return `${h}h ${m}m`
+  if (h > 0)
+    return `${h}h ${m}m`
   return `${m}m`
 }
 
@@ -3049,6 +3251,11 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
         v-if="src && !native && !vlc"
         ref="videoEl"
         class="h-full w-full bg-black"
+        :class="{
+          'object-contain': aspectRatio === 'contain',
+          '!object-cover': aspectRatio === 'cover',
+          '!object-fill': aspectRatio === 'fill',
+        }"
         playsinline
         @pointerdown.stop="tapVideo"
       />
@@ -3191,7 +3398,9 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
         <div class="text-title-small">
           {{ $t('Playback failed') }}
         </div>
-        <pre class="max-h-32.5 max-w-full overflow-auto whitespace-pre-wrap text-left text-label-small font-mono opacity-70">{{ errorMsg }}</pre>
+        <p class="max-w-sm text-body-small leading-relaxed opacity-70">
+          {{ friendlyError }}
+        </p>
         <button :class="BTN" :disabled="busy" @click="startPlayer">
           <v-icon :icon="mdiReload" size="18" /> {{ $t('Retry') }}
         </button>
@@ -3269,47 +3478,56 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
       leave-to-class="opacity-0"
     >
       <div
-        v-if="paused && started && !centre"
+        v-if="paused && started && !centre && !isLive"
         data-cut
         class="absolute inset-0 z-20"
-        :style="pauseFrameStyle"
+        :class="pauseFrame && 'bg-black'"
         @pointerenter="hovering = true"
         @pointerleave="onChildPointerLeave"
       >
+        <!-- mpv's screenshot is the video rectangle, not the window. Size it
+             the same way play does (contain by default) or pause looks stretched. -->
+        <img
+          v-if="pauseFrame"
+          :src="pauseFrame"
+          alt=""
+          class="pointer-events-none absolute inset-0 size-full object-center"
+          :class="pauseFit"
+        >
         <div class="absolute inset-0 bg-black/50" />
         <div class="absolute inset-y-0 left-0 w-[min(520px,48%)] bg-gradient-to-r from-black/70 via-black/40 to-transparent" />
         <div class="absolute inset-y-0 left-0 flex w-[min(520px,48%)] items-center pl-8 pr-12">
           <div class="flex flex-col gap-3">
-          <img
-            v-if="logoSrc"
-            :src="logoSrc"
-            :alt="props.title"
-            class="h-24 w-auto object-contain object-left drop-shadow-[0_2px_12px_rgba(0,0,0,0.8)]"
-          >
-          <div v-else-if="props.title" class="text-headline-large font-bold leading-tight text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.6)]">
-            {{ props.title }}
-          </div>
-          <div class="flex items-center gap-2 text-title-medium text-white/70">
-            <span v-if="props.year">{{ props.year }}</span>
-            <template v-if="duration">
-              <span class="opacity-45">·</span>
-              <span>{{ fmtDuration(duration) }}</span>
-            </template>
-            <template v-if="props.media?.rating">
-              <span class="opacity-45">·</span>
-              <span class="flex items-center gap-0.5">
-                <svg viewBox="0 0 24 24" class="size-4 fill-amber-400"><path :d="mdiStar" /></svg>
-                {{ props.media.rating.toFixed(1) }}
-              </span>
-            </template>
-            <template v-if="props.season && props.episode">
-              <span class="opacity-45">·</span>
-              <span>S{{ props.season }}E{{ props.episode }}</span>
-            </template>
-          </div>
-          <div v-if="props.media?.overview" class="line-clamp-3 text-body-large leading-relaxed text-white/50">
-            {{ props.media.overview }}
-          </div>
+            <img
+              v-if="logoSrc"
+              :src="logoSrc"
+              :alt="props.title"
+              class="h-24 w-auto object-contain object-left drop-shadow-[0_2px_12px_rgba(0,0,0,0.8)]"
+            >
+            <div v-else-if="props.title" class="text-headline-large font-bold leading-tight text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.6)]">
+              {{ props.title }}
+            </div>
+            <div class="flex items-center gap-2 text-title-medium text-white/70">
+              <span v-if="props.year">{{ props.year }}</span>
+              <template v-if="duration">
+                <span class="opacity-45">·</span>
+                <span>{{ fmtDuration(duration) }}</span>
+              </template>
+              <template v-if="props.media?.rating">
+                <span class="opacity-45">·</span>
+                <span class="flex items-center gap-0.5">
+                  <svg viewBox="0 0 24 24" class="size-4 fill-amber-400"><path :d="mdiStar" /></svg>
+                  {{ props.media.rating.toFixed(1) }}
+                </span>
+              </template>
+              <template v-if="props.season && props.episode">
+                <span class="opacity-45">·</span>
+                <span>S{{ props.season }}E{{ props.episode }}</span>
+              </template>
+            </div>
+            <div v-if="props.media?.overview" class="line-clamp-3 text-body-large leading-relaxed text-white/50">
+              {{ props.media.overview }}
+            </div>
           </div>
         </div>
       </div>
@@ -3349,6 +3567,9 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
           </template>
 
           <template v-else-if="menu === 'audio'">
+            <p v-if="audioTracks.length" :class="MENU_GROUP">
+              {{ $t('In this file') }}
+            </p>
             <button
               v-for="t in audioTracks"
               :key="t.id"
@@ -3358,7 +3579,19 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
               <span class="truncate">{{ trackLabel(t) }}</span>
               <v-icon v-if="aid === t.id" :icon="mdiCheck" size="16" />
             </button>
-            <p v-if="!audioTracks.length" :class="NOTE">
+            <p v-if="audioLangs.length" :class="MENU_GROUP">
+              {{ $t('Language') }}
+            </p>
+            <button
+              v-for="l in audioLangs"
+              :key="l.code"
+              :class="[MENU_ROW, l.index === activeCandidate && 'text-primary']"
+              @click="emit('useCandidate', l.index); menu = ''"
+            >
+              <span class="truncate">{{ l.name }}</span>
+              <v-icon v-if="l.index === activeCandidate" :icon="mdiCheck" size="16" />
+            </button>
+            <p v-if="!audioTracks.length && !audioLangs.length" :class="NOTE">
               {{ $t('This file has one audio track.') }}
             </p>
           </template>
@@ -3725,7 +3958,7 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
     <button
       v-if="introSkip && ui"
       data-cut
-      class="absolute right-6 bottom-28 z-10 rounded-lg border border-white/20 bg-white/12 px-4 py-2 text-label-large backdrop-blur-sm transition-colors hover:bg-white/20"
+      class="absolute right-6 bottom-28 z-10 rounded-lg border border-white/20 bg-white/12 px-4 py-2 text-label-large backdrop-blur-sm transition-colors hover:bg-white/20 focus-visible:bg-white/20"
       @click="skipIntro"
     >
       {{ $t('Skip Intro') }}
@@ -3804,7 +4037,7 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
               <v-icon :icon="volumeIcon" size="22" />
             </button>
             <player-slider
-              class="w-0 flex-none overflow-hidden opacity-0 transition-[width,margin,opacity] duration-160 group-hover/volume:mx-1.5 group-hover/volume:w-19 group-hover/volume:opacity-100"
+              class="w-0 flex-none overflow-hidden opacity-0 transition-[width,margin,opacity] duration-160 group-hover/volume:mx-1.5 group-hover/volume:w-19 group-hover/volume:opacity-100 group-focus-within/volume:mx-1.5 group-focus-within/volume:w-19 group-focus-within/volume:opacity-100"
               :model-value="muted ? 0 : volume"
               :max="100"
               :disabled="!started"
@@ -3818,6 +4051,8 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
           <div class="flex-1" />
 
           <span v-if="remaining" class="opacity-55" :class="TIME">{{ remaining }}</span>
+
+          <span class="mx-1.5 h-5 w-px bg-white/15" aria-hidden="true" />
 
           <!-- Server / Quality as labelled pills: "which one am I on" is their
                whole point, so the current pick is the button text. -->
@@ -3848,12 +4083,13 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
             <span v-else class="text-label-large tabular-nums">{{ speed }}×</span>
           </button>
           <button
-            v-if="audioTracks.length > 1"
-            v-tooltip:top="$t('Audio track')"
-            :class="[ICO, menu === 'audio' && '!text-primary !opacity-100']"
+            v-tooltip:top="$t('Audio')"
+            :class="[audioPill ? PILL : ICO, menu === 'audio' && '!text-primary !opacity-100']"
+            :disabled="!started"
             @click="openMenu('audio')"
           >
-            <v-icon :icon="mdiSurroundSound" size="22" />
+            <span v-if="audioPill" class="tabular-nums">{{ audioPill }}</span>
+            <v-icon v-else :icon="mdiTranslate" size="22" />
           </button>
           <button
             v-tooltip:top="$t('Subtitles (s)')"
@@ -3879,6 +4115,14 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
             @click="togglePip"
           >
             <v-icon :icon="mdiPictureInPictureBottomRight" size="22" />
+          </button>
+          <button
+            v-tooltip:top="aspectLabel"
+            :class="[ICO, aspectRatio !== 'contain' && '!text-primary !opacity-100']"
+            :disabled="!started"
+            @click="cycleAspectRatio"
+          >
+            <v-icon :icon="mdiCropFree" size="22" />
           </button>
           <button
             v-tooltip:top="windowFullscreen ? $t('Exit fullscreen (f)') : $t('Fullscreen (f)')"

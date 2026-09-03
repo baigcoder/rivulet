@@ -18,16 +18,33 @@ const id = computed(() => String(route.params.id))
 const { data: media, status, error } = useMediaDetail(type, id)
 
 // --- Trailer hero -----------------------------------------------------------
-// The cover plays the YouTube trailer muted on loop while the page is up,
-// Netflix-style. Gated by the reduce-effects switch (TVs default it on, so
-// they keep the calm static backdrop), and the poster/backdrop always paints
-// first — the iframe only fades in once it has something to show.
-const settings = useSettingsStore()
+// Plays the YouTube trailer muted on loop behind the cover, Netflix-style.
+// Packaged Linux/macOS loads from tauri://localhost, which YouTube's iframe
+// rejects (error 153) — youtubeEmbedSrc() routes Tauri through the loopback
+// relay on :3031 instead. WebKitGTK's default UA also looks like Safari's;
+// tauri.linux.conf.json and lib.rs setup both claim Chrome on Linux.
 const videoHidden = ref(false)
-const trailerReady = ref(false)
-const heroVideoOn = ref(false)
 const heroMuted = ref(true)
+const heroSrc = computed(() => {
+  const key = media.value?.trailer
+  if (!key || videoHidden.value)
+    return ''
+  return youtubeEmbedSrc(key, { mute: heroMuted.value, loop: true })
+})
 
+function toggleHeroSound() {
+  heroMuted.value = !heroMuted.value
+}
+
+const trailerSrc = computed(() => {
+  const key = media.value?.trailer
+  if (!key)
+    return ''
+  return youtubeEmbedSrc(key)
+})
+
+// --- Trailer dialog ----------------------------------------------------------
+const settings = useSettingsStore()
 // --- Parental controls -------------------------------------------------------
 const RATING_ORDER = ['G', 'PG', 'PG-13', 'R', 'NC-17', '']
 const parentalBlocked = computed(() => {
@@ -54,82 +71,6 @@ function checkPin() {
   }
   pinInput.value = ''
 }
-const heroFrame = ref<HTMLIFrameElement | null>(null)
-let heroTimer: ReturnType<typeof setTimeout> | undefined
-let youtubeApiReady = false
-
-const heroEligible = computed(() =>
-  !!media.value?.trailer && !videoHidden.value)
-
-const heroSrc = computed(() => {
-  const key = media.value?.trailer
-  if (!key)
-    return ''
-  return `https://www.youtube-nocookie.com/embed/${key}?autoplay=1&mute=1&enablejsapi=1&playsinline=1`
-})
-
-watch(heroEligible, ok => {
-  clearTimeout(heroTimer)
-  youtubeApiReady = false
-  heroVideoOn.value = false
-  trailerReady.value = false
-  if (ok) {
-    heroVideoOn.value = true
-    trailerReady.value = true
-  }
-}, { immediate: true })
-
-watch(heroFrame, frame => {
-  if (frame) {
-    onHeroLoad()
-  }
-})
-
-onUnmounted(() => {
-  clearTimeout(heroTimer)
-  window.removeEventListener('message', onYouTubeMessage)
-})
-
-/** Force YouTube to start playing via postMessage — autoplay=1 alone is
- *  silently blocked in Tauri / Electron / some webview environments.
- *  We wait for the YouTube iframe API 'onReady' event before sending commands. */
-function forceHeroPlay() {
-  const win = heroFrame.value?.contentWindow
-  if (!win || !youtubeApiReady)
-    return
-  const cmd = (func: string) =>
-    win.postMessage(JSON.stringify({ event: 'command', func, args: [] }), '*')
-  cmd('mute')
-  cmd('playVideo')
-}
-
-/** Listen for YouTube iframe API 'onReady' event. */
-function onYouTubeMessage(event: MessageEvent) {
-  if (event.origin !== 'https://www.youtube-nocookie.com' && event.origin !== 'https://www.youtube.com')
-    return
-  const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data
-  if (data?.event === 'onReady') {
-    youtubeApiReady = true
-    forceHeroPlay()
-  }
-}
-
-window.addEventListener('message', onYouTubeMessage)
-
-function onHeroLoad() {
-  trailerReady.value = true
-  // Don't call forceHeroPlay yet - wait for YouTube API ready event
-}
-
-/** YouTube's postMessage API is the only way to unmute a muted autoplay embed. */
-function toggleHeroSound() {
-  heroFrame.value?.contentWindow?.postMessage(
-    JSON.stringify({ event: 'command', func: heroMuted.value ? 'unMute' : 'mute', args: [] }),
-    '*',
-  )
-  heroMuted.value = !heroMuted.value
-}
-
 // This page's art is the app backdrop, for exactly as long as the page is up.
 let mine = 0
 watch(media, value => value && (mine = ui.select(value)), { immediate: true })
@@ -164,6 +105,7 @@ const credits = computed(() => {
 })
 
 const trailer = ref(false)
+const torrentPickerRef = ref<{ open: () => void } | null>(null)
 
 // Escape hatch: YouTube refuses to embed some titles, and the dialog just shows
 // its "unavailable" card. Opens in the OS browser under Tauri, a tab under `bun dev`.
@@ -287,8 +229,8 @@ const playLabel = computed(() => [
 
     <template v-else>
       <!-- Trailer-as-cover hero. Backdrop paints immediately; the muted
-           trailer fades in over it ~0.8s later (never if the title has no trailer
-           or the user hid it). -->
+           trailer fades in over it. referrerpolicy sends the Referer YouTube
+           now requires; the Chrome user agent is set in lib.rs on Linux. -->
       <section
         v-if="media"
         class="relative mb-6 h-[50vh] min-h-[380px] overflow-hidden rounded-b-3xl md:h-[60vh] md:min-h-[460px]"
@@ -299,26 +241,24 @@ const playLabel = computed(() => [
           class="absolute inset-0 h-full w-full object-cover"
         >
         <div
-          v-if="heroVideoOn"
+          v-if="heroSrc"
           class="absolute inset-0 overflow-hidden"
         >
           <iframe
-            ref="heroFrame"
             :src="heroSrc"
             class="absolute left-1/2 top-1/2 h-full w-full -translate-x-1/2 -translate-y-1/2 scale-[1.45]"
             frameborder="0"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            allow="autoplay; encrypted-media; gyroscope; picture-in-picture; web-share"
+            referrerpolicy="strict-origin-when-cross-origin"
             allowfullscreen
             tabindex="-1"
             aria-hidden="true"
-            @load="onHeroLoad"
           />
-          <div class="absolute inset-0 bg-transparent" />
         </div>
         <div class="absolute inset-0 bg-gradient-to-t from-black/95 via-black/40 to-black/20" />
         <div class="absolute inset-0 bg-gradient-to-r from-black/80 via-transparent to-transparent" />
 
-        <div class="absolute right-4 top-4 z-10 flex items-center gap-2">
+        <div v-if="media.trailer" class="absolute right-4 top-4 z-10 flex items-center gap-2">
           <button
             v-tooltip:bottom="heroMuted ? $t('Sound on') : $t('Sound off')"
             class="grid size-10 place-items-center rounded-full border border-white/20 bg-black/60 text-white opacity-95 backdrop-blur-md transition-[transform,background-color] hover:scale-110 hover:bg-black/80 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary"
@@ -421,10 +361,12 @@ const playLabel = computed(() => [
                 :season="target?.season"
                 :episode="target?.episode"
                 :size="mobile ? 'default' : 'large'"
+                @pick="torrentPickerRef?.open()"
               />
               <torrent-picker
                 v-if="type === 'movie' || target"
                 :id="id"
+                ref="torrentPickerRef"
                 :type="type"
                 :imdb-id="media.imdbId"
                 :season="target?.season"
@@ -490,15 +432,16 @@ const playLabel = computed(() => [
       </div>
 
       <!-- v-if on the iframe, not just the dialog: v-dialog keeps its content
-           mounted after the first close, and YouTube would keep playing. -->
+           mounted after the first close. -->
       <v-dialog v-model="trailer" max-width="1100">
         <v-card class="overflow-hidden">
           <iframe
             v-if="trailer"
-            :src="`https://www.youtube-nocookie.com/embed/${media?.trailer}?autoplay=1`"
+            :src="trailerSrc"
             class="aspect-video w-full border-0"
             style="zoom: var(--frame-zoom, 1)"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            allow="autoplay; encrypted-media; gyroscope; picture-in-picture; web-share"
+            referrerpolicy="strict-origin-when-cross-origin"
             allowfullscreen
           />
           <v-card-actions>

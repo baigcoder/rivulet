@@ -14,4 +14,10 @@ declare interface Window {
    * misses. `false` means the page did nothing and the key is the WebView's.
    */
   __tvOk?: () => boolean
+
+  /**
+   * Navigate to a path — called from Kotlin when an update notification is
+   * tapped. Defined by plugins/dpad.client.ts.
+   */
+  __tvNavigate?: (path: string) => void
 }

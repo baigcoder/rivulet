@@ -26,7 +26,7 @@ const isLocked = computed(() => !settings.isPremium)
  * the shell drew the browser over the player.
  */
 const isNestedRoute = computed(() =>
-  /\/live-tv\/premium\/(?:watch|connect|category)/.test(route.path),
+  /\/live-tv\/premium\/(?:watch|connect|category|series|movie)/.test(route.path),
 )
 
 async function loadInitialStatus(): Promise<void> {
@@ -48,7 +48,7 @@ watch(() => settings.isPremium, active => {
 <template>
   <nuxt-page v-if="isNestedRoute" />
 
-  <div v-else class="flex h-full min-h-0 flex-col px-4 py-4 md:px-6">
+  <div v-else class="flex h-full min-h-0 flex-col gap-3 px-4 py-4 md:px-6">
     <!-- No premium tier: the API would refuse every call, so nothing is
          fetched and the panel that fixes it is one button away. -->
     <div

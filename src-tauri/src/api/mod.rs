@@ -18,12 +18,14 @@ pub mod commands;
 pub mod entitlement;
 pub mod routes_premium;
 
+use std::io::Read;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use axum::body::Body;
 use axum::http::{header, HeaderValue, Method, StatusCode};
-use axum::response::IntoResponse;
-use axum::routing::{delete, get, post};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -219,7 +221,15 @@ pub fn build_router(state: ApiState) -> Router {
         .route("/api/premium-tv/favorites", get(routes_premium::favorites))
         .route("/api/premium-tv/favorites/:id", post(routes_premium::toggle_favorite))
         .route("/api/premium-tv/recent", get(routes_premium::recent).post(routes_premium::add_recent).delete(routes_premium::clear_recent))
+        .route("/api/premium-tv/vod/movies/categories", get(routes_premium::vod_movie_categories))
+        .route("/api/premium-tv/vod/series/categories", get(routes_premium::vod_series_categories))
+        .route("/api/premium-tv/vod/movies", get(routes_premium::vod_movies))
+        .route("/api/premium-tv/vod/series", get(routes_premium::vod_series))
+        .route("/api/premium-tv/vod/series/:id", get(routes_premium::vod_series_detail))
+        .route("/api/premium-tv/vod/movies/:id/play", post(routes_premium::vod_play_movie))
+        .route("/api/premium-tv/vod/episodes/:id/play", post(routes_premium::vod_play_episode))
         .route("/premium-stream/:token", get(routes_premium::stream_redirect))
+        .route("/api/premium-tv/proxy/image", get(proxy_image))
         .layer(cors)
         .with_state(state)
 }
@@ -229,6 +239,77 @@ pub fn build_router(state: ApiState) -> Router {
 /// relative `/premium-stream/…` would resolve against `tauri://localhost`
 /// in the webview and against nothing at all in mpv.
 pub const ADDR: &str = "127.0.0.1:3032";
+
+/// Image proxy for channel logos. Provider logo URLs are often `http://`
+/// which the Android webview blocks as mixed content from its
+/// `https://tauri.localhost` origin. This handler fetches the image
+/// server-side and returns it with proper headers.
+///
+/// Uses `ureq` (blocking, webpki-roots) instead of `reqwest` because
+/// reqwest's `rustls` feature pulls in `rustls-platform-verifier`, which
+/// panics on Android unless JNI-initialized — and the premium API has no
+/// access to the JNI env.
+async fn proxy_image(
+    axum::extract::RawQuery(raw): axum::extract::RawQuery,
+) -> Result<Response, StatusCode> {
+    let raw = raw.ok_or(StatusCode::BAD_REQUEST)?;
+    let url = url::form_urlencoded::parse(raw.as_bytes())
+        .find(|(k, _)| k == "url")
+        .map(|(_, v)| v.into_owned())
+        .ok_or(StatusCode::BAD_REQUEST)?;
+    // Validate: only http(s) URLs, no local addresses
+    let parsed = url::Url::parse(&url).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let scheme = parsed.scheme();
+    if scheme != "http" && scheme != "https" {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let host = parsed.host_str().unwrap_or("");
+    if host == "localhost" || host == "127.0.0.1" || host == "0.0.0.0" || host.ends_with(".local") {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let url_clone = url.clone();
+    let bytes = tokio::task::spawn_blocking(move || {
+        let agent = ureq::Agent::new_with_config(
+            ureq::config::Config::builder()
+                .timeout_global(Some(std::time::Duration::from_secs(8)))
+                .user_agent("Rivulet")
+                .build(),
+        );
+        let resp = agent
+            .get(&url_clone)
+            .call()
+            .map_err(|_| StatusCode::BAD_GATEWAY)?;
+        let content_type = resp
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("image/jpeg")
+            .to_string();
+        let mut buf = Vec::new();
+        resp.into_body()
+            .into_reader()
+            .read_to_end(&mut buf)
+            .map_err(|_| StatusCode::BAD_GATEWAY)?;
+        Ok::<_, StatusCode>((buf, content_type))
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
+
+    let (body, content_type) = bytes;
+
+    let mut response = Response::new(Body::from(body));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(&content_type).unwrap_or_else(|_| HeaderValue::from_static("image/jpeg")),
+    );
+    // Cache for 7 days — logos rarely change
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=604800"),
+    );
+    Ok(response)
+}
 
 /// Run the server until the process exits. Bound to loopback only —
 /// nothing outside the host can reach this address.

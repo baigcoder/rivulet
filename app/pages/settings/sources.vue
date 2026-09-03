@@ -20,6 +20,19 @@ const ui = useUiStore()
 const url = ref('')
 const error = ref('')
 
+type PlayMode = 'engine' | 'direct'
+
+/** Same shape as MOTION_MODES: title is a function so the locale can change. */
+const PLAY_MODES: { value: PlayMode, title: () => string, icon: string }[] = [
+  { value: 'engine', title: () => $t('Torrent engine'), icon: mdiMagnet },
+  { value: 'direct', title: () => $t('Direct play'), icon: mdiCloudCheckOutline },
+]
+
+const playMode = computed<PlayMode>({
+  get: () => settings.allowTorrents ? 'engine' : 'direct',
+  set: value => { settings.allowTorrents = value === 'engine' },
+})
+
 function isDebridSource(src: string): boolean {
   return /torbox|realdebrid|premiumize|alldebrid|debridlink|offcloud|putio|easydebrid/i.test(src)
 }
@@ -29,8 +42,8 @@ function append(value: string) {
   settings.sources = [...settings.sources, value]
 }
 
-function add(customUrl?: string) {
-  const target = customUrl || url.value
+function add() {
+  const target = url.value
   if (!target.trim())
     return
 
@@ -48,7 +61,11 @@ function add(customUrl?: string) {
 
   append(value)
   url.value = ''
-  error.value = ''
+  // Some addons encode *excluded* qualities in the path. Checking both
+  // "3D" and "Non 3D" excludes every stream — the server answers 200 with [].
+  error.value = /qualityfilter=[^/]*\bthreed\b/i.test(value) && /qualityfilter=[^/]*\bnonthreed\b/i.test(value)
+    ? $t('This source excludes both 3D and non-3D releases, so it will never return anything. Reconfigure it and leave one of those filters off.')
+    : ''
 }
 
 function remove(value: string) {
@@ -102,43 +119,30 @@ async function toggleStremio(on: boolean | null) {
 <template>
   <div class="flex flex-col gap-8">
     <settings-section
-      :title="$t('Playback source')"
-      :hint="$t('Where playback comes from, and whether the torrent engine may be used at all.')"
+      :title="$t('How Play works')"
+      :hint="$t('This is only the Play button. Download and picking a release from the list still work either way.')"
     >
-      <v-switch
-        v-model="settings.allowTorrents"
-        color="primary"
-        density="comfortable"
-        hide-details
-        :label="settings.allowTorrents ? $t('Best available (Torrent Engine ON)') : $t('Direct streams only (Torrent Engine OFF)')"
-      />
+      <settings-segment v-model="playMode" :options="PLAY_MODES" />
 
-      <!-- Both states stay on screen: the trade-off is readable without
-           flipping anything. The active one is bright, the other dimmed. -->
-      <div class="mt-2 flex flex-col gap-1.5">
-        <p
-          class="flex items-start gap-2 text-body-small transition-opacity"
-          :class="settings.allowTorrents ? 'opacity-95' : 'opacity-35'"
-        >
-          <v-icon
-            :icon="settings.allowTorrents ? 'mdiCheckCircle' : 'mdiCircleOutline'"
-            size="16"
-            class="mt-0.5 shrink-0"
-          />
-          <span><strong>{{ $t('ON:') }}</strong> {{ $t('Torrent engine ENABLED — downloads P2P torrents to disk while watching, and plays direct server links when available.') }}</span>
+      <!-- One mode at a time: the inactive trade-off is noise at ten feet. -->
+      <div class="rounded-xl bg-surface-container/40 px-4 py-3">
+        <p class="text-title-small">
+          {{ settings.allowTorrents ? $t('Play uses a magnet') : $t('Play uses a Direct link') }}
         </p>
-        <p
-          class="flex items-start gap-2 text-body-small transition-opacity"
-          :class="settings.allowTorrents ? 'opacity-35' : 'opacity-95'"
-        >
-          <v-icon
-            :icon="settings.allowTorrents ? 'mdiCircleOutline' : 'mdiCheckCircle'"
-            size="16"
-            class="mt-0.5 shrink-0"
-          />
-          <span><strong>{{ $t('OFF:') }}</strong> {{ $t('Torrent engine DISABLED — direct server streams only (e.g. Debrid). P2P torrent downloading is turned off.') }}</span>
-        </p>
+        <ul v-if="settings.allowTorrents" class="mt-2 list-disc space-y-2 pl-5 text-body-medium opacity-90">
+          <li>{{ $t('Playback starts as soon as the first pieces arrive — you do not wait for the whole file.') }}</li>
+          <li>{{ $t('The rest keeps downloading in the background while you watch, and stays in Downloads.') }}</li>
+          <li>{{ $t('Needs a source that answers with magnets. Paste one below.') }}</li>
+        </ul>
+        <ul v-else class="mt-2 list-disc space-y-2 pl-5 text-body-medium opacity-90">
+          <li>{{ $t('Opens a Direct or debrid URL from your sources. Nothing is added to the torrent engine.') }}</li>
+          <li>{{ $t('The first frame can take longer — the server has to prepare the file.') }}</li>
+          <li>{{ $t('Needs a source that answers with Direct links. Paste one below.') }}</li>
+        </ul>
       </div>
+      <p class="text-body-medium opacity-70">
+        {{ $t('Download still files a magnet through the engine, or saves a Direct link to disk. Releases still lets you play or save one specific row.') }}
+      </p>
     </settings-section>
 
     <settings-section
@@ -166,12 +170,9 @@ async function toggleStremio(on: boolean | null) {
           </template>
         </i18n-t>
       </v-alert>
-
-      <v-alert variant="tonal" border="start" border-color="primary" class="mt-3 text-body-small" rounded="lg">
-        <strong>{{ $t('Torrentio Addon') }}</strong>:
-        {{ $t('Provides torrent streams from scraped torrent providers (supports RealDebrid, Premiumize, AllDebrid, DebridLink, EasyDebrid, Offcloud, TorBox, and Put.io). Configure and get your link from') }}
-        <a href="https://torrentio.strem.fun" target="_blank" class="text-primary font-medium underline">torrentio.strem.fun</a>
-      </v-alert>
+      <p class="text-body-medium opacity-70">
+        {{ $t('Paste a manifest URL you found yourself — nothing is added until you press Add. A magnet source is what Torrent engine Play uses; a Direct source is what Direct play uses. You can add both.') }}
+      </p>
 
       <v-list v-if="settings.sources.length" bg-color="transparent" class="rounded-lg bg-surface-container/40">
         <v-list-item v-for="value in settings.sources" :key="value" :title="value">
@@ -184,7 +185,7 @@ async function toggleStremio(on: boolean | null) {
                 variant="tonal"
                 :prepend-icon="mdiCloudCheckOutline"
               >
-                {{ $t('Direct / Debrid Stream') }}
+                {{ $t('Direct link') }}
               </v-chip>
               <v-chip
                 v-else
@@ -193,7 +194,7 @@ async function toggleStremio(on: boolean | null) {
                 variant="tonal"
                 :prepend-icon="mdiMagnet"
               >
-                {{ $t('P2P Torrent Magnet') }}
+                {{ $t('Magnet') }}
               </v-chip>
             </div>
           </template>
@@ -213,72 +214,22 @@ async function toggleStremio(on: boolean | null) {
         </p>
       </div>
 
-      <v-card variant="outlined" rounded="lg" class="mt-2 border-outline-variant p-4">
-        <div class="text-label-large font-bold mb-2 flex items-center gap-2">
-          <v-icon :icon="mdiInformationOutline" size="18" color="primary" />
-          <span>{{ $t('How Source URLs work with the Playback Source toggle:') }}</span>
-        </div>
-        <div class="grid grid-cols-1 gap-3 text-body-small sm:grid-cols-2">
-          <div class="rounded-lg bg-primary/10 p-3">
-            <div class="mb-1 flex items-center gap-1.5 font-semibold text-primary">
-              <v-icon :icon="mdiCloudCheckOutline" size="16" />
-              <span>{{ $t('Direct / Debrid Stream URL (Toggle ON)') }}</span>
-            </div>
-            <p class="opacity-80">
-              {{ $t('Add a Debrid URL (e.g. TorBox, RealDebrid). Works when "Best available" toggle is ON for instant HTTPS server streaming with no disk downloads.') }}
-            </p>
-          </div>
-          <div class="rounded-lg bg-secondary/10 p-3">
-            <div class="mb-1 flex items-center gap-1.5 font-semibold text-secondary">
-              <v-icon :icon="mdiMagnet" size="16" />
-              <span>{{ $t('P2P Torrent Magnet URL (Toggle OFF)') }}</span>
-            </div>
-            <p class="opacity-80">
-              {{ $t('Add a standard Torrent URL (e.g. torrentio.strem.fun/manifest.json). Works when toggle is OFF to download torrents to disk while streaming.') }}
-            </p>
-          </div>
-        </div>
-      </v-card>
-
-      <div class="flex flex-col gap-2 mt-2">
-        <div class="flex items-start gap-2">
-          <v-text-field
-            v-model="url"
-            :label="$t('Source URL')"
-            placeholder="https://… or stremio://…"
-            variant="solo-filled"
-            density="comfortable"
-            rounded="lg"
-            flat
-            :error-messages="error"
-            @keydown.enter="add()"
-            @update:model-value="error = ''"
-          />
-          <v-btn :prepend-icon="mdiPlus" variant="tonal" size="large" class="mt-1" @click="add()">
-            {{ $t('Add') }}
-          </v-btn>
-        </div>
-        <div class="flex flex-wrap items-center gap-2">
-          <span class="text-body-small opacity-60">{{ $t('Quick Presets:') }}</span>
-          <v-chip
-            size="small"
-            variant="tonal"
-            color="primary"
-            :prepend-icon="mdiCloudCheckOutline"
-            @click="url = 'https://torrentio.strem.fun/torbox=YOUR_KEY/manifest.json'"
-          >
-            {{ $t('Debrid Stream (Toggle ON)') }}
-          </v-chip>
-          <v-chip
-            size="small"
-            variant="tonal"
-            color="secondary"
-            :prepend-icon="mdiMagnet"
-            @click="add('https://torrentio.strem.fun/manifest.json')"
-          >
-            {{ $t('+ Add P2P Magnet Torrentio (Toggle OFF)') }}
-          </v-chip>
-        </div>
+      <div class="mt-2 flex items-start gap-2">
+        <v-text-field
+          v-model="url"
+          :label="$t('Source URL')"
+          placeholder="https://… or stremio://…"
+          variant="solo-filled"
+          density="comfortable"
+          rounded="lg"
+          flat
+          :error-messages="error"
+          @keydown.enter="add()"
+          @update:model-value="error = ''"
+        />
+        <v-btn :prepend-icon="mdiPlus" variant="tonal" size="large" class="mt-1" @click="add()">
+          {{ $t('Add') }}
+        </v-btn>
       </div>
     </settings-section>
 

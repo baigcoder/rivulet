@@ -1,14 +1,22 @@
 package io.github.rivulet.rivulet
 
 import android.Manifest
+import android.app.DownloadManager
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
+import android.database.Cursor
 import android.net.ConnectivityManager
+import android.net.Uri
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.os.Process
 import android.os.StatFs
 import android.os.storage.StorageManager
@@ -20,25 +28,44 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.FileProvider
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 
 class MainActivity : TauriActivity() {
   private var web: WebView? = null
   private var player: RivuletPlayer? = null
   private var premiumPlayer: RivuletPremiumPlayer? = null
 
+  /** In-app update state: download ID from DownloadManager and the file it produced. */
+  private var updateDownloadId: Long = -1L
+  private var updateApkPath: String? = null
+  private val updateHandler = Handler(Looper.getMainLooper())
+
   companion object {
     /** Largest file FAT32 can address: 4 GiB, less one byte. */
     private const val FAT32_MAX = 4L * 1024 * 1024 * 1024 - 1
+    private const val UPDATE_CHANNEL = "updates"
+    private const val UPDATE_NOTIFICATION = 100
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+
+    // Update notification channel — IMPORTANCE_DEFAULT so it heads-up on a TV.
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      val nm = getSystemService(NotificationManager::class.java)
+      val channel = NotificationChannel(UPDATE_CHANNEL, "Updates", NotificationManager.IMPORTANCE_DEFAULT)
+      channel.description = "When a new version of Rivulet is available"
+      nm?.createNotificationChannel(channel)
+    }
 
     // DownloadService runs whether or not this is granted — the permission only
     // decides whether its notification is drawn, and that notification is the
@@ -64,6 +91,15 @@ class MainActivity : TauriActivity() {
   override fun onResume() {
     super.onResume()
     nudgeDownloads()
+  }
+
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    // The update notification puts `openSettings=true` so the user lands
+    // on the About page with the download/install controls.
+    if (intent.getBooleanExtra("openSettings", false)) {
+      web?.evaluateJavascript("window.__tvNavigate && window.__tvNavigate('/settings/about')", null)
+    }
   }
 
   override fun onPause() {
@@ -313,6 +349,144 @@ class MainActivity : TauriActivity() {
         if (ok) return true
       }
       return false
+    }
+
+    // ── In-app updates ──────────────────────────────────────────────────
+
+    /**
+     * Download an APK from [url] using Android's DownloadManager. Returns a
+     * download ID the frontend can poll with [getUpdateProgress]. The APK
+     * lands in the app's private cache dir so no storage permission is needed.
+     */
+    @JavascriptInterface
+    fun downloadUpdate(url: String): Long {
+      // Cancel any previous download still running.
+      if (updateDownloadId > 0) {
+        val dm = getSystemService(DownloadManager::class.java)
+        dm?.remove(updateDownloadId)
+      }
+      updateApkPath = null
+
+      val dm = getSystemService(DownloadManager::class.java) ?: return -1
+      val req = DownloadManager.Request(Uri.parse(url))
+        .setTitle("Downloading Rivulet update")
+        .setDescription("An update is being downloaded")
+        .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+        .setDestinationInExternalFilesDir(this@MainActivity, null, "rivulet-update.apk")
+        .setAllowedOverMetered(true)
+        .setAllowedOverRoaming(true)
+      updateDownloadId = dm.enqueue(req)
+      return updateDownloadId
+    }
+
+    /**
+     * Poll the download. Returns a JSON string: `{"bytes":…,"total":…,"done":bool,"path":"…"}`.
+     * `done` is true once the file is on disk and ready to install.
+     *
+     * We read every column *before* closing the cursor — the old code closed
+     * it first and then tried to re-query, which lost the URI on some devices.
+     * The destination file is the one we passed to `setDestinationInExternalFilesDir`,
+     * so once the status is `STATUS_SUCCESSFUL` we know the path.
+     */
+    @JavascriptInterface
+    fun getUpdateProgress(): String {
+      val obj = JSONObject()
+      if (updateDownloadId <= 0) {
+        obj.put("bytes", 0).put("total", 0).put("done", false).put("path", "")
+        return obj.toString()
+      }
+      val dm = getSystemService(DownloadManager::class.java)
+      val q = dm?.query(DownloadManager.Query().setFilterById(updateDownloadId))
+      if (q == null || !q.moveToFirst()) {
+        obj.put("bytes", 0).put("total", 0).put("done", false).put("path", "")
+        q?.close()
+        return obj.toString()
+      }
+      val status = q.getInt(q.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+      val downloaded = q.getLong(q.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
+      val total = q.getLong(q.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
+      val uriStr = q.getString(q.getColumnIndexOrThrow(DownloadManager.COLUMN_LOCAL_URI))
+      q.close()
+
+      if (status == DownloadManager.STATUS_SUCCESSFUL) {
+        // The file is at the path we told DownloadManager to use.
+        val file = File(getExternalFilesDir(null), "rivulet-update.apk")
+        val path = if (file.exists()) file.absolutePath else {
+          // Fallback: resolve from the URI the DownloadManager recorded.
+          if (uriStr.isNotEmpty()) Uri.parse(uriStr).path else null
+        }
+        if (path != null) {
+          updateApkPath = path
+          obj.put("done", true).put("path", path)
+            .put("bytes", downloaded).put("total", total)
+          return obj.toString()
+        }
+        // Last resort: report done without a path — the About page will
+        // fall back to the manual download link.
+        obj.put("done", true).put("path", updateApkPath ?: "")
+          .put("bytes", downloaded).put("total", total)
+        return obj.toString()
+      }
+
+      obj.put("done", false)
+        .put("bytes", downloaded).put("total", total)
+      return obj.toString()
+    }
+
+    /**
+     * Open the previously downloaded APK so the user can install it.
+     * Uses FileProvider to hand a `content://` URI to the package installer.
+     */
+    @JavascriptInterface
+    fun installUpdate(): Boolean {
+      val path = updateApkPath ?: return false
+      val file = File(path)
+      if (!file.exists()) return false
+      val uri = FileProvider.getUriForFile(
+        this@MainActivity,
+        "${packageName}.fileprovider",
+        file
+      )
+      val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, "application/vnd.android.package-archive")
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      }
+      return runCatching { startActivity(intent) }.isSuccess
+    }
+
+    /**
+     * Show a heads-up notification that a new Rivulet version is available.
+     * Tapping it opens the Settings → About page.
+     */
+    @JavascriptInterface
+    fun notifyUpdateAvailable(version: String) {
+      val open = PendingIntent.getActivity(
+        this@MainActivity,
+        0,
+        Intent(this@MainActivity, MainActivity::class.java).apply {
+          putExtra("openSettings", true)
+        },
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+      )
+      val note = NotificationCompat.Builder(this@MainActivity, UPDATE_CHANNEL)
+        .setSmallIcon(android.R.drawable.stat_sys_download_done)
+        .setContentTitle("Rivulet $version is available")
+        .setContentText("Tap to update")
+        .setAutoCancel(true)
+        .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+        .setContentIntent(open)
+        .build()
+      NotificationManagerCompat.from(this@MainActivity).notify(UPDATE_NOTIFICATION, note)
+    }
+
+    /**
+     * Dismiss the update notification (called once the user opens the About
+     * page or starts the download).
+     */
+    @JavascriptInterface
+    fun dismissUpdateNotification() {
+      NotificationManagerCompat.from(this@MainActivity).cancel(UPDATE_NOTIFICATION)
     }
 
     @JavascriptInterface

@@ -2,7 +2,8 @@
 import type { LiveChannel } from '~/utils/iptv'
 import { useVirtualizer } from '@tanstack/vue-virtual'
 import { useDebounceFn, useElementSize } from '@vueuse/core'
-import { computed, ref, shallowRef, triggerRef, watch } from 'vue'
+import { computed, nextTick, ref, shallowRef, triggerRef, watch } from 'vue'
+import { liveGridColumnCount, liveGridRowEstimate } from '~/utils/liveGridColumns'
 
 const props = defineProps<{
   channels: LiveChannel[]
@@ -27,37 +28,17 @@ const emit = defineEmits<{
 const scrollRef = ref<HTMLElement>()
 const { width: gridWidth } = useElementSize(scrollRef)
 
-/**
- * The virtualizer groups cards into rows, so this must precisely mirror the
- * Tailwind breakpoints in the template. A fixed four-card row left two empty
- * desktop columns on every See all page, even though the grid had room for
- * six cards.
- */
-const cols = computed(() => {
-  const width = gridWidth.value
-  if (props.density === 'compact') {
-    if (width >= 1280)
-      return 8
-    if (width >= 1024)
-      return 6
-    if (width >= 768)
-      return 5
-    if (width >= 640)
-      return 4
-    return 3
-  }
-  if (width >= 1280)
-    return 6
-  if (width >= 1024)
-    return 5
-  if (width >= 768)
-    return 4
-  if (width >= 640)
-    return 3
-  return 2
-})
+const cols = computed(() => liveGridColumnCount(gridWidth.value, props.density ?? 'comfortable'))
 
-// Slice the channels into rows of `cols` width. Done once per `cols` or
+const rowStyle = computed(() => ({
+  gridTemplateColumns: `repeat(${cols.value}, minmax(0, 1fr))`,
+}))
+
+const rowEstimate = computed(() =>
+  liveGridRowEstimate(gridWidth.value, cols.value, props.density ?? 'comfortable', true),
+)
+
+// Slice the channels into rows of `cols` width.
 // `channels` change rather than on every scroll — the array is read by the
 // template, and a fresh reference on every frame re-keys the v-for and
 // re-mounts every card.
@@ -128,8 +109,8 @@ const virtualizer = useVirtualizer(computed(() => ({
   // initial zero rows before the country query returned.
   count: rows.value.length,
   getScrollElement: () => scrollRef.value ?? null,
-  estimateSize: () => props.density === 'compact' ? 160 : 200,
-  overscan: 5,
+  estimateSize: () => rowEstimate.value,
+  overscan: 2,
 })))
 
 // When cols changes (window resize), always do a full rebuild.
@@ -168,26 +149,33 @@ const triggerEpg = useDebounceFn(() => {
 // so scrolling within a page of the same length still loads EPG data.
 let lastFirstIdx = -1
 let lastLastIdx = -1
+function maybeLoadMore() {
+  if (!props.hasMore || props.loading)
+    return
+  const el = scrollRef.value
+  if (!el)
+    return
+  if (el.scrollHeight - el.scrollTop - el.clientHeight < 480)
+    emit('loadMore')
+}
+
 watch(
-  () => virtualizer.value?.getVirtualItems(),
-  items => {
-    if (!items || items.length === 0)
+  () => {
+    const items = virtualizer.value?.getVirtualItems()
+    if (!items?.length)
+      return ''
+    return `${items[0]?.index}:${items[items.length - 1]?.index}`
+  },
+  range => {
+    if (!range)
       return
-    const firstItem = items[0]
-    const lastItem = items[items.length - 1]
-    if (!firstItem || !lastItem)
-      return
-    const first = firstItem.index
-    const last = lastItem.index
+    const [first, last] = range.split(':').map(Number)
     if (first !== lastFirstIdx || last !== lastLastIdx) {
-      lastFirstIdx = first
-      lastLastIdx = last
+      lastFirstIdx = first ?? -1
+      lastLastIdx = last ?? -1
       triggerEpg()
     }
-    // Infinite scroll: when near the end, emit loadMore.
-    if (props.hasMore && !props.loading && last >= rows.value.length - 2) {
-      emit('loadMore')
-    }
+    maybeLoadMore()
   },
 )
 </script>
@@ -214,10 +202,7 @@ watch(
       >
         <div
           class="grid gap-3"
-          :class="{
-            'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6': density !== 'compact',
-            'grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8': density === 'compact',
-          }"
+          :style="rowStyle"
         >
           <live-tv-live-channel-card
             v-for="ch in rows[virtualRow.index]"

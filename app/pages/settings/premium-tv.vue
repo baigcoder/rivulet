@@ -6,7 +6,7 @@ import {
   mdiShieldCheckOutline,
   mdiShieldOffOutline,
 } from '@mdi/js'
-import { pushEntitlement, premiumApi } from '~/utils/premiumTv'
+import { premiumApi, pushEntitlement } from '~/utils/premiumTv'
 
 const settings = useSettingsStore()
 const premium = usePremiumTvStore()

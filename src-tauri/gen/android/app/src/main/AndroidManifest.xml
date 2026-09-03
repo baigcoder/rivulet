@@ -12,6 +12,11 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- APK installs from in-app: the user taps a notification, the app downloads
+         the APK, and hands it to the package installer. Without this permission
+         the system silently ignores the Intent. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <!-- AndroidTV support. Both are `required="false"` on purpose: the same APK
          installs on a phone, and a TV would refuse it if a touchscreen were
          required. -->

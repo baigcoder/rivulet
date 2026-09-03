@@ -32,10 +32,12 @@ use super::ApiState;
 use crate::premium::errors::PremiumError;
 use crate::premium::models::{
     CatalogState, CategoryCount, EpgProgram, IPTVCategory, IPTVChannel, IPTVChannelPage,
-    PlaybackSource, PremiumAccount, PremiumDashboard, SyncReport,
+    PlaybackSource, PremiumAccount, PremiumDashboard, PremiumSeriesDetail,
+    PremiumSeriesItem, PremiumVodItem, SyncReport, VodCategory, VodPage,
 };
 use crate::premium::repository::PremiumRepository;
 use crate::premium::storage::{self, ProviderConfig};
+use crate::premium::xtream::XtreamAdapter;
 use crate::premium::xtream::{credentials_from_playlist_url, normalise_provider_url};
 use crate::premium::{factory, player, sync};
 
@@ -383,6 +385,7 @@ pub async fn disconnect(
     require_auth(&headers)?;
     let conn = lock(&state)?;
     if let Some(id) = storage::active_connection(&conn)? {
+        state.premium.vod_cache.clear_connection(&id);
         storage::delete_connection(&conn, &id)?;
     }
     Ok(StatusCode::NO_CONTENT)
@@ -684,6 +687,135 @@ pub async fn clear_recent(
     Ok(StatusCode::NO_CONTENT)
 }
 
+// ── On-demand (Xtream VOD / series) ────────────────────────────────
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VodListQuery {
+    category: Option<String>,
+    search: Option<String>,
+    cursor: Option<String>,
+    limit: Option<usize>,
+    hide_adult: Option<bool>,
+}
+
+fn vod_cursor(raw: Option<&str>) -> usize {
+    raw.and_then(|s| s.parse().ok()).unwrap_or(0)
+}
+
+fn vod_limit(raw: Option<usize>) -> usize {
+    raw.unwrap_or(DEFAULT_PAGE).clamp(1, DEFAULT_PAGE * 4)
+}
+
+pub async fn vod_movie_categories(
+    State(state): State<ApiState>,
+    headers: axum::http::HeaderMap,
+) -> Result<Json<Vec<VodCategory>>, super::ApiError> {
+    guard(&state, &headers)?;
+    let cid = active_connection(&state)?;
+    let xtream = factory::xtream_for(state.premium.clone(), &cid)?;
+    Ok(Json(xtream.vod_movie_categories().await?))
+}
+
+pub async fn vod_series_categories(
+    State(state): State<ApiState>,
+    headers: axum::http::HeaderMap,
+) -> Result<Json<Vec<VodCategory>>, super::ApiError> {
+    guard(&state, &headers)?;
+    let cid = active_connection(&state)?;
+    let xtream = factory::xtream_for(state.premium.clone(), &cid)?;
+    Ok(Json(xtream.vod_series_categories().await?))
+}
+
+pub async fn vod_movies(
+    State(state): State<ApiState>,
+    headers: axum::http::HeaderMap,
+    Query(q): Query<VodListQuery>,
+) -> Result<Json<VodPage<PremiumVodItem>>, super::ApiError> {
+    guard(&state, &headers)?;
+    let cid = active_connection(&state)?;
+    let xtream = factory::xtream_for(state.premium.clone(), &cid)?;
+    let hide = q.hide_adult.unwrap_or(false);
+    let page = xtream
+        .vod_movies(
+            q.category.as_deref(),
+            q.search.as_deref(),
+            hide,
+            vod_cursor(q.cursor.as_deref()),
+            vod_limit(q.limit),
+        )
+        .await?;
+    Ok(Json(page))
+}
+
+pub async fn vod_series(
+    State(state): State<ApiState>,
+    headers: axum::http::HeaderMap,
+    Query(q): Query<VodListQuery>,
+) -> Result<Json<VodPage<PremiumSeriesItem>>, super::ApiError> {
+    guard(&state, &headers)?;
+    let cid = active_connection(&state)?;
+    let xtream = factory::xtream_for(state.premium.clone(), &cid)?;
+    let hide = q.hide_adult.unwrap_or(false);
+    let page = xtream
+        .vod_series_list(
+            q.category.as_deref(),
+            q.search.as_deref(),
+            hide,
+            vod_cursor(q.cursor.as_deref()),
+            vod_limit(q.limit),
+        )
+        .await?;
+    Ok(Json(page))
+}
+
+pub async fn vod_series_detail(
+    State(state): State<ApiState>,
+    headers: axum::http::HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<PremiumSeriesDetail>, super::ApiError> {
+    guard(&state, &headers)?;
+    let cid = active_connection(&state)?;
+    let xtream = factory::xtream_for(state.premium.clone(), &cid)?;
+    Ok(Json(xtream.vod_series_detail(&id).await?))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VodPlayQuery {
+    ext: Option<String>,
+}
+
+pub async fn vod_play_movie(
+    State(state): State<ApiState>,
+    headers: axum::http::HeaderMap,
+    Path(id): Path<String>,
+    Query(q): Query<VodPlayQuery>,
+) -> Result<Json<PlaybackSource>, super::ApiError> {
+    guard(&state, &headers)?;
+    let cid = active_connection(&state)?;
+    factory::xtream_for(state.premium.clone(), &cid)?;
+    let ext = q.ext.filter(|e| !e.is_empty()).unwrap_or_else(|| "mkv".into());
+    let play_id = format!("movie:{id}:{ext}");
+    let source = player::build_vod_source(state.premium.clone(), &cid, &play_id, &ext)?;
+    Ok(Json(source))
+}
+
+pub async fn vod_play_episode(
+    State(state): State<ApiState>,
+    headers: axum::http::HeaderMap,
+    Path(id): Path<String>,
+    Query(q): Query<VodPlayQuery>,
+) -> Result<Json<PlaybackSource>, super::ApiError> {
+    guard(&state, &headers)?;
+    let cid = active_connection(&state)?;
+    factory::xtream_for(state.premium.clone(), &cid)?;
+    let ext = q.ext.filter(|e| !e.is_empty()).unwrap_or_else(|| "mkv".into());
+    let play_id = format!("series:{id}:{ext}");
+    let source = player::build_vod_source(state.premium.clone(), &cid, &play_id, &ext)?;
+    Ok(Json(source))
+}
+
 // ── The redirector ─────────────────────────────────────────────────
 
 /// `/premium-stream/:token` — the only route a player opens, and the
@@ -708,6 +840,18 @@ pub async fn stream_redirect(
     ensure_premium(&state)?;
     let (connection_id, channel_id) = player::resolve_redirector_token(&state.premium, &token)?
         .ok_or_else(|| super::ApiError::NotFound("stream not found".into()))?;
+
+    // VOD tokens name a synthetic id (`movie:…` / `series:…`) that is
+    // never stored in SQLite — resolve straight through Xtream.
+    if let Some((kind, id, ext)) = XtreamAdapter::parse_vod_play_id(&channel_id) {
+        let xtream = factory::xtream_for(state.premium.clone(), &connection_id)?;
+        let upstream = match kind {
+            "movie" => xtream.resolve_movie_url(id, ext).await?,
+            "series" => xtream.resolve_series_episode_url(id, ext).await?,
+            _ => return Err(super::ApiError::NotFound("stream not found".into())),
+        };
+        return Ok(Redirect::temporary(&upstream).into_response());
+    }
 
     // The stored URL first, because for an M3U it is the answer and no
     // provider needs constructing to give it. Scoped so the guard is

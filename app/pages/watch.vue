@@ -9,7 +9,7 @@ import {
   mdiPowerPlugOutline,
   mdiReload,
 } from '@mdi/js'
-import { NoServerStream, releaseKey, serverCandidates } from '~/utils/torrents'
+import { findReleasesFast, NoServerStream, releaseKey, releaseLangs, releaseQuality, serverCandidates } from '~/utils/torrents'
 
 // The player owns the whole window: no app bar, no drawer, no page scroll.
 definePageMeta({ layout: false })
@@ -25,9 +25,15 @@ const season = computed(() => Number(route.query.s) || 0)
 const episode = computed(() => Number(route.query.e) || 0)
 // The downloads page knows exactly which file in a pack it wants played.
 const fileIndex = computed(() => route.query.file == null ? null : Number(route.query.file))
-const magnet = computed(() => String(route.query.magnet ?? ''))
+const picked = ref<{ url?: string, magnet?: string } | null>(null)
+watch(
+  () => String(route.query.pick ?? ''),
+  pick => { picked.value = pick ? takePendingRelease() : null },
+  { immediate: true },
+)
+const magnet = computed(() => String(route.query.magnet ?? picked.value?.magnet ?? ''))
 /** A release the picker resolved to a plain link — played as-is, no engine. */
-const link = computed(() => String(route.query.url ?? ''))
+const link = computed(() => String(route.query.url ?? picked.value?.url ?? ''))
 
 /** What this playback is remembered as — no id (a bare magnet) means nothing. */
 const key = computed(() => id.value ? progressKey(type.value, id.value, season.value, episode.value) : '')
@@ -82,11 +88,13 @@ const noServerStream = ref(false)
 
 const settings = useSettingsStore()
 
-// Flipping Stream-with-download mid-playback re-resolves playback at once:
-// Off picks up server streams, On lets torrents back in — no re-entering the
-// title, no hunting for a refresh.
+// Flipping How Play works mid-playback re-resolves at once: Direct play
+// picks up server streams, Torrent engine lets magnets back in — no
+// re-entering the title, no hunting for a refresh.
 watch(() => settings.allowTorrents, (now, before) => {
-  if (now !== before && startedOnce())
+  // A source chosen in the picker is the stream they asked for — flipping
+  // Direct/Best must not throw that pick away and search again.
+  if (now !== before && startedOnce() && !magnet.value && !link.value)
     start()
 })
 
@@ -140,7 +148,9 @@ async function start() {
       season: season.value,
       episode: episode.value,
       fileIndex: fileIndex.value,
-      allowTorrents: settings.allowTorrents,
+      // Default Play follows the toggle. A magnet (or URL) from the picker
+      // is a source they named — it plays even while Play is Direct-only.
+      allowTorrents: !!(magnet.value || settings.allowTorrents),
       // Race the sources: first healthy answer plays, slower ones join the
       // candidate list as they land (see below).
       fast: true,
@@ -249,12 +259,13 @@ function onPlaybackFailed() {
 async function fetchCandidates(playingUrl: string) {
   const mine = generation
   try {
-    await until(() => !!media.value || !!mediaError.value).toBe(true, { timeout: 20_000 })
-    const imdbId = media.value?.imdbId
+    const imdbId = route.query.imdb
+      ? String(route.query.imdb)
+      : (await until(() => !!media.value || !!mediaError.value).toBe(true, { timeout: 20_000 }), media.value?.imdbId)
     if (!imdbId || mine !== generation || candidates.value.length)
       return
 
-    const found = await findReleases(imdbId, season.value, episode.value)
+    const found = await findReleasesFast(imdbId, season.value, episode.value, { graceMs: 0 })
     const rest = serverCandidates(found).filter(r => r.url !== playingUrl)
     if (mine !== generation || !rest.length || candidates.value.length)
       return
@@ -264,6 +275,8 @@ async function fetchCandidates(playingUrl: string) {
     const current = torrent.value?.url === playingUrl
       ? torrent.value!
       : { name: '', hash: '', url: playingUrl, fileIdx: null, file: null, seeders: 0, size: '', bytes: 0, source: '', quality: '', magnet: '' }
+    if (!current.quality)
+      current.quality = releaseQuality({ name: current.name, title: current.name })
     candidates.value = [current, ...rest]
     activeCandidate.value = 0
     qualityPromptPending.value = false
@@ -288,12 +301,39 @@ function hostOf(via: string) {
   }
 }
 
-const RESOLUTION = /\b(2160p|4k|1080p|720p|480p)\b/i
+const RESOLUTION = /\b(2160p|1440p|4k|2k|1080p|720p|480p)\b/i
 
-/** What to call a candidate in the quality menu — its resolution where one is named. */
 function qualityLabel(r: Release) {
-  const q = r.quality.match(RESOLUTION) ?? r.name.match(RESOLUTION)
-  return ((q?.[1] ?? r.quality) || '').toUpperCase() || $t('Unknown')
+  const q = releaseQuality(r)
+  const m = (q.match(RESOLUTION) ?? r.name.match(RESOLUTION))?.[1]?.toLowerCase() ?? ''
+  if (m === '2160p' || m === '4k')
+    return '4K'
+  if (m === '1440p' || m === '2k')
+    return '2K'
+  if (m === '1080p')
+    return '1080P'
+  if (m === '720p')
+    return '720P'
+  if (m === '480p')
+    return '480P'
+  return (q || '').toUpperCase() || $t('Unknown')
+}
+
+/** One server row — quality and size, not the same hostname five times. */
+function serverLabel(r: Release, index: number) {
+  const q = qualityLabel(r)
+  const known = q !== $t('Unknown')
+  const parts = [known ? q : '', r.size].filter(Boolean)
+  if (parts.length)
+    return parts.join(' · ')
+  const short = r.name.length > 44 ? `${r.name.slice(0, 41)}…` : r.name
+  return short || (r.source !== 'unknown' ? r.source : '') || hostOf(r.via ?? '') || $t('Server {n}', { n: index + 1 })
+}
+
+function serverDetail(r: Release) {
+  const host = r.source !== 'unknown' ? r.source : hostOf(r.via ?? '')
+  const name = r.name && r.name !== host ? r.name : ''
+  return [host, name].filter(Boolean).join(' · ')
 }
 
 /**
@@ -303,12 +343,12 @@ function qualityLabel(r: Release) {
 const candidateMenus = computed(() => {
   if (!candidates.value.length)
     return null
-  const detail = (r: typeof candidates.value[number]) =>
-    [r.source !== 'unknown' ? r.source : '', r.size].filter(Boolean).join(' · ')
+  const detail = (r: typeof candidates.value[number]) => serverDetail(r)
   const servers = candidates.value.map((r, index) => ({
     index,
-    // The automatic pick is marked until a hand chooses otherwise.
-    label: (r.source !== 'unknown' ? r.source : '') || hostOf(r.via ?? '') || $t('Server {n}', { n: index + 1 }),
+    label: serverLabel(r, index),
+    quality: qualityLabel(r),
+    langs: releaseLangs(`${r.name} ${r.file ?? ''} ${r.quality}`),
     detail: detail(r),
   }))
   const seen = new Map<string, number>()
@@ -317,7 +357,7 @@ const candidateMenus = computed(() => {
     const label = qualityLabel(r)
     if (!seen.has(label)) {
       seen.set(label, index)
-      qualities.push({ index, label, detail: detail(r) })
+      qualities.push({ index, label })
     }
   }
   return { servers, qualities }
@@ -506,7 +546,7 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
               :prepend-icon="mdiDownload"
               @click="settings.allowTorrents = true; start()"
             >
-              {{ $t('Use Best available') }}
+              {{ $t('Use torrent engine') }}
             </v-btn>
             <v-btn variant="text" :prepend-icon="mdiArrowLeft" @click="leave">
               {{ $t('Back') }}

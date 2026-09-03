@@ -26,6 +26,7 @@ import assert from 'node:assert'
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { MAX_RECONNECT_ATTEMPTS, reconnectDelayMs } from '../app/stores/premiumTv'
+import { categoryLabel, isBundleCategory, parseCategoryName } from '../app/utils/categoryLabel'
 import './i18n-stub'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
@@ -36,18 +37,22 @@ const UTILS = `${ROOT}app/utils/premiumTv.ts`
 const SHIM = `${ROOT}app/utils/htmlvideo.ts`
 const WATCH = `${ROOT}app/pages/live-tv/premium/watch.vue`
 const GRID = `${ROOT}app/components/premium-tv/PremiumChannelGrid.vue`
+const VOD_GRID = `${ROOT}app/components/premium-tv/PremiumVodGrid.vue`
+const VOD_SIDEBAR = `${ROOT}app/components/premium-tv/PremiumVodSidebar.vue`
+const MOVIE_PAGE = `${ROOT}app/pages/live-tv/premium/movie/[id].vue`
 const CARD = `${ROOT}app/components/premium-tv/PremiumChannelCard.vue`
 const EPG = `${ROOT}app/components/premium-tv/PremiumEpgPanel.vue`
 const BROWSER = `${ROOT}app/components/premium-tv/PremiumBrowser.vue`
+const HEADER = `${ROOT}app/components/live-tv/LiveBrowseHeader.vue`
 const SIDEBAR = `${ROOT}app/components/premium-tv/PremiumSidebar.vue`
 const ACCOUNT = `${ROOT}app/components/premium-tv/PremiumAccountCard.vue`
 const CONNECT = `${ROOT}app/components/premium-tv/PremiumConnectForm.vue`
 
 /** Everything the Premium TV front end is made of, for the sweeps below. */
-const FRONTEND = [STORE, COMPOSABLE, UTILS, WATCH, GRID, CARD, EPG, BROWSER, SIDEBAR, ACCOUNT, CONNECT]
+const FRONTEND = [STORE, COMPOSABLE, UTILS, WATCH, GRID, VOD_GRID, VOD_SIDEBAR, MOVIE_PAGE, CARD, EPG, BROWSER, HEADER, SIDEBAR, ACCOUNT, CONNECT]
 
 /** The markup files, where the TV rules apply. */
-const TEMPLATES = [WATCH, GRID, CARD, EPG, BROWSER, SIDEBAR, ACCOUNT, CONNECT]
+const TEMPLATES = [WATCH, GRID, VOD_GRID, VOD_SIDEBAR, MOVIE_PAGE, CARD, EPG, BROWSER, HEADER, SIDEBAR, ACCOUNT, CONNECT]
 
 interface CheckResult {
   name: string
@@ -108,6 +113,15 @@ check('the whole retry budget is seconds, not minutes', () => {
 
 // ── The state machine lives in one place ─────────────────────────
 
+check('clearing recently watched empties the grid, not just the sidebar count', () => {
+  const fn = storeSrc.slice(storeSrc.indexOf('async function clearRecent'), storeSrc.indexOf('function setView'))
+  assert.match(fn, /channels\.value = \[\]/, 'the grid reads channels, so that list has to go too')
+  assert.ok(
+    fn.indexOf('channels.value = []') < fn.indexOf('premiumApi.clearRecent'),
+    'the page must empty before waiting on the API',
+  )
+})
+
 check('the store owns all eight player states', () => {
   for (const state of ['idle', 'loading', 'playing', 'paused', 'buffering', 'reconnecting', 'error', 'ended']) {
     assert.ok(
@@ -152,9 +166,12 @@ check('no premium component implements playback itself', () => {
   }
 })
 
-check('the watch page mounts the shared player in live mode', () => {
+check('the watch page mounts the shared player with the right mode', () => {
   assert.ok(watchSrc.includes('<mpv-player'), 'the page must mount MpvPlayer')
-  assert.ok(watchSrc.includes('mode="live"'), 'live mode hides the VOD chrome')
+  assert.ok(
+    watchSrc.includes(':mode="playerMode"') || watchSrc.includes('mode="live"'),
+    'live channels and vod titles must pick different player chrome',
+  )
   assert.ok(watchSrc.includes(':user-agent="playback.source.value.userAgent"'), 'the upstream UA must reach the player')
   assert.ok(watchSrc.includes(':referer="playback.source.value.referer"'), 'and so must the referer')
   assert.ok(/@failed="[^"]*onPlaybackFailed/.test(watchSrc), 'a dead stream must reach the reconnect path')
@@ -162,6 +179,24 @@ check('the watch page mounts the shared player in live mode', () => {
     /@failed="reason =>/.test(watchSrc),
     'and it must carry mpv\'s reason, or a refusal cannot be told from silence',
   )
+})
+
+check('vod playback does not use the live reconnect loop', () => {
+  const fn = watchSrc.slice(watchSrc.indexOf('function onPlaybackFailed'), watchSrc.indexOf('// ── Transport'))
+  assert.ok(fn.includes('isVod'), 'playback failure must branch for movies and shows')
+  assert.ok(
+    watchSrc.includes('if (isVod.value)\n    return \'\''),
+    'the live overlay must not duplicate vod error UI',
+  )
+})
+
+check('paused live can jump back to the edge', () => {
+  const overlay = readFileSync(`${ROOT}app/components/live-tv/LivePlayerOverlay.vue`, 'utf8')
+  assert.ok(overlay.includes('behindLive'), 'the HUD must know when the user is behind live')
+  assert.ok(overlay.includes('goLive'), 'and emit a jump')
+  assert.ok(watchSrc.includes(':behind-live='), 'premium watch must pass that flag')
+  assert.ok(watchSrc.includes('@go-live='), 'and wire the jump')
+  assert.ok(shimSrc.includes('\'seek\''), 'the <video> shim must answer mpv seek')
 })
 
 /**
@@ -228,10 +263,24 @@ check('the channel list does the same', () => {
 // ── Scale ────────────────────────────────────────────────────────
 
 check('the grid is virtualized', () => {
-  const s = read(GRID)
-  assert.ok(s.includes('@tanstack/vue-virtual'), 'the grid must use a virtualizer')
-  assert.ok(s.includes('measureElement'), 'rows are measured — a fixed estimate overlaps at most widths')
-  assert.ok(s.includes('overscan'), 'and it must keep a small overscan for the remote')
+  for (const f of [GRID, VOD_GRID]) {
+    const s = read(f)
+    assert.ok(s.includes('@tanstack/vue-virtual'), `${f.replace(ROOT, '')} must use a virtualizer`)
+    assert.ok(s.includes('measureElement'), `${f.replace(ROOT, '')} rows are measured`)
+    assert.ok(s.includes('overscan'), `${f.replace(ROOT, '')} keeps a small overscan for the remote`)
+  }
+})
+
+check('vod browse opens a movie detail page before play', () => {
+  const browser = read(BROWSER)
+  assert.ok(/premium\/movie\//.test(browser) || browser.includes('openMovie'), 'movies must open a detail page')
+  assert.ok(read(MOVIE_PAGE).includes('@click="play"'), 'the detail page must offer Play')
+})
+
+check('vod category filter uses search-field', () => {
+  const s = read(VOD_SIDEBAR)
+  assert.ok(s.includes('search-field'), 'the VOD rail must use SearchField')
+  assert.ok(!/<input[^>]*type="search"/.test(s), 'no raw search input in the VOD rail')
 })
 
 check('nothing renders the whole channel list', () => {
@@ -286,7 +335,7 @@ check('every hover: has a focus-visible: twin on the same element', () => {
 })
 
 check('the interactive parts are real buttons', () => {
-  for (const f of [CARD, SIDEBAR, BROWSER]) {
+  for (const f of [CARD, SIDEBAR, BROWSER, HEADER]) {
     const s = read(f)
     assert.ok(s.includes('type="button"'), `${f.replace(ROOT, '')} must use real buttons`)
   }
@@ -294,6 +343,41 @@ check('the interactive parts are real buttons', () => {
 
 check('the decorative overlay button stays out of the tab order', () => {
   assert.ok(read(CARD).includes('tabindex="-1"'), 'the card\'s favourite star is inside a button and must not focus')
+})
+
+check('the channel card focus ring is inset on the artwork', () => {
+  const s = read(CARD).replace(/<!--[\s\S]*?-->/g, '')
+  assert.ok(s.includes('ring-inset'), 'the hover ring must sit inside the logo box')
+  assert.ok(!/hover:ring/.test(s), 'an outside hover:ring boxed the title under the art')
+})
+
+check('the sidebar selected state uses the theme primary, not a second colour system', () => {
+  const s = read(SIDEBAR)
+  assert.ok(!s.includes('amber-500'), 'Favorites must not be amber')
+  assert.ok(!s.includes('cyan-500'), 'Recently watched must not be cyan')
+  assert.ok(!s.includes('text-gray'), 'the rail uses on-surface tokens, not Tailwind gray')
+  assert.ok(s.includes('bg-primary'), 'the selected item is primary')
+})
+
+check('the category filter is a field a d-pad can walk past', () => {
+  assert.ok(read(SIDEBAR).includes('search-field'), 'the rail must use SearchField, not a raw input')
+})
+
+check('the browse search is a field a d-pad can walk past', () => {
+  assert.ok(read(HEADER).includes('search-field'), 'the header must use SearchField, not a raw input')
+  assert.ok(read(BROWSER).includes('live-tv-live-browse-header'), 'Premium browse uses the shared header')
+  assert.ok(!read(BROWSER).includes('v-text-field'), 'Premium browse must not mount a raw text field')
+})
+
+check('provider folder names drop the Live stamp and the two-letter prefix', () => {
+  assert.deepEqual(parseCategoryName('AF - Canal+ Africa - Live'), { code: 'AF', label: 'Canal+ Africa' })
+  assert.deepEqual(parseCategoryName('AR - Arabic TV - Live'), { code: 'AR', label: 'Arabic TV' })
+  assert.deepEqual(parseCategoryName('ARG - Argentina'), { code: 'ARG', label: 'Argentina' })
+  assert.deepEqual(parseCategoryName('News'), { code: null, label: 'News' })
+  assert.equal(isBundleCategory('ALL SPORTS 4K'), true)
+  assert.equal(isBundleCategory('ALL MOVIES'), true)
+  assert.equal(isBundleCategory('ALGERIA'), false)
+  assert.equal(categoryLabel('ALL SPORTS 4K'), 'All Sports 4K')
 })
 
 check('the guide progress bar is announced', () => {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { mdiArrowRight, mdiCastConnected, mdiTelevisionClassic } from '@mdi/js'
+import { mdiArrowRight, mdiCastConnected, mdiTelevisionClassic, mdiTelevisionGuide } from '@mdi/js'
 
 definePageMeta({ layout: 'default' })
 
@@ -7,88 +7,81 @@ const settings = useSettingsStore()
 </script>
 
 <template>
-  <div class="mx-4 mt-6 max-w-5xl md:mx-auto md:px-6">
-    <!-- Header Hero -->
-    <div class="mb-8 text-center sm:text-start">
-      <span class="inline-flex items-center gap-1.5 rounded-full bg-primary/15 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-primary ring-1 ring-primary/30">
-        {{ $t('Live Television Hub') }}
-      </span>
-      <h1 class="mt-2 text-headline-medium font-black tracking-tight text-white md:text-headline-large">
+  <div class="mx-4 mt-6 md:mx-6">
+    <header class="max-w-2xl">
+      <h1 class="text-headline-small font-bold tracking-tight">
         {{ $t('Live TV') }}
       </h1>
-      <p class="mt-1 text-body-large text-white/60">
-        {{ $t('Choose a TV source to browse.') }}
+      <p class="mt-1 text-body-medium opacity-60">
+        {{ $t('Browse free channels or sign in to your IPTV provider.') }}
       </p>
-    </div>
+    </header>
 
-    <div class="grid gap-6 sm:grid-cols-2">
-      <!-- Free TV card -->
+    <div class="mt-8 grid max-w-4xl gap-4 sm:grid-cols-2">
       <nuxt-link
         :to="localePath('/live-tv/free')"
-        class="group relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-b from-surface-container-high via-surface-container to-surface-container-lowest p-7 transition-[transform,border-color,box-shadow] duration-300 hover:-translate-y-1 hover:border-primary/60 hover:shadow-2xl hover:shadow-primary/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        class="group flex flex-col gap-4 rounded-3xl border border-outline/20 bg-surface-container-high/40 p-5 transition-[border-color,transform] duration-200 hover:border-primary/40 hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
       >
-        <div class="absolute -right-12 -top-12 size-48 rounded-full bg-primary/15 blur-2xl transition-colors group-hover:bg-primary/25 pointer-events-none" />
-
-        <div class="relative z-10 mb-5 flex items-center justify-between">
-          <div class="grid size-14 place-items-center rounded-2xl bg-gradient-to-br from-primary/30 to-primary/10 ring-1 ring-primary/30 shadow-lg shadow-primary/20">
-            <v-icon :icon="mdiTelevisionClassic" size="30" color="primary" />
+        <div class="flex items-start gap-4">
+          <div class="grid size-14 shrink-0 place-items-center rounded-2xl bg-primary/15 text-primary transition-colors group-hover:bg-primary group-hover:text-on-primary group-focus-visible:bg-primary group-focus-visible:text-on-primary">
+            <v-icon :icon="mdiTelevisionClassic" size="28" />
           </div>
-          <span class="rounded-full bg-white/10 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-white/70">
-            {{ $t('Public Streams') }}
-          </span>
-        </div>
-
-        <div class="relative z-10">
-          <h2 class="text-headline-small font-bold text-white">
-            {{ $t('Free TV') }}
-          </h2>
-          <p class="mt-1 text-body-small font-medium text-primary">
-            {{ $t('No IPTV account required') }}
-          </p>
-          <p class="my-4 text-body-medium text-white/65">
-            {{ $t('Public live television from around the world.') }}
-          </p>
-
-          <div class="inline-flex items-center gap-2 rounded-xl bg-primary/20 px-4 py-2.5 text-body-small font-bold text-primary transition-colors group-hover:bg-primary group-hover:text-on-primary">
-            <span>{{ $t('Browse Free TV') }}</span>
-            <v-icon :icon="mdiArrowRight" size="16" />
+          <div class="min-w-0 flex-1 pt-0.5">
+            <h2 class="text-title-large font-bold">
+              {{ $t('Free TV') }}
+            </h2>
+            <p class="mt-1 text-body-small opacity-60">
+              {{ $t('Public live television from around the world.') }}
+            </p>
           </div>
+          <v-icon :icon="mdiArrowRight" size="22" class="mt-1 shrink-0 opacity-35 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
         </div>
+        <ul class="flex flex-wrap gap-2 text-label-small opacity-70">
+          <li class="rounded-full bg-surface-container px-2.5 py-1">
+            {{ $t('No account needed') }}
+          </li>
+          <li class="rounded-full bg-surface-container px-2.5 py-1">
+            {{ $t('TV guide') }}
+          </li>
+        </ul>
       </nuxt-link>
 
-      <!-- Premium TV card -->
       <nuxt-link
         :to="localePath('/live-tv/premium')"
-        class="group relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-b from-surface-container-high via-surface-container to-surface-container-lowest p-7 transition-[transform,border-color,box-shadow] duration-300 hover:-translate-y-1 hover:border-secondary/60 hover:shadow-2xl hover:shadow-secondary/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-secondary"
+        class="group flex flex-col gap-4 rounded-3xl border border-outline/20 bg-surface-container-high/40 p-5 transition-[border-color,transform] duration-200 hover:border-primary/40 hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
       >
-        <div class="absolute -right-12 -top-12 size-48 rounded-full bg-secondary/15 blur-2xl transition-colors group-hover:bg-secondary/25 pointer-events-none" />
-
-        <div class="relative z-10 mb-5 flex items-center justify-between">
-          <div class="grid size-14 place-items-center rounded-2xl bg-gradient-to-br from-secondary/30 to-secondary/10 ring-1 ring-secondary/30 shadow-lg shadow-secondary/20">
-            <v-icon :icon="mdiCastConnected" size="30" color="secondary" />
+        <div class="flex items-start gap-4">
+          <div class="grid size-14 shrink-0 place-items-center rounded-2xl bg-primary/15 text-primary transition-colors group-hover:bg-primary group-hover:text-on-primary group-focus-visible:bg-primary group-focus-visible:text-on-primary">
+            <v-icon :icon="mdiCastConnected" size="28" />
           </div>
-          <span class="rounded-full bg-white/10 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-white/70">
-            {{ $t('IPTV Account') }}
-          </span>
-        </div>
-
-        <div class="relative z-10">
-          <h2 class="text-headline-small font-bold text-white">
-            {{ $t('Premium TV') }}
-          </h2>
-          <p class="mt-1 text-body-small font-medium text-secondary">
-            {{ settings.isPremium ? $t('Subscription active') : $t('Requires subscription') }}
-          </p>
-          <p class="my-4 text-body-medium text-white/65">
-            {{ $t('Xtream and M3U IPTV sources with EPG and more.') }}
-          </p>
-
-          <div class="inline-flex items-center gap-2 rounded-xl bg-secondary/20 px-4 py-2.5 text-body-small font-bold text-secondary transition-colors group-hover:bg-secondary group-hover:text-on-secondary">
-            <span>{{ $t('Connect IPTV') }}</span>
-            <v-icon :icon="mdiArrowRight" size="16" />
+          <div class="min-w-0 flex-1 pt-0.5">
+            <h2 class="text-title-large font-bold">
+              {{ $t('Premium TV') }}
+            </h2>
+            <p class="mt-1 text-body-small opacity-60">
+              {{ settings.isPremium ? $t('Your IPTV provider — live, movies and shows.') : $t('Requires subscription') }}
+            </p>
           </div>
+          <v-icon :icon="mdiArrowRight" size="22" class="mt-1 shrink-0 opacity-35 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
         </div>
+        <ul class="flex flex-wrap gap-2 text-label-small opacity-70">
+          <li class="rounded-full bg-surface-container px-2.5 py-1">
+            {{ $t('Xtream & M3U') }}
+          </li>
+          <li class="rounded-full bg-surface-container px-2.5 py-1">
+            {{ $t('Movies & series') }}
+          </li>
+        </ul>
       </nuxt-link>
     </div>
+
+    <nuxt-link
+      :to="localePath('/live-tv/free/guide')"
+      class="mt-4 inline-flex max-w-4xl items-center gap-2 rounded-2xl border border-outline/15 bg-surface-container/30 px-4 py-3 text-body-small opacity-80 transition-colors hover:border-primary/30 hover:opacity-100 focus-visible:border-primary/30 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+    >
+      <v-icon :icon="mdiTelevisionGuide" size="20" class="shrink-0 text-primary" />
+      <span>{{ $t('Open the free TV guide') }}</span>
+      <v-icon :icon="mdiArrowRight" size="18" class="ms-auto shrink-0 opacity-50" />
+    </nuxt-link>
   </div>
 </template>

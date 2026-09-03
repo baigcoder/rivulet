@@ -6,6 +6,7 @@ const props = defineProps<{
   channels: LiveChannel[]
   getEpg: (id: string) => Array<{ title: string, description?: string | null, start: string, stop?: string | null }>
   isFavorite: (ch: LiveChannel) => boolean
+  isOffline?: (ch: LiveChannel) => boolean
   max?: number
   to?: string
   totalCount?: number
@@ -33,7 +34,8 @@ const visible = computed(() => props.channels.slice(0, props.max ?? 12))
       :channel="ch"
       :get-epg="getEpg"
       :is-favorite="isFavorite"
-      class="w-40 shrink-0 sm:w-44 lg:w-48"
+      :is-offline="isOffline"
+      class="w-44 shrink-0 sm:w-48 lg:w-52"
       @play="emit('play', $event)"
       @toggle-favorite="emit('toggleFavorite', $event)"
     />

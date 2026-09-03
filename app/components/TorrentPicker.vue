@@ -20,6 +20,9 @@ import {
  * pick isn't what you want — a 4k copy, a specific release group, or just more
  * seeders. With no sources configured there is nothing to search, and the
  * dialog says so rather than showing an empty list.
+ *
+ * The dialog is a sibling of the Releases button, not a child: a `<button>`
+ * wrapping Play/Download is invalid HTML, and those clicks never reach the player.
  */
 const props = defineProps<{
   type: MediaType
@@ -37,6 +40,7 @@ const torrents = ref<Release[]>([])
 const pending = ref(false)
 const error = ref('')
 const busy = ref('')
+const step = ref('')
 const added = ref<string[]>([])
 
 const tier = ref('all')
@@ -87,15 +91,30 @@ const tiers = computed(() => ['all', ...new Set(torrents.value.map(tierOf))])
 const best = computed(() => pickBest(torrents.value, downloads.budget))
 
 /**
- * Too big for the drive to hold at all — a FAT32 stick stops at 4 GiB. Unlike
- * the budget, no amount of eviction makes room for one of these, so the row is
- * disabled rather than merely marked: the download would run to the 4 GiB mark
- * and die there.
- *
- * A direct link is exempt, as everywhere else: nothing of it touches the disk.
+    * Too big for the drive to hold at all — a FAT32 stick stops at 4 GiB. Unlike
+    * the budget, no amount of eviction makes room for one of these, so Play on a
+    * torrent row is disabled rather than merely marked: the download would run
+    * to the 4 GiB mark and die there.
+    *
+ * A direct link is exempt for Play: streaming it writes nothing. Download
+ * is the engine, so it still honours the cap even when the same row has a URL.
  */
 function tooBig(t: Release) {
   return !t.url && t.bytes > downloads.fileLimit
+}
+
+/** Only a magnet starts the torrent engine. A URL-only row is Play, not Download. */
+function canSave(t: Release) {
+  return !!t.magnet && !(t.bytes > downloads.fileLimit)
+}
+
+function inEngine(t: Release) {
+  const hash = t.hash.toLowerCase()
+  return hash && downloads.torrents.some(x => x.info_hash.toLowerCase() === hash)
+}
+
+function isAdded(t: Release) {
+  return added.value.includes(releaseKey(t)) || inEngine(t)
 }
 
 const list = computed(() => {
@@ -106,27 +125,49 @@ const list = computed(() => {
     .sort((a, b) => sort.value === 'size' ? a.bytes - b.bytes : b.seeders - a.seeders)
 })
 
-function playLink(t: Release) {
-  // Toggle ON + magnet available → torrent engine downloads to disk while streaming.
-  // Toggle OFF or no magnet → direct server URL for instant playback with zero disk usage.
-  const param = (settings.allowTorrents && t.magnet)
-    ? `magnet=${encodeURIComponent(t.magnet)}`
-    : t.url
-      ? `url=${encodeURIComponent(t.url)}`
-      : `magnet=${encodeURIComponent(t.magnet)}`
-  return `${watchLink(props.type, props.id, props.season, props.episode)}&${param}`
+async function play(t: Release) {
+  if (tooBig(t) || !(t.url || t.magnet))
+    return
+  // Direct rows play the URL even when a hash is attached — the engine is
+  // Download's job. Stash the payload; debrid links blow past `?url=`.
+  savePendingRelease(t.url ? { url: t.url } : { magnet: t.magnet })
+  open.value = false
+  await navigateTo(watchLink(
+    props.type,
+    props.id,
+    props.season,
+    props.episode,
+    {
+      pick: String(Date.now()),
+      imdb: props.imdbId ? String(props.imdbId) : undefined,
+    },
+  ))
 }
 
 async function download(t: Release) {
+  if (!canSave(t))
+    return
   busy.value = releaseKey(t)
+  step.value = ''
   error.value = ''
   try {
+    const key = progressKey(props.type, props.id, props.season, props.episode)
     // Filed under the title, so this is the copy its Play button uses from now
-    // on — picking a release by hand is a decision, not a one-off.
-    await downloads.start(
-      progressKey(props.type, props.id, props.season, props.episode),
-      { magnet: t.magnet, season: props.season, episode: props.episode },
-    )
+    // on — picking a release by hand is a decision, not a one-off. The tick
+    // waits until the engine lists the hash — metadata can take a minute.
+    const started = await downloads.start(key, {
+      magnet: t.magnet,
+      fileIndex: t.fileIdx,
+      season: props.season,
+      episode: props.episode,
+      allowTorrents: true,
+      save: true,
+      onStep: msg => { step.value = msg },
+    })
+    if (started.id < 0 || !started.hash)
+      throw new Error($t('Torrent engine offline. Launch the native desktop or Android app to play torrents.'))
+    if (!downloads.torrents.some(x => x.info_hash.toLowerCase() === started.hash.toLowerCase()))
+      throw new Error($t('The torrent engine accepted the magnet but Downloads is still empty — wait a moment and try again, or restart the app.'))
     added.value = [...added.value, releaseKey(t)]
   }
   catch (e) {
@@ -134,198 +175,211 @@ async function download(t: Release) {
   }
   finally {
     busy.value = ''
+    step.value = ''
   }
 }
+
+function saveHint(t: Release) {
+  if (t.bytes > downloads.fileLimit)
+    return $t('Too big for the download drive')
+  if (isAdded(t))
+    return $t('In downloads')
+  if (!t.magnet)
+    return $t('This release has no torrent to download — Play it instead.')
+  return $t('Download')
+}
+
+defineExpose({
+  open: () => { open.value = true },
+})
 </script>
 
 <template>
   <v-btn :prepend-icon="mdiFormatListBulletedType" variant="tonal" :disabled="!imdbId" @click="open = true">
     {{ $t('Releases') }}
+  </v-btn>
 
-    <v-dialog v-model="open" max-width="1000" scrollable>
-      <v-card rounded="xl">
-        <v-card-title class="flex items-center gap-3 text-title-medium">
-          <span>{{ $t('Pick a release') }}</span>
-          <span v-if="torrents.length" class="text-body-small opacity-55">
-            {{ $t('{shown} of {total}', { shown: list.length, total: torrents.length }) }}
+  <v-dialog v-model="open" max-width="1000" scrollable>
+    <v-card rounded="xl">
+      <v-card-title class="flex items-center gap-3 text-title-medium">
+        <span>{{ $t('Pick a release') }}</span>
+        <span v-if="torrents.length" class="text-body-small opacity-55">
+          {{ $t('{shown} of {total}', { shown: list.length, total: torrents.length }) }}
+        </span>
+        <v-spacer />
+        <v-btn icon size="small" variant="text" color="on-surface" :loading="pending" @click="load">
+          <v-icon :icon="mdiReload" size="20" />
+          <v-tooltip activator="parent" :text="$t('Search again')" />
+        </v-btn>
+      </v-card-title>
+
+      <p v-if="step" class="px-4 pb-2 text-body-small text-primary">
+        {{ step }}
+      </p>
+
+      <div class="flex flex-wrap items-center gap-2 px-4 pb-3">
+        <div class="min-w-0 w-full sm:w-auto sm:flex-1">
+          <v-chip-group v-model="tier" mandatory selected-class="bg-primary text-on-primary font-medium">
+            <v-chip v-for="value in tiers" :key="value" :value="value" :text="value" size="small" />
+          </v-chip-group>
+        </div>
+        <v-text-field
+          v-model="query"
+          :prepend-inner-icon="mdiMagnify"
+          :placeholder="$t('Release or origin')"
+          variant="solo-filled"
+          density="compact"
+          rounded="lg"
+          flat
+          hide-details
+          clearable
+          class="min-w-40 flex-1 shrink-0 sm:w-56 sm:flex-none sm:grow-0"
+        />
+        <v-select
+          v-model="sort"
+          :items="[
+            { value: 'seeders', title: $t('Most seeders') },
+            { value: 'size', title: $t('Smallest') },
+          ]"
+          density="compact"
+          hide-details
+          class="w-40 shrink-0 grow-0"
+        />
+      </div>
+
+      <v-card-text class="max-h-[60vh] pt-0">
+        <div v-if="!configured" class="flex flex-col items-center gap-3 py-10 text-center">
+          <v-icon :icon="mdiPowerPlugOutline" size="36" class="opacity-40" />
+          <span class="max-w-md text-body-medium opacity-70">
+            {{ $t('Rivulet has no sources configured, so there is nowhere to search. You can still play a magnet or a torrent file you open yourself.') }}
           </span>
-          <v-spacer />
-          <v-btn icon size="small" variant="text" color="on-surface" :loading="pending" @click="load">
-            <v-icon :icon="mdiReload" size="20" />
-            <v-tooltip activator="parent" :text="$t('Search again')" />
+          <v-btn variant="tonal" size="small" :to="localePath('/settings/sources')">
+            {{ $t('Open source settings') }}
           </v-btn>
-        </v-card-title>
-
-        <div class="flex flex-wrap items-center gap-2 px-4 pb-3">
-          <div class="min-w-0 w-full sm:w-auto sm:flex-1">
-            <v-chip-group v-model="tier" mandatory selected-class="bg-primary text-on-primary font-medium">
-              <v-chip v-for="value in tiers" :key="value" :value="value" :text="value" size="small" />
-            </v-chip-group>
-          </div>
-          <v-text-field
-            v-model="query"
-            :prepend-inner-icon="mdiMagnify"
-            :placeholder="$t('Release or origin')"
-            variant="solo-filled"
-            density="compact"
-            rounded="lg"
-            flat
-            hide-details
-            clearable
-            class="min-w-40 flex-1 shrink-0 sm:w-56 sm:flex-none sm:grow-0"
-          />
-          <v-select
-            v-model="sort"
-            :items="[
-              { value: 'seeders', title: $t('Most seeders') },
-              { value: 'size', title: $t('Smallest') },
-            ]"
-            density="compact"
-            hide-details
-            class="w-40 shrink-0 grow-0"
-          />
         </div>
 
-        <v-card-text class="max-h-[60vh] pt-0">
-          <div v-if="!configured" class="flex flex-col items-center gap-3 py-10 text-center">
-            <v-icon :icon="mdiPowerPlugOutline" size="36" class="opacity-40" />
-            <span class="max-w-md text-body-medium opacity-70">
-              {{ $t('Rivulet has no sources configured, so there is nowhere to search. You can still play a magnet or a torrent file you open yourself.') }}
-            </span>
-            <v-btn variant="tonal" size="small" :to="localePath('/settings/sources')">
-              {{ $t('Open source settings') }}
-            </v-btn>
-          </div>
+        <div v-else-if="error" class="flex flex-col items-center gap-2 py-10">
+          <v-icon :icon="mdiAlertCircleOutline" color="error" size="36" />
+          <span class="text-body-medium opacity-70">{{ error }}</span>
+        </div>
 
-          <div v-else-if="error" class="flex flex-col items-center gap-2 py-10">
-            <v-icon :icon="mdiAlertCircleOutline" color="error" size="36" />
-            <span class="text-body-medium opacity-70">{{ error }}</span>
-          </div>
+        <div v-else-if="pending && !torrents.length" class="flex flex-col items-center gap-2 py-10">
+          <v-progress-circular indeterminate color="primary" />
+          <span class="text-body-small opacity-55">{{ $t('Searching your sources…') }}</span>
+        </div>
 
-          <div v-else-if="pending && !torrents.length" class="flex flex-col items-center gap-2 py-10">
-            <v-progress-circular indeterminate color="primary" />
-            <span class="text-body-small opacity-55">{{ $t('Searching your sources…') }}</span>
-          </div>
+        <div v-else-if="!list.length" class="py-10 text-center text-body-medium opacity-60">
+          {{ $t('Nothing matches.') }}
+        </div>
 
-          <div v-else-if="!list.length" class="py-10 text-center text-body-medium opacity-60">
-            {{ $t('Nothing matches.') }}
-          </div>
-
-          <div v-else class="flex flex-col gap-1">
-            <!-- The columns add up to more than a phone is wide, so `basis-full`
+        <div v-else class="flex flex-col gap-1">
+          <!-- The columns add up to more than a phone is wide, so `basis-full`
                  gives the release name its own line there and the rest of the
                  numbers flow underneath it. -->
-            <div
-              v-for="t in list"
-              :key="releaseKey(t)"
-              class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl px-2 py-2 hover:bg-surface-container-high/60 focus-within:bg-surface-container-high/60"
-              :class="tooBig(t) ? 'opacity-45' : ''"
-            >
-              <div class="min-w-0 flex-1 basis-full sm:basis-0">
-                <div class="flex items-center gap-2">
-                  <span class="truncate text-body-medium" :title="t.name">{{ t.name }}</span>
-                  <v-chip v-if="best && releaseKey(t) === releaseKey(best)" size="x-small" color="primary" :text="$t('Best')" class="shrink-0" />
-                </div>
-                <!-- Season packs name the episode here and nowhere else. -->
-                <div v-if="t.file" class="truncate text-body-small opacity-50" :title="t.file">
-                  {{ t.file }}
-                </div>
+          <div
+            v-for="t in list"
+            :key="releaseKey(t)"
+            class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl px-2 py-2 hover:bg-surface-container-high/60 focus-within:bg-surface-container-high/60"
+            :class="tooBig(t) ? 'opacity-45' : ''"
+          >
+            <div class="min-w-0 flex-1 basis-full sm:basis-0">
+              <div class="flex items-center gap-2">
+                <span class="truncate text-body-medium" :title="t.name">{{ t.name }}</span>
+                <v-chip v-if="best && releaseKey(t) === releaseKey(best)" size="x-small" color="primary" :text="$t('Best')" class="shrink-0" />
               </div>
-
-              <v-chip size="x-small" :text="t.quality || $t('unknown')" class="shrink-0" />
-
-              <!-- Amber is "costs more than it's worth", error is "will not fit
-                   at all" — the second has to outrank the first, since a bloated
-                   release is usually also the oversized one. -->
-              <span
-                class="shrink-0 text-body-small sm:w-20 sm:text-right"
-                :class="tooBig(t) ? 'text-error' : isBloated(t) ? 'text-warning' : 'opacity-70'"
-              >
-                {{ t.size || bytesText(t.bytes) }}
-                <v-tooltip
-                  v-if="tooBig(t)"
-                  activator="parent"
-                  :text="$t('Over the {limit} single-file limit of the drive downloads go to — reformat it in Settings → Storage to use releases this big', { limit: bytesText(downloads.fileLimit) })"
-                />
-                <v-tooltip v-else-if="isBloated(t)" activator="parent" :text="$t('Bigger than this quality needs — may not keep up while streaming')" />
-              </span>
-
-              <!-- A link has no swarm, so this column says what it is instead. -->
-              <span
-                class="flex shrink-0 items-center gap-1 text-body-small sm:w-16 sm:justify-end"
-                :class="t.url ? 'text-primary' : 'opacity-70'"
-              >
-                <template v-if="t.url">
-                  <v-icon :icon="mdiFlashOutline" size="13" />{{ $t('Direct') }}
-                  <v-tooltip activator="parent" :text="$t('The source fetched this already — it plays at once and keeps nothing on this device')" />
-                </template>
-                <template v-else>
-                  <v-icon :icon="mdiAccountGroup" size="13" />{{ t.seeders }}
-                </template>
-              </span>
-
-              <span class="hidden w-24 shrink-0 truncate text-body-small opacity-50 sm:block">{{ t.source }}</span>
-
-              <div class="ml-auto flex shrink-0 items-center sm:ml-0">
-                <!-- Playing is downloading here, so an oversized release is as
-                     dead on Play as it is on Download. -->
-                <v-btn
-                  icon
-                  size="small"
-                  variant="text"
-                  color="on-surface"
-                  :disabled="tooBig(t)"
-                  :to="tooBig(t) ? undefined : playLink(t)"
-                >
-                  <v-icon :icon="mdiPlay" size="20" />
-                  <v-tooltip activator="parent" :text="tooBig(t) ? $t('Too big for the download drive') : $t('Play this source')" />
-                </v-btn>
-                <!-- Nothing to hand the engine for a link, and nothing it could
-                     keep — the file lives on the source's server, not in a swarm. -->
-                <v-btn
-                  icon
-                  size="small"
-                  variant="text"
-                  color="on-surface"
-                  :disabled="!!t.url || tooBig(t)"
-                  :loading="busy === releaseKey(t)"
-                  @click="download(t)"
-                >
-                  <v-icon :icon="added.includes(releaseKey(t)) ? mdiCheck : mdiDownload" size="20" />
-                  <v-tooltip
-                    activator="parent"
-                    :text="tooBig(t) ? $t('Too big for the download drive') : added.includes(releaseKey(t)) ? $t('In downloads') : $t('Download')"
-                  />
-                </v-btn>
+              <!-- Season packs name the episode here and nowhere else. -->
+              <div v-if="t.file" class="truncate text-body-small opacity-50" :title="t.file">
+                {{ t.file }}
               </div>
             </div>
-          </div>
-        </v-card-text>
 
-        <v-card-actions>
-          <!-- One legend at a time, and a drive that cannot hold the release
+            <v-chip size="x-small" :text="t.quality || $t('unknown')" class="shrink-0" />
+
+            <!-- Amber is "costs more than it's worth", error is "will not fit
+                   at all" — the second has to outrank the first, since a bloated
+                   release is usually also the oversized one. -->
+            <span
+              class="shrink-0 text-body-small sm:w-20 sm:text-right"
+              :class="tooBig(t) ? 'text-error' : isBloated(t) ? 'text-warning' : 'opacity-70'"
+            >
+              {{ t.size || bytesText(t.bytes) }}
+              <v-tooltip
+                v-if="tooBig(t)"
+                activator="parent"
+                :text="$t('Over the {limit} single-file limit of the drive downloads go to — reformat it in Settings → Storage to use releases this big', { limit: bytesText(downloads.fileLimit) })"
+              />
+              <v-tooltip v-else-if="isBloated(t)" activator="parent" :text="$t('Bigger than this quality needs — may not keep up while streaming')" />
+            </span>
+
+            <!-- Direct only when there is no torrent to file. A hash plus a
+                 play URL is still a torrent — Download starts the engine. -->
+            <span
+              class="flex shrink-0 items-center gap-1 text-body-small sm:w-16 sm:justify-end"
+              :class="t.url && !t.magnet ? 'text-primary' : 'opacity-70'"
+            >
+              <template v-if="t.url && !t.magnet">
+                <v-icon :icon="mdiFlashOutline" size="13" />{{ $t('Direct') }}
+                <v-tooltip activator="parent" :text="$t('The source fetched this already — it plays at once')" />
+              </template>
+              <template v-else>
+                <v-icon :icon="mdiAccountGroup" size="13" />{{ t.seeders }}
+              </template>
+            </span>
+
+            <span class="hidden w-24 shrink-0 truncate text-body-small opacity-50 sm:block">{{ t.source }}</span>
+
+            <div class="ml-auto flex shrink-0 items-center sm:ml-0">
+              <v-btn
+                icon
+                size="small"
+                variant="text"
+                color="on-surface"
+                :disabled="tooBig(t) || !(t.url || t.magnet)"
+                @click.stop="play(t)"
+              >
+                <v-icon :icon="mdiPlay" size="20" />
+                <v-tooltip activator="parent" :text="tooBig(t) ? $t('Too big for the download drive') : $t('Play this source')" />
+              </v-btn>
+              <v-btn
+                icon
+                size="small"
+                variant="text"
+                color="on-surface"
+                :disabled="!canSave(t)"
+                :loading="busy === releaseKey(t)"
+                @click.stop="download(t)"
+              >
+                <v-icon :icon="isAdded(t) ? mdiCheck : mdiDownload" size="20" />
+                <v-tooltip activator="parent" :text="saveHint(t)" />
+              </v-btn>
+            </div>
+          </div>
+        </div>
+      </v-card-text>
+
+      <v-card-actions>
+        <!-- One legend at a time, and a drive that cannot hold the release
                outranks a release that is merely fatter than it needs to be.
                Shown at every width, unlike the amber note: a dimmed row with no
                explanation reads as the app being broken. -->
-          <span v-if="list.some(tooBig)" class="flex items-center gap-1 pl-2 text-body-small text-error">
-            <v-icon :icon="mdiAlertCircleOutline" size="14" />
-            {{ $t('Dimmed rows are over the {limit} file limit of the download drive.', { limit: bytesText(downloads.fileLimit) }) }}
-          </span>
-          <!-- The legend is the first thing to go when the row gets tight; the
+        <span v-if="list.some(tooBig)" class="flex items-center gap-1 pl-2 text-body-small text-error">
+          <v-icon :icon="mdiAlertCircleOutline" size="14" />
+          {{ $t('Dimmed rows are over the {limit} file limit of the download drive.', { limit: bytesText(downloads.fileLimit) }) }}
+        </span>
+        <!-- The legend is the first thing to go when the row gets tight; the
                amber itself still carries a tooltip. -->
-          <span v-else class="hidden items-center gap-1 pl-2 text-body-small opacity-45 sm:flex">
-            <v-icon :icon="mdiWeightLifter" size="14" />
-            {{ $t('Sizes in amber cost more bandwidth than the picture is worth.') }}
-          </span>
-          <v-spacer />
-          <v-btn variant="text" size="small" :to="localePath('/downloads')">
-            {{ $t('Downloads') }}
-          </v-btn>
-          <v-btn variant="text" size="small" @click="open = false">
-            {{ $t('Close') }}
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-  </v-btn>
+        <span v-else class="hidden items-center gap-1 pl-2 text-body-small opacity-45 sm:flex">
+          <v-icon :icon="mdiWeightLifter" size="14" />
+          {{ $t('Sizes in amber cost more bandwidth than the picture is worth.') }}
+        </span>
+        <v-spacer />
+        <v-btn variant="text" size="small" :to="localePath('/downloads')">
+          {{ $t('Downloads') }}
+        </v-btn>
+        <v-btn variant="text" size="small" @click="open = false">
+          {{ $t('Close') }}
+        </v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
 </template>

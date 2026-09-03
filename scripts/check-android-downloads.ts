@@ -131,7 +131,25 @@ assert.ok(
   'and folds it into the ceiling pickBest already applies to a release',
 )
 const picker = readFileSync(new URL('../app/components/TorrentPicker.vue', import.meta.url), 'utf8')
+const watchPage = readFileSync(new URL('../app/pages/watch.vue', import.meta.url), 'utf8')
 assert.ok(picker.includes('downloads.fileLimit'), 'and the picker dims what will not fit')
+assert.ok(picker.includes('!!t.magnet'), 'Download is the torrent engine, not an HTTP save')
+assert.ok(picker.includes('@click.stop="play(t)"'), 'Play is a click, not a nested router-link')
+assert.ok(!picker.includes('download_url'), 'Releases Download never saves a Direct URL over HTTP')
+assert.ok(picker.includes('downloads.start'), 'a magnet row is filed in the torrent engine')
+assert.ok(picker.includes('started.id < 0'), 'the tick waits until the engine has accepted the magnet')
+assert.ok(!picker.includes('void downloads.start'), 'and does not mark the row done before that')
+assert.ok(
+  !/<v-btn[^>]*>\s*\{\{\s*\$t\('Releases'\)\s*\}\}[\t\v\f\r \xA0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]*\n\s*<v-dialog/.test(picker),
+  'the picker dialog is not nested inside the Releases button',
+)
+assert.ok(watchPage.includes('takePendingRelease'), 'the player reads the release the picker stashed')
+assert.ok(watchPage.includes('magnet.value || settings.allowTorrents'), 'a picked magnet plays while Play is Direct-only')
+const downloadBtn = readFileSync(new URL('../app/components/DownloadButton.vue', import.meta.url), 'utf8')
+assert.ok(!/if\s*\(\s*!settings\.allowTorrents\s*\)/.test(downloadBtn), 'Download still files when Play is Direct-only')
+assert.ok(downloadBtn.includes('save: true'), 'and still asks the engine for a magnet')
+assert.ok(!downloadBtn.includes('download_url'), 'the title Download button never HTTP-saves a Direct URL')
+assert.ok(downloadBtn.includes('started.id < 0'), 'and does not tick without an engine id')
 
 // Formatting a drive means leaving the app for Android's settings, so the list
 // has to be re-read on the way back or the screen shows the old drive and the

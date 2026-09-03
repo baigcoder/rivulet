@@ -26,7 +26,7 @@ const virtualizer = useVirtualizer(computed(() => ({
   count: props.channels.length,
   getScrollElement: () => scrollRef.value ?? null,
   estimateSize: () => 56,
-  overscan: 5,
+  overscan: 2,
 })))
 
 // Debounce so a fast scroll doesn't fire a fetch per frame, cap at 20
@@ -49,18 +49,14 @@ watch(
   () => triggerEpg(),
 )
 
-// Infinite scroll.
 watch(
-  () => virtualizer.value?.getVirtualItems(),
-  items => {
-    if (!items || items.length === 0)
+  () => virtualizer.value?.getVirtualItems().at(-1)?.index ?? -1,
+  last => {
+    if (!props.hasMore || props.loading || last < 0)
       return
-    if (!props.hasMore || props.loading)
-      return
-    const last = items[items.length - 1]
-    if (last && last.index >= props.channels.length - 5) {
+    const el = scrollRef.value
+    if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 240)
       emit('loadMore')
-    }
   },
 )
 </script>

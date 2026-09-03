@@ -48,3 +48,22 @@ pub fn provider_for(
         ))),
     }
 }
+
+/// VOD catalog calls need Xtream's `get_vod_*` actions. M3U playlists
+/// have no on-demand API — callers turn this into a 404.
+pub fn xtream_for(
+    state: Arc<PremiumState>,
+    connection_id: &str,
+) -> Result<XtreamAdapter, PremiumError> {
+    let kind = {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|e| PremiumError::Database(format!("lock: {e}")))?;
+        storage::provider_type(&conn, connection_id)?
+    };
+    if kind.as_str() != "xtream" {
+        return Err(PremiumError::NotFound);
+    }
+    Ok(XtreamAdapter::new(state, connection_id.to_string()))
+}

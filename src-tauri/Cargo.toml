@@ -30,7 +30,10 @@ serde_json = "1"
 anyhow = "1"
 librqbit-dualstack-sockets = "0.7"
 tauri-plugin-deep-link = "2.4.9"
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "gzip", "brotli"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "gzip", "brotli", "stream"] }
+ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "rustls-webpki-roots"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+ring = "0.17"
 keyring = { version = "3", default-features = false, features = ["apple-native", "sync-secret-service", "windows-native"] }
 quick-xml = "0.37"
 regex = "1"
@@ -73,6 +76,12 @@ tower-http = { version = "0.5", features = ["cors", "trace"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 raw-window-handle = "0.6"
 x11-dl = "2"
+# Only to reach the WebKitGTK settings from setup: the default user agent
+# looks like Safari's, and YouTube serves its embed a player config
+# WebKitGTK cannot run ("player configuration error" on every trailer).
+# Pinned to the exact version wry builds against, so there is one
+# webkit2gtk in the graph and this is the same type it hands over.
+webkit2gtk = { version = "=2.0.2", features = ["v2_38"] }
 
 # The same job on Windows: a child HWND, a window region for the cutouts and a
 # named pipe for mpv's IPC (see src/player_windows.rs).
@@ -136,7 +145,7 @@ features = [ "rust-tls", "http-api", "http-api-client", "tracing-subscriber-util
 
 [dependencies.tokio]
 version = "1"
-features = [ "rt-multi-thread" ]
+features = [ "rt-multi-thread", "fs", "io-util" ]
 
 [features]
 default = ["desktop"]
@@ -159,3 +168,6 @@ features = [ "derive" ]
 
 [dev-dependencies]
 tempfile = "3"
+
+[patch.crates-io]
+rustls-platform-verifier = { path = "../patches/rustls-platform-verifier" }

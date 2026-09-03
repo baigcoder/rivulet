@@ -5,7 +5,11 @@ import type {
   IPTVCategory,
   IPTVChannel,
   PremiumAccount,
+  PremiumSeriesDetail,
+  PremiumSeriesItem,
+  PremiumVodItem,
   SyncReport,
+  VodCategory,
 } from '~/types/premium'
 import { defineStore } from 'pinia'
 import { computed, ref, shallowRef, triggerRef, watch } from 'vue'
@@ -76,6 +80,9 @@ export type PremiumPlayerState
 /** Which list the browser is showing. */
 export type PremiumView = 'all' | 'favorites' | 'recent' | 'category'
 
+/** Live channels vs on-demand movies/series from the same provider. */
+export type PremiumContentSection = 'live' | 'movies' | 'series'
+
 /** What a card needs to draw its now/next line. */
 export interface NowNext {
   now: EpgProgram | null
@@ -136,6 +143,28 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
   const searchQuery = ref('')
   const searchDebounced = ref('')
 
+  /** Live TV, movies, or TV shows — Xtream panels expose all three. */
+  const contentSection = ref<PremiumContentSection>('live')
+  const vodMovieCategories = ref<VodCategory[]>([])
+  const vodSeriesCategories = ref<VodCategory[]>([])
+  const vodCategories = computed(() =>
+    contentSection.value === 'movies' ? vodMovieCategories.value : vodSeriesCategories.value,
+  )
+  const selectedVodCategory = ref('')
+  const vodMovies = shallowRef<PremiumVodItem[]>([])
+  const vodSeries = shallowRef<PremiumSeriesItem[]>([])
+  const vodTotal = ref(0)
+  const vodNextCursor = ref<string | null>(null)
+  const vodLoading = ref(false)
+  const seriesDetailCache = new Map<string, PremiumSeriesDetail>()
+
+  function cacheSeriesDetail(id: string, detail: PremiumSeriesDetail): void {
+    seriesDetailCache.set(id, detail)
+  }
+
+  const isXtream = computed(() => account.value?.providerType === 'xtream')
+  const supportsVod = computed(() => isXtream.value)
+
   /**
    * Both guards are needed and they do different jobs. The abort stops
    * the *network* work of a superseded query; the id stops a response
@@ -145,6 +174,7 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
    */
   let listController: AbortController | null = null
   let listRequestId = 0
+  let vodCatRequestId = 0
 
   let searchTimer: ReturnType<typeof setTimeout> | null = null
   watch(searchQuery, v => {
@@ -155,13 +185,24 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
     }, SEARCH_DEBOUNCE_MS)
   })
   watch(searchDebounced, () => {
-    void loadChannels({ reset: true })
+    if (contentSection.value === 'live')
+      void loadChannels({ reset: true })
+    else
+      void loadVod({ reset: true })
   })
 
   // Re-fetch the channel list and categories when the adult content toggle changes.
   watch(() => useSettingsStore().hideAdultChannels, () => {
     void loadCategoryCounts()
-    void loadChannels({ reset: true })
+    if (contentSection.value === 'live') {
+      void loadChannels({ reset: true })
+    }
+    else {
+      void Promise.all([
+        loadVodCategories(contentSection.value),
+        loadVod({ reset: true }),
+      ])
+    }
   })
 
   /** What the player walks with channel up/down: the list as displayed. */
@@ -187,6 +228,7 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
   // ── Favourites / recent ──────────────────────────────────────
 
   const favoriteIds = ref<Set<string>>(new Set())
+  const favoriteChannels = shallowRef<IPTVChannel[]>([])
   const recent = shallowRef<IPTVChannel[]>([])
 
   // ── The player ───────────────────────────────────────────────
@@ -275,6 +317,8 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
       favoriteIds.value.size === 0 ? loadFavorites() : Promise.resolve(),
       recent.value.length === 0 ? loadRecent() : Promise.resolve(),
     ])
+    if (isXtream.value && vodMovies.value.length === 0 && vodSeries.value.length === 0)
+      void prefetchVod()
   }
 
   async function connectXtream(serverUrl: string, username: string, password: string): Promise<void> {
@@ -316,6 +360,8 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
     resetBrowsing()
     await Promise.all([loadStatus(), loadCategoryCounts()])
     await loadChannels({ reset: true })
+    if (isXtream.value)
+      void prefetchVod()
   }
 
   async function disconnect(): Promise<void> {
@@ -332,6 +378,7 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
     setAuthToken(null)
     resetBrowsing()
     favoriteIds.value = new Set()
+    favoriteChannels.value = []
     recent.value = []
     categoryCounts.value = []
     categories.value = []
@@ -367,6 +414,15 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
     selectedCategory.value = ''
     searchQuery.value = ''
     searchDebounced.value = ''
+    contentSection.value = 'live'
+    vodMovieCategories.value = []
+    vodSeriesCategories.value = []
+    selectedVodCategory.value = ''
+    vodMovies.value = []
+    vodSeries.value = []
+    vodTotal.value = 0
+    vodNextCursor.value = null
+    vodLoading.value = false
   }
 
   // ── Catalog reads ────────────────────────────────────────────
@@ -464,6 +520,179 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
   }
 
   const hasMore = computed(() => nextCursor.value !== null)
+
+  const vodHasMore = computed(() => vodNextCursor.value !== null)
+
+  async function loadVodCategories(forSection?: PremiumContentSection): Promise<void> {
+    if (!connected.value || !supportsVod.value)
+      return
+    const section = forSection ?? contentSection.value
+    if (section === 'live')
+      return
+    if (section === 'movies' && vodMovieCategories.value.length > 0)
+      return
+    if (section === 'series' && vodSeriesCategories.value.length > 0)
+      return
+    const reqId = ++vodCatRequestId
+    try {
+      const cats = section === 'movies'
+        ? await premiumApi.vodMovieCategories()
+        : await premiumApi.vodSeriesCategories()
+      // A slow movies response must not overwrite series categories after
+      // the user has already switched tabs.
+      if (reqId !== vodCatRequestId || contentSection.value !== section)
+        return
+      if (section === 'movies')
+        vodMovieCategories.value = cats
+      else
+        vodSeriesCategories.value = cats
+    }
+    catch (e) {
+      if (reqId !== vodCatRequestId)
+        return
+      error.value = message(e)
+    }
+  }
+
+  async function loadVod(
+    { reset, keepVisible, section }: {
+      reset: boolean
+      keepVisible?: boolean
+      section?: PremiumContentSection
+    } = { reset: true },
+  ): Promise<void> {
+    const active = section ?? contentSection.value
+    if (!connected.value || !supportsVod.value || active === 'live')
+      return
+    if (reset && !keepVisible) {
+      if (active === 'movies')
+        vodMovies.value = []
+      else
+        vodSeries.value = []
+      if (active === contentSection.value) {
+        vodTotal.value = 0
+        vodNextCursor.value = null
+      }
+    }
+    else if (!reset && (vodLoading.value || !vodNextCursor.value)) {
+      return
+    }
+    else if (reset && keepVisible && active === contentSection.value && vodLoading.value) {
+      return
+    }
+
+    const forScreen = active === contentSection.value
+    const controller = new AbortController()
+    if (forScreen) {
+      if (listController)
+        listController.abort()
+      listController = controller
+    }
+    const reqId = ++listRequestId
+    if (forScreen)
+      vodLoading.value = true
+    const hideAdult = useSettingsStore().hideAdultChannels || undefined
+
+    try {
+      if (active === 'movies') {
+        const page = await premiumApi.vodMovies({
+          cursor: reset ? undefined : (vodNextCursor.value ?? undefined),
+          category: forScreen ? (selectedVodCategory.value || undefined) : undefined,
+          search: forScreen ? (searchDebounced.value || undefined) : undefined,
+          hideAdult,
+          limit: PAGE_SIZE,
+          signal: forScreen ? controller.signal : undefined,
+        })
+        if (forScreen && reqId !== listRequestId)
+          return
+        vodMovies.value = reset ? page.items : [...vodMovies.value, ...page.items]
+        if (forScreen) {
+          vodTotal.value = page.total
+          vodNextCursor.value = page.nextCursor
+        }
+      }
+      else {
+        const page = await premiumApi.vodSeries({
+          cursor: reset ? undefined : (vodNextCursor.value ?? undefined),
+          category: forScreen ? (selectedVodCategory.value || undefined) : undefined,
+          search: forScreen ? (searchDebounced.value || undefined) : undefined,
+          hideAdult,
+          limit: PAGE_SIZE,
+          signal: forScreen ? controller.signal : undefined,
+        })
+        if (forScreen && reqId !== listRequestId)
+          return
+        vodSeries.value = reset ? page.items : [...vodSeries.value, ...page.items]
+        if (forScreen) {
+          vodTotal.value = page.total
+          vodNextCursor.value = page.nextCursor
+        }
+      }
+    }
+    catch (e) {
+      if (forScreen && reqId !== listRequestId)
+        return
+      if (e instanceof DOMException && e.name === 'AbortError')
+        return
+      if (forScreen)
+        error.value = message(e)
+    }
+    finally {
+      if (forScreen && reqId === listRequestId)
+        vodLoading.value = false
+    }
+  }
+
+  /** Warm both VOD catalogs while the user is still on live channels. */
+  async function prefetchVod(): Promise<void> {
+    if (!connected.value || !supportsVod.value)
+      return
+    await Promise.all([
+      loadVodCategories('movies'),
+      loadVodCategories('series'),
+      vodMovies.value.length === 0 ? loadVod({ reset: true, section: 'movies' }) : Promise.resolve(),
+      vodSeries.value.length === 0 ? loadVod({ reset: true, section: 'series' }) : Promise.resolve(),
+    ])
+  }
+
+  function loadMoreVod(): Promise<void> {
+    return loadVod({ reset: false })
+  }
+
+  function setContentSection(section: PremiumContentSection): void {
+    if (contentSection.value === section)
+      return
+    contentSection.value = section
+    selectedCategory.value = ''
+    selectedVodCategory.value = ''
+    view.value = 'all'
+    searchQuery.value = ''
+    searchDebounced.value = ''
+    if (section === 'live') {
+      void loadChannels({ reset: true })
+    }
+    else {
+      const hasData = section === 'movies' ? vodMovies.value.length > 0 : vodSeries.value.length > 0
+      void Promise.all([
+        loadVodCategories(section),
+        loadVod({ reset: true, keepVisible: hasData }),
+      ])
+    }
+  }
+
+  function setVodCategory(id: string): void {
+    selectedVodCategory.value = id
+    searchQuery.value = ''
+    searchDebounced.value = ''
+    void loadVod({ reset: true })
+  }
+
+  function clearVodFilters(): void {
+    selectedVodCategory.value = ''
+    searchQuery.value = ''
+    searchDebounced.value = ''
+    void loadVod({ reset: true })
+  }
 
   // ── EPG ──────────────────────────────────────────────────────
 
@@ -573,6 +802,12 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
       else
         next.delete(id)
       favoriteIds.value = next
+      if (state && typeof ch !== 'string') {
+        favoriteChannels.value = [ch, ...favoriteChannels.value.filter(c => c.id !== id)]
+      }
+      else if (!state) {
+        favoriteChannels.value = favoriteChannels.value.filter(c => c.id !== id)
+      }
       // Favourites is a filtered query, so a channel un-starred while
       // that view is open has to leave the list it is in.
       if (view.value === 'favorites' && !state)
@@ -587,6 +822,7 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
     try {
       const items = await premiumApi.favorites()
       favoriteIds.value = new Set(items.map(c => c.id))
+      favoriteChannels.value = items
     }
     catch { /* an empty set is the safe default: no stars, not a broken page */ }
   }
@@ -606,11 +842,18 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
   }
 
   async function clearRecent(): Promise<void> {
+    // The grid paints `channels`, not `recent`. Clearing only the
+    // sidebar count left the cards on screen until the next view switch.
+    recent.value = []
+    if (view.value === 'recent') {
+      channels.value = []
+      total.value = 0
+      nextCursor.value = null
+    }
     try {
       await premiumApi.clearRecent()
-      recent.value = []
     }
-    catch { /* */ }
+    catch { /* the page is already empty */ }
   }
 
   // ── View selection ───────────────────────────────────────────
@@ -687,6 +930,9 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
     disconnect,
     refresh,
     // browsing
+    contentSection,
+    supportsVod,
+    isXtream,
     categories,
     categoryCounts,
     channels,
@@ -697,11 +943,27 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
     selectedCategory,
     searchQuery,
     searchDebounced,
+    vodCategories,
+    selectedVodCategory,
+    vodMovies,
+    vodSeries,
+    vodTotal,
+    vodHasMore,
+    vodLoading,
+    seriesDetailCache,
+    cacheSeriesDetail,
     zapList,
     loadCategories,
     loadCategoryCounts,
     loadChannels,
     loadMore,
+    loadVodCategories,
+    loadVod,
+    loadMoreVod,
+    prefetchVod,
+    setContentSection,
+    setVodCategory,
+    clearVodFilters,
     setView,
     setCategory,
     clearFilters,
@@ -712,6 +974,7 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
     guide,
     // favourites / recent
     favoriteIds,
+    favoriteChannels,
     recent,
     isFavorite,
     toggleFavorite,

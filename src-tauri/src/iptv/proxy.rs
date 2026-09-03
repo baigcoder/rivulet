@@ -110,6 +110,16 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
         return Ok(());
     }
 
+    // YouTube embed shim. The packaged webview loads from tauri://localhost
+    // on Linux/macOS, and YouTube's iframe rejects that origin (error 153).
+    // Serving the embed from loopback HTTP gives YouTube a valid Referer while
+    // the page around it stays on the custom protocol — same trick as
+    // https://github.com/tauri-apps/tauri/issues/14422#issuecomment-2799999999
+    if request.starts_with("GET /youtube-embed") {
+        serve_youtube_embed(stream, &request).await?;
+        return Ok(());
+    }
+
     // Parse the request line and the URL parameter. Bad input gets a 400
     // rather than a 500 — the page will then fall back to the raw URL.
     let (target_url, custom_ua, custom_referer) = match parse_target(&request) {
@@ -430,6 +440,70 @@ fn rewrite_m3u(
         out.push('\n');
     }
     out
+}
+
+/// YouTube video ids are always 11 characters from this alphabet.
+fn valid_youtube_id(id: &str) -> bool {
+    id.len() == 11
+        && id.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
+fn parse_youtube_embed(request: &str) -> Option<(String, bool, bool, bool)> {
+    let first_line = request.lines().next()?;
+    let path = first_line.split_whitespace().nth(1)?;
+    let query = path.split_once('?')?.1;
+    let mut id: Option<String> = None;
+    let mut autoplay = true;
+    let mut mute = false;
+    let mut looping = false;
+    for pair in query.split('&') {
+        let (k, v) = pair.split_once('=')?;
+        let decoded = urlencoding::decode(v).ok()?.into_owned();
+        match k {
+            "v" => id = Some(decoded),
+            "autoplay" => autoplay = decoded != "0",
+            "mute" => mute = decoded == "1",
+            "loop" => looping = decoded == "1",
+            _ => {}
+        }
+    }
+    let id = id?;
+    if !valid_youtube_id(&id) {
+        return None;
+    }
+    Some((id, autoplay, mute, looping))
+}
+
+async fn serve_youtube_embed(
+    stream: &mut tokio::net::TcpStream,
+    request: &str,
+) -> anyhow::Result<()> {
+    let (id, autoplay, mute, looping) = match parse_youtube_embed(request) {
+        Some(v) => v,
+        None => {
+            write_response(stream, 400, "Bad Request", "text/plain", b"invalid v").await?;
+            return Ok(());
+        }
+    };
+    let mut params = String::from("rel=0&playsinline=1");
+    if autoplay {
+        params.push_str("&autoplay=1");
+    }
+    if mute {
+        params.push_str("&mute=1");
+    }
+    // YouTube ignores loop unless playlist names this same video.
+    if looping {
+        params.push_str("&loop=1&playlist=");
+        params.push_str(&id);
+    }
+    let html = format!(
+        r#"<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>*{{margin:0;padding:0;box-sizing:border-box}}html,body{{width:100%;height:100%;overflow:hidden;background:#000}}iframe{{width:100%;height:100%;border:none}}</style></head>
+<body><iframe src="https://www.youtube.com/embed/{id}?{params}" allow="autoplay; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe></body></html>"#
+    );
+    write_response(stream, 200, "OK", "text/html; charset=utf-8", html.as_bytes()).await
 }
 
 fn parse_target(request: &str) -> Option<(String, Option<String>, Option<String>)> {

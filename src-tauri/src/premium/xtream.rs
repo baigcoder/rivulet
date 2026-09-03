@@ -731,6 +731,300 @@ impl IPTVProvider for XtreamAdapter {
     }
 }
 
+// ── On-demand catalog (Xtream VOD + series) ─────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct XtreamVodStream {
+    stream_id: Option<i64>,
+    name: Option<String>,
+    stream_icon: Option<String>,
+    rating: Option<String>,
+    #[serde(default)]
+    plot: Option<String>,
+    category_id: Option<String>,
+    container_extension: Option<String>,
+    #[serde(default, rename = "is_adult")]
+    is_adult: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct XtreamSeriesRow {
+    series_id: Option<i64>,
+    name: Option<String>,
+    cover: Option<String>,
+    plot: Option<String>,
+    rating: Option<String>,
+    category_id: Option<String>,
+    #[serde(default, rename = "is_adult")]
+    is_adult: Option<serde_json::Value>,
+}
+
+fn xtream_adult(v: &Option<serde_json::Value>) -> bool {
+    v.as_ref().map(|val| match val {
+        serde_json::Value::Number(n) => n.as_u64().unwrap_or(0) != 0,
+        serde_json::Value::String(s) => s == "1",
+        _ => false,
+    }).unwrap_or(false)
+}
+
+fn paginate<T: Clone>(all: Vec<T>, cursor: usize, limit: usize) -> (Vec<T>, usize, Option<String>) {
+    let total = all.len();
+    let end = (cursor + limit).min(total);
+    let items = if cursor >= total {
+        vec![]
+    } else {
+        all[cursor..end].to_vec()
+    };
+    let next = if end < total { Some(end.to_string()) } else { None };
+    (items, total, next)
+}
+
+fn filter_search<T, F: Fn(&T) -> &str>(items: Vec<T>, search: Option<&str>, name: F) -> Vec<T> {
+    let Some(q) = search.filter(|s| !s.is_empty()) else {
+        return items;
+    };
+    let q = q.to_lowercase();
+    items.into_iter().filter(|i| name(i).to_lowercase().contains(&q)).collect()
+}
+
+impl XtreamAdapter {
+    fn vod_api_url(&self, creds: &XtreamCreds, action: &str, category_id: Option<&str>) -> String {
+        let mut url = creds.api_url(action);
+        if let Some(cat) = category_id.filter(|c| !c.is_empty()) {
+            url.push_str("&category_id=");
+            url.push_str(cat);
+        }
+        url
+    }
+
+    pub async fn vod_movie_categories(&self) -> Result<Vec<super::models::VodCategory>, PremiumError> {
+        if let Some(cats) = self.state.vod_cache.movie_categories(&self.connection_id) {
+            return Ok(cats);
+        }
+        let creds = self.config().await?;
+        let bytes = get_with_retries(&self.client()?, &creds.api_url("get_vod_categories")).await?;
+        let raw: Vec<XtreamCategory> = serde_json::from_slice(&bytes)
+            .map_err(|e| PremiumError::MalformedResponse(format!("vod categories: {e}")))?;
+        let cats: Vec<super::models::VodCategory> = raw.into_iter().filter_map(|c| {
+            let id = c.category_id?;
+            let name = c.category_name.as_deref().and_then(names::clean_channel_name)?;
+            Some(super::models::VodCategory { id, name, kind: "movie".into() })
+        }).collect();
+        self.state.vod_cache.set_movie_categories(&self.connection_id, cats.clone());
+        Ok(cats)
+    }
+
+    pub async fn vod_series_categories(&self) -> Result<Vec<super::models::VodCategory>, PremiumError> {
+        if let Some(cats) = self.state.vod_cache.series_categories(&self.connection_id) {
+            return Ok(cats);
+        }
+        let creds = self.config().await?;
+        let bytes = get_with_retries(&self.client()?, &creds.api_url("get_series_categories")).await?;
+        let raw: Vec<XtreamCategory> = serde_json::from_slice(&bytes)
+            .map_err(|e| PremiumError::MalformedResponse(format!("series categories: {e}")))?;
+        let cats: Vec<super::models::VodCategory> = raw.into_iter().filter_map(|c| {
+            let id = c.category_id?;
+            let name = c.category_name.as_deref().and_then(names::clean_channel_name)?;
+            Some(super::models::VodCategory { id, name, kind: "series".into() })
+        }).collect();
+        self.state.vod_cache.set_series_categories(&self.connection_id, cats.clone());
+        Ok(cats)
+    }
+
+    async fn fetch_vod_movies(&self, category_id: Option<&str>) -> Result<Vec<super::models::PremiumVodItem>, PremiumError> {
+        let cat_key = category_id.unwrap_or("");
+        if let Some(items) = self.state.vod_cache.movies(&self.connection_id, cat_key) {
+            return Ok(items);
+        }
+        let creds = self.config().await?;
+        let url = self.vod_api_url(&creds, "get_vod_streams", category_id);
+        let bytes = get_with_retries(&self.client()?, &url).await?;
+        let raw: Vec<XtreamVodStream> = serde_json::from_slice(&bytes)
+            .map_err(|e| PremiumError::MalformedResponse(format!("vod streams: {e}")))?;
+        let all: Vec<super::models::PremiumVodItem> = raw.into_iter().filter_map(|s| {
+            let id = s.stream_id?.to_string();
+            let name = names::clean_channel_name(s.name.as_deref()?)?;
+            Some(super::models::PremiumVodItem {
+                id,
+                name,
+                poster_url: s.stream_icon,
+                plot: s.plot,
+                rating: s.rating,
+                category_id: s.category_id,
+                category_name: None,
+                container_extension: s.container_extension,
+                is_adult: xtream_adult(&s.is_adult) || names::is_adult_category(s.name.as_deref().unwrap_or("")),
+            })
+        }).collect();
+        self.state.vod_cache.set_movies(&self.connection_id, cat_key, all.clone());
+        Ok(all)
+    }
+
+    async fn fetch_vod_series(&self, category_id: Option<&str>) -> Result<Vec<super::models::PremiumSeriesItem>, PremiumError> {
+        let cat_key = category_id.unwrap_or("");
+        if let Some(items) = self.state.vod_cache.series(&self.connection_id, cat_key) {
+            return Ok(items);
+        }
+        let creds = self.config().await?;
+        let url = self.vod_api_url(&creds, "get_series", category_id);
+        let bytes = get_with_retries(&self.client()?, &url).await?;
+        let raw: Vec<XtreamSeriesRow> = serde_json::from_slice(&bytes)
+            .map_err(|e| PremiumError::MalformedResponse(format!("series: {e}")))?;
+        let all: Vec<super::models::PremiumSeriesItem> = raw.into_iter().filter_map(|s| {
+            let id = s.series_id?.to_string();
+            let name = names::clean_channel_name(s.name.as_deref()?)?;
+            Some(super::models::PremiumSeriesItem {
+                id,
+                name,
+                poster_url: s.cover,
+                plot: s.plot,
+                rating: s.rating,
+                category_id: s.category_id,
+                is_adult: xtream_adult(&s.is_adult) || names::is_adult_category(s.name.as_deref().unwrap_or("")),
+            })
+        }).collect();
+        self.state.vod_cache.set_series(&self.connection_id, cat_key, all.clone());
+        Ok(all)
+    }
+
+    pub async fn vod_movies(
+        &self,
+        category_id: Option<&str>,
+        search: Option<&str>,
+        hide_adult: bool,
+        cursor: usize,
+        limit: usize,
+    ) -> Result<super::models::VodPage<super::models::PremiumVodItem>, PremiumError> {
+        let mut all = self.fetch_vod_movies(category_id).await?;
+        if hide_adult {
+            all.retain(|i| !i.is_adult);
+        }
+        all = filter_search(all, search, |i| &i.name);
+        let (items, total, next_cursor) = paginate(all, cursor, limit);
+        Ok(super::models::VodPage { items, total, next_cursor })
+    }
+
+    pub async fn vod_series_list(
+        &self,
+        category_id: Option<&str>,
+        search: Option<&str>,
+        hide_adult: bool,
+        cursor: usize,
+        limit: usize,
+    ) -> Result<super::models::VodPage<super::models::PremiumSeriesItem>, PremiumError> {
+        let mut all = self.fetch_vod_series(category_id).await?;
+        if hide_adult {
+            all.retain(|i| !i.is_adult);
+        }
+        all = filter_search(all, search, |i| &i.name);
+        let (items, total, next_cursor) = paginate(all, cursor, limit);
+        Ok(super::models::VodPage { items, total, next_cursor })
+    }
+
+    pub async fn vod_series_detail(&self, series_id: &str) -> Result<super::models::PremiumSeriesDetail, PremiumError> {
+        if series_id.is_empty() || !series_id.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(PremiumError::NotFound);
+        }
+        let creds = self.config().await?;
+        let url = format!("{}&series_id={}", creds.api_url("get_series_info"), series_id);
+        let bytes = get_with_retries(&self.client()?, &url).await?;
+        let raw: serde_json::Value = serde_json::from_slice(&bytes)
+            .map_err(|e| PremiumError::MalformedResponse(format!("series info: {e}")))?;
+        let info = raw.get("info").and_then(|v| v.as_object());
+        let name = info.and_then(|i| i.get("name")).and_then(|v| v.as_str())
+            .and_then(names::clean_channel_name)
+            .unwrap_or_else(|| series_id.to_string());
+        let poster = info.and_then(|i| i.get("cover")).and_then(|v| v.as_str()).map(str::to_string);
+        let plot = info.and_then(|i| i.get("plot")).and_then(|v| v.as_str()).map(str::to_string);
+        let rating = info.and_then(|i| i.get("rating")).and_then(|v| v.as_str()).map(str::to_string);
+        let mut episodes = Vec::new();
+        if let Some(map) = raw.get("episodes").and_then(|v| v.as_object()) {
+            for (season_key, eps) in map {
+                let season: u32 = season_key.parse().unwrap_or(1);
+                if let Some(arr) = eps.as_array() {
+                    for ep in arr {
+                        let Some(id) = ep.get("id").and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+                            .map(|n| n.to_string()) else { continue };
+                        let episode_num = ep.get("episode_num").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+                        let title = ep.get("title").and_then(|v| v.as_str())
+                            .or_else(|| ep.get("name").and_then(|v| v.as_str()))
+                            .unwrap_or("Episode")
+                            .to_string();
+                        episodes.push(super::models::PremiumEpisode {
+                            id,
+                            season,
+                            episode: episode_num,
+                            title,
+                            plot: ep.get("plot").and_then(|v| v.as_str()).map(str::to_string),
+                            container_extension: ep.get("container_extension").and_then(|v| v.as_str()).map(str::to_string),
+                        });
+                    }
+                }
+            }
+        }
+        episodes.sort_by(|a, b| a.season.cmp(&b.season).then(a.episode.cmp(&b.episode)));
+        Ok(super::models::PremiumSeriesDetail {
+            id: series_id.to_string(),
+            name,
+            poster_url: poster,
+            plot,
+            rating,
+            episodes,
+        })
+    }
+
+    /// `{server}/movie/{user}/{pass}/{id}.{ext}` — the Xtream VOD path.
+    pub async fn resolve_movie_url(&self, stream_id: &str, ext: &str) -> Result<String, PremiumError> {
+        if stream_id.is_empty() || !stream_id.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(PremiumError::NotFound);
+        }
+        let creds = self.config().await?;
+        let ext = if ext.is_empty() { "mkv" } else { ext };
+        Ok(format!(
+            "{}/movie/{}/{}/{}.{}",
+            creds.server_url.trim_end_matches('/'),
+            urlencoding::encode(&creds.username),
+            urlencoding::encode(&creds.password),
+            stream_id,
+            ext.trim_start_matches('.'),
+        ))
+    }
+
+    /// `{server}/series/{user}/{pass}/{episode_id}.{ext}`.
+    pub async fn resolve_series_episode_url(&self, episode_id: &str, ext: &str) -> Result<String, PremiumError> {
+        if episode_id.is_empty() || !episode_id.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(PremiumError::NotFound);
+        }
+        let creds = self.config().await?;
+        let ext = if ext.is_empty() { "mkv" } else { ext };
+        Ok(format!(
+            "{}/series/{}/{}/{}.{}",
+            creds.server_url.trim_end_matches('/'),
+            urlencoding::encode(&creds.username),
+            urlencoding::encode(&creds.password),
+            episode_id,
+            ext.trim_start_matches('.'),
+        ))
+    }
+
+    /// Parse a synthetic play id: `movie:{stream_id}:{ext}` or `series:{episode_id}:{ext}`.
+    pub fn parse_vod_play_id(play_id: &str) -> Option<(&str, &str, &str)> {
+        if let Some(rest) = play_id.strip_prefix("movie:") {
+            let mut parts = rest.splitn(2, ':');
+            let id = parts.next()?;
+            let ext = parts.next().unwrap_or("mkv");
+            return Some(("movie", id, ext));
+        }
+        if let Some(rest) = play_id.strip_prefix("series:") {
+            let mut parts = rest.splitn(2, ':');
+            let id = parts.next()?;
+            let ext = parts.next().unwrap_or("mkv");
+            return Some(("series", id, ext));
+        }
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

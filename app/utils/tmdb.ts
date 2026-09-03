@@ -170,6 +170,46 @@ export function watchLink(
   return `${localePath('/watch')}?${query}`
 }
 
+/**
+ * A picker-chosen URL or magnet is too long for `?url=` (and illegal inside
+ * a button). Stash it here, navigate with `?pick=`, and the player takes it
+ * once. Memory covers a quota miss; the query flag stops a leftover stash
+ * from hijacking the ordinary Play button.
+ */
+const PENDING_RELEASE = 'rivulet.pendingRelease'
+
+export interface PendingRelease {
+  url?: string
+  magnet?: string
+}
+
+let stagedRelease: PendingRelease | null = null
+
+export function savePendingRelease(play: PendingRelease) {
+  stagedRelease = play
+  try {
+    sessionStorage.setItem(PENDING_RELEASE, JSON.stringify(play))
+  }
+  catch { /* quota — memory still has it for this navigation */ }
+}
+
+export function takePendingRelease(): PendingRelease | null {
+  const fromMem = stagedRelease
+  stagedRelease = null
+  let fromStore: PendingRelease | null = null
+  try {
+    const raw = sessionStorage.getItem(PENDING_RELEASE)
+    sessionStorage.removeItem(PENDING_RELEASE)
+    if (raw)
+      fromStore = JSON.parse(raw) as PendingRelease
+  }
+  catch { /* no window / SSR */ }
+  const play = fromMem || fromStore
+  if (!play?.url && !play?.magnet)
+    return null
+  return play
+}
+
 /** 148 -> "2h 28m". */
 export function runtimeText(minutes?: number) {
   if (!minutes)

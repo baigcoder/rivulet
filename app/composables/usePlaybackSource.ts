@@ -17,7 +17,13 @@ import { premiumApi, PremiumApiError } from '~/utils/premiumTv'
  * — never a provider URL. The Rust side answers it with a 302 to the
  * upstream after re-checking the entitlement, which is what keeps the
  * provider's host, path and per-account token out of the page entirely.
+ *
+ * Adjacent tokens are minted in the background after a channel plays, so
+ * channel-up can start without waiting on the next HTTP round trip. The
+ * token is good for about thirty seconds; anything older is dropped.
  */
+const PREFETCH_MS = 25_000
+
 export function usePlaybackSource() {
   const source = ref<PlaybackSource | null>(null)
   const loading = ref(false)
@@ -26,8 +32,17 @@ export function usePlaybackSource() {
 
   let controller: AbortController | null = null
   let requestId = 0
+  const prefetchCache = new Map<string, { source: PlaybackSource, at: number }>()
 
-  async function load(id: string): Promise<void> {
+  function takePrefetch(id: string): PlaybackSource | null {
+    const hit = prefetchCache.get(id)
+    prefetchCache.delete(id)
+    if (!hit || Date.now() - hit.at > PREFETCH_MS)
+      return null
+    return hit.source
+  }
+
+  async function load(id: string, opts: { kind?: 'channel' | 'movie' | 'episode', ext?: string } = {}): Promise<void> {
     if (controller)
       controller.abort()
     const own = new AbortController()
@@ -36,9 +51,21 @@ export function usePlaybackSource() {
     channelId.value = id
     loading.value = true
     error.value = ''
+    const kind = opts.kind ?? 'channel'
+    const cacheKey = kind === 'channel' ? id : `${kind}:${id}:${opts.ext ?? ''}`
+    const cached = takePrefetch(cacheKey)
+    if (cached) {
+      source.value = cached
+      loading.value = false
+      return
+    }
     source.value = null
     try {
-      const next = await premiumApi.play(id, own.signal)
+      const next = kind === 'movie'
+        ? await premiumApi.vodPlayMovie(id, opts.ext, own.signal)
+        : kind === 'episode'
+          ? await premiumApi.vodPlayEpisode(id, opts.ext, own.signal)
+          : await premiumApi.play(id, own.signal)
       if (reqId !== requestId)
         return
       source.value = next
@@ -62,6 +89,19 @@ export function usePlaybackSource() {
     }
   }
 
+  function prefetch(ids: (string | undefined | null)[]): void {
+    for (const id of ids) {
+      if (!id || id === channelId.value)
+        continue
+      const hit = prefetchCache.get(id)
+      if (hit && Date.now() - hit.at < PREFETCH_MS)
+        continue
+      void premiumApi.play(id).then(next => {
+        prefetchCache.set(id, { source: next, at: Date.now() })
+      }).catch(() => {})
+    }
+  }
+
   function clear(): void {
     if (controller)
       controller.abort()
@@ -71,6 +111,7 @@ export function usePlaybackSource() {
     loading.value = false
     error.value = ''
     channelId.value = null
+    prefetchCache.clear()
   }
 
   onBeforeUnmount(() => {
@@ -78,5 +119,5 @@ export function usePlaybackSource() {
       controller.abort()
   })
 
-  return { source, loading, error, channelId, load, clear }
+  return { source, loading, error, channelId, load, prefetch, clear }
 }

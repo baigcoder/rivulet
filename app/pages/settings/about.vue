@@ -77,10 +77,7 @@ function open(url: string) {
           class="text-body-small max-h-60 overflow-y-auto whitespace-pre-wrap rounded-lg bg-surface-container/40 p-4 font-sans opacity-80"
         >{{ updates.available.notes }}</pre>
 
-        <p v-if="!updates.capable && platform === 'android'" class="text-body-medium opacity-70">
-          {{ $t('Android installs from the package itself — download it and open it. It is signed with the same key as the copy you have, so it upgrades in place and keeps your library.') }}
-        </p>
-        <p v-else-if="!updates.capable" class="text-body-medium opacity-70">
+        <p v-if="!updates.capable && platform !== 'android'" class="text-body-medium opacity-70">
           {{ $t('This copy wasn\'t installed by Rivulet\'s own installer — a package manager, or a build from source — so whatever put it there is what updates it. Replacing the files from in here would only confuse it.') }}
         </p>
 
@@ -101,8 +98,9 @@ function open(url: string) {
         />
 
         <div class="flex flex-wrap items-center gap-2">
+          <!-- Desktop: restart after updater plugin install -->
           <v-btn
-            v-if="updates.status === 'ready'"
+            v-if="updates.status === 'ready' && platform !== 'android'"
             :prepend-icon="mdiRestart"
             variant="flat"
             color="primary"
@@ -110,8 +108,19 @@ function open(url: string) {
           >
             {{ $t('Restart to finish') }}
           </v-btn>
+          <!-- Android: open system installer after download completes -->
           <v-btn
-            v-else-if="updates.capable"
+            v-if="updates.status === 'ready' && platform === 'android'"
+            :prepend-icon="mdiUpdate"
+            variant="flat"
+            color="primary"
+            @click="updates.openInstaller()"
+          >
+            {{ $t('Install now') }}
+          </v-btn>
+          <!-- Desktop: updater plugin install -->
+          <v-btn
+            v-else-if="updates.capable && platform !== 'android'"
             :prepend-icon="mdiUpdate"
             :loading="updates.status === 'downloading'"
             variant="flat"
@@ -120,13 +129,25 @@ function open(url: string) {
           >
             {{ $t('Update now') }}
           </v-btn>
+          <!-- Android: in-app download (uses DownloadManager) -->
+          <v-btn
+            v-else-if="platform === 'android' && updates.status !== 'ready'"
+            :prepend-icon="mdiUpdate"
+            :loading="updates.status === 'downloading'"
+            variant="flat"
+            color="primary"
+            @click="updates.install()"
+          >
+            {{ $t('Update now') }}
+          </v-btn>
+          <!-- Fallback: manual download -->
           <v-btn
             v-if="!updates.capable || updates.status === 'failed'"
-            :prepend-icon="platform === 'android' ? mdiTrayArrowDown : mdiOpenInNew"
+            :prepend-icon="mdiTrayArrowDown"
             variant="tonal"
             @click="open(downloadUrl)"
           >
-            {{ platform === 'android' ? $t('Download the APK') : $t('Open the release') }}
+            {{ $t('Download the APK') }}
           </v-btn>
           <v-btn
             v-if="updates.status !== 'downloading' && updates.status !== 'ready' && !updates.dismissed"
@@ -137,7 +158,10 @@ function open(url: string) {
           </v-btn>
         </div>
 
-        <p v-if="updates.status === 'ready'" class="text-body-small opacity-70">
+        <p v-if="updates.status === 'ready' && platform === 'android'" class="text-body-small opacity-70">
+          {{ $t('The APK has been downloaded. Tap "Install now" to open it — Android will ask you to confirm.') }}
+        </p>
+        <p v-else-if="updates.status === 'ready'" class="text-body-small opacity-70">
           {{ $t('Installed. It takes effect the next time Rivulet starts.') }}
         </p>
       </template>
@@ -160,7 +184,10 @@ function open(url: string) {
       </template>
 
       <p class="text-body-small opacity-70">
-        {{ $t('Checked once each time Rivulet starts, against this project\'s GitHub releases. Nothing else is sent — there is no account and no telemetry behind it.') }}
+        {{ platform === 'android'
+          ? $t('Checked each time Rivulet starts, and periodically while the app is open. A system notification will tell you when an update is ready.')
+          : $t('Checked once each time Rivulet starts, against this project\'s GitHub releases. Nothing else is sent — there is no account and no telemetry behind it.')
+        }}
       </p>
     </settings-section>
 

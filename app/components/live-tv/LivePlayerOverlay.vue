@@ -22,15 +22,14 @@
  *     (`player_pointer`), the keyboard, and the fallback for compositors that
  *     refuse a cursor query outright.
  *
- * Nothing here invents a number. The free playlists have no EPG yet
- * (`iptv/epg.rs`), a live window has nothing to seek over, and the player
- * reports no bitrate or frame rate — so there is no scrubber, no programme name
- * and no telemetry panel until something real can fill them.
+ * A live window has nothing to seek over, so there is no scrubber. The
+ * programme line is whatever the watch page already knows (`nowPlaying`).
  */
 import {
   mdiAlertCircleOutline,
   mdiArrowLeft,
   mdiClose,
+  mdiCropFree,
   mdiEyeOffOutline,
   mdiFormatListBulleted,
   mdiFullscreen,
@@ -50,7 +49,10 @@ import {
   mdiVolumeOff,
 } from '@mdi/js'
 import { invoke } from '@tauri-apps/api/core'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { isAndroid } from '~/utils/platform'
+import { fmtHudTime, friendlyPlaybackError } from '~/utils/playbackError'
+import { proxyLogo } from '~/utils/premiumTv'
 
 export interface ChannelEntry {
   id: string
@@ -72,6 +74,8 @@ const props = withDefaults(
     chromeUp?: boolean
     busy?: boolean
     channelName?: string
+    /** What's on right now, when the page has a guide for this channel. */
+    nowPlaying?: string
     channelLogo?: string
     channelIndex?: number
     channelTotal?: number
@@ -87,11 +91,26 @@ const props = withDefaults(
     qualityVariants?: ChannelEntry[]
     /** True while quality variants are being fetched. */
     qualityLoading?: boolean
+    /** Current aspect-ratio mode: contain / cover / fill. */
+    aspectRatio?: 'contain' | 'cover' | 'fill'
+    /** Live channel zap UI, or on-demand (movies/series) with a progress clock. */
+    variant?: 'live' | 'vod'
+    /** VOD: elapsed seconds from the player. */
+    position?: number
+    /** VOD: total seconds from the player. */
+    duration?: number
+    /**
+     * Playing from behind the live edge after a user pause/resume.
+     * Shows the jump-to-live control. Not derived from `playing` — live
+     * backends lie about pause.
+     */
+    behindLive?: boolean
   }>(),
   {
     chromeUp: false,
     busy: false,
     channelName: '',
+    nowPlaying: '',
     channelLogo: '',
     channelIndex: 0,
     channelTotal: 0,
@@ -103,6 +122,11 @@ const props = withDefaults(
     sourceQuality: null,
     qualityVariants: () => [],
     qualityLoading: false,
+    aspectRatio: 'contain' as const,
+    variant: 'live' as const,
+    position: 0,
+    duration: 0,
+    behindLive: false,
   },
 )
 
@@ -118,6 +142,8 @@ const emit = defineEmits<{
   toggleFavorite: []
   toggleFullscreen: []
   showQualityPicker: []
+  cycleAspectRatio: []
+  goLive: []
 }>()
 
 /** Is mpv's picture in front of the page? Then holes to punch, and opaque bars. */
@@ -128,10 +154,22 @@ const overlay = hasVideoOverlay()
 const qualityBadge = computed(() => props.resolutionLabel || props.sourceQuality || '')
 /** Whether there are alternative quality variants to offer. */
 const hasQualityVariants = computed(() => props.qualityVariants.length > 0)
+/** User-facing label for the current aspect-ratio mode. */
+const aspectLabel = computed(() =>
+  props.aspectRatio === 'contain'
+    ? $t('Fit')
+    : props.aspectRatio === 'cover' ? $t('Center') : $t('Stretch'))
 
 // ── Touch vs pointer detection (mirrors MpvPlayer's approach) ─────────
 const coarsePointer = useMediaQuery('(pointer: coarse)')
 const touch = computed(() => coarsePointer.value || isAndroid())
+const isLiveVariant = computed(() => props.variant === 'live')
+const friendlyErrorText = computed(() => friendlyPlaybackError(props.error))
+const timeLine = computed(() => {
+  if (isLiveVariant.value || !props.duration)
+    return ''
+  return `${fmtHudTime(props.position)} / ${fmtHudTime(props.duration)}`
+})
 const IDLE_MS = computed(() => touch.value ? 1500 : 2800)
 
 // ── Chrome visibility ──────────────────────────────────────────────────
@@ -141,17 +179,13 @@ const onBar = ref(false)
 
 /**
  * Pinned up while a real panel is open, the pointer is physically on the
- * bars themselves, or there is a full-screen error covering the player.
- *
- * Deliberately does NOT include `!playing` or `busy`: live backends often
- * report `paused=true` (the red Play icon) even while rendering a fresh
- * frame, and HLS live buffers every few seconds. Either would pin the HUD
- * visible permanently — which is exactly the bug. Hide-after-idle is the
- * whole point, and the user can always bring it back with a mouse move /
- * tap / keypress, so there is no such thing as "lost controls".
+ * bars themselves, there is a full-screen error, or the user is behind
+ * live and the jump control is up. Not `!playing` / `busy`: live backends
+ * lie about pause, and pinning on those left the HUD up for the whole
+ * channel.
  */
 const pinned = computed(() =>
-  showQuickZap.value || onBar.value || !!props.error)
+  showQuickZap.value || onBar.value || !!props.error || props.behindLive)
 
 /**
  * A DOM event said the user is here. Worth keeping alongside `chromeUp`: where
@@ -223,6 +257,13 @@ watch(
   (up, wasUp) => {
     if (up && !wasUp && !forceHidden.value)
       show()
+  },
+)
+
+watch(
+  () => props.behindLive,
+  () => {
+    show()
   },
 )
 
@@ -394,10 +435,12 @@ defineExpose({ show, hide, visible })
   <div
     class="pointer-events-none absolute inset-0 z-20 flex flex-col justify-between overflow-hidden font-sans select-none"
   >
-    <!-- TOP HEADER: channel identity. Opaque, because it sits in a hole. -->
+    <!-- TOP HEADER: identity only. One way out (Back), one name, one quiet
+         meta line. A second Close next to Hide duplicated Back and sat
+         under the window controls. -->
     <header
       data-cut
-      class="pointer-events-auto flex items-center justify-between px-8 py-5 transition-transform duration-300"
+      class="pointer-events-auto flex items-center gap-3 px-5 py-3 transition-transform duration-300 sm:px-6 sm:py-3.5"
       :class="[
         overlay ? 'hud-solid-top' : 'hud-blur-top',
         visible ? 'translate-y-0 opacity-100' : '-translate-y-full opacity-0',
@@ -405,89 +448,74 @@ defineExpose({ show, hide, visible })
       @mouseenter="onBar = true"
       @mouseleave="onBar = false"
     >
-      <!-- Left: Stream Meta Context -->
-      <div class="flex items-center gap-3.5">
-        <!-- Back Button -->
-        <button
-          type="button"
-          class="glass-icon-btn group"
-          :title="$t('Back')"
-          @click.stop="emit('back')"
-        >
-          <v-icon :icon="mdiArrowLeft" size="20" class="transition-transform group-hover:-translate-x-0.5" />
-        </button>
+      <button
+        type="button"
+        class="glass-icon-btn group shrink-0"
+        :title="$t('Back')"
+        :aria-label="$t('Back')"
+        @click.stop="emit('back')"
+      >
+        <v-icon :icon="mdiArrowLeft" size="20" class="transition-transform group-hover:-translate-x-0.5 group-focus-visible:-translate-x-0.5" />
+      </button>
 
-        <!-- Channel Logo -->
-        <div
-          v-if="channelLogo"
-          class="grid size-11 shrink-0 place-items-center overflow-hidden rounded-xl bg-white/10 p-1 border border-white/15"
-        >
-          <img :src="channelLogo" :alt="channelName" class="size-full object-contain">
-        </div>
+      <div
+        v-if="channelLogo"
+        class="grid size-10 shrink-0 place-items-center overflow-hidden rounded-lg bg-white/10"
+      >
+        <img :src="proxyLogo(channelLogo)" alt="" class="size-full object-contain">
+      </div>
 
-        <!-- Stream Info Stack -->
-        <div class="flex flex-col min-w-0">
-          <div class="flex items-center gap-2">
-            <!-- LIVE Pulse Badge -->
-            <div class="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-red-950 border border-red-500/50">
-              <span class="size-2 rounded-full bg-red-500 animate-pulse" />
-              <span class="text-[10px] font-extrabold tracking-wider text-red-400 uppercase">{{ $t('LIVE') }}</span>
-            </div>
-
-            <!-- Resolution / Quality Badge -->
-            <span
-              v-if="qualityBadge"
-              class="px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wide border"
-              :class="qualityBadge.includes('4K')
-                ? 'bg-amber-950 border-amber-500/50 text-amber-400'
-                : 'bg-white/10 border-white/10 text-gray-300'"
+      <div class="min-w-0 flex-1">
+        <h1 class="truncate text-title-medium font-semibold tracking-tight text-white">
+          {{ channelName }}
+        </h1>
+        <p class="mt-0.5 flex min-w-0 items-center gap-2 text-label-small text-white/55">
+          <template v-if="isLiveVariant">
+            <button
+              v-if="behindLive"
+              type="button"
+              class="live-jump inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-0.5 font-bold tracking-wide"
+              :title="$t('Go live')"
+              :aria-label="$t('Go live')"
+              tabindex="-1"
+              @click.stop="emit('goLive')"
             >
-              {{ qualityBadge }}
+              <span class="size-1.5 animate-pulse rounded-full bg-white" aria-hidden="true" />
+              {{ $t('LIVE') }}
+            </button>
+            <span
+              v-else
+              class="inline-flex shrink-0 items-center gap-1.5 font-semibold tracking-wide text-red-400"
+            >
+              <span class="size-1.5 rounded-full bg-red-500" aria-hidden="true" />
+              {{ $t('LIVE') }}
             </span>
-
-            <!-- Channel Number -->
-            <span v-if="channelTotal > 0" class="text-xs font-semibold text-gray-300 bg-white/10 px-2 py-0.5 rounded-md border border-white/10">
-              {{ channelIndex + 1 }}/{{ channelTotal }}
-            </span>
-          </div>
-
-          <!-- Channel Name -->
-          <h1 class="mt-1 text-lg font-bold text-white tracking-wide truncate">
-            {{ channelName }}
-          </h1>
-        </div>
+            <span v-if="qualityBadge" class="shrink-0 tabular-nums text-white/45">{{ qualityBadge }}</span>
+            <span v-if="channelTotal > 0" class="shrink-0 tabular-nums text-white/45">{{ channelIndex + 1 }}/{{ channelTotal }}</span>
+            <span v-if="nowPlaying" class="min-w-0 truncate text-white/55">{{ nowPlaying }}</span>
+          </template>
+          <span v-else-if="timeLine" class="shrink-0 font-mono tabular-nums text-white/70">{{ timeLine }}</span>
+        </p>
       </div>
 
-      <!-- Right: Quick Action Controls -->
-      <div class="flex items-center gap-2.5">
-        <!-- Manual Hide: eye-off — one-click instant HUD dismiss. -->
-        <button
-          type="button"
-          class="glass-icon-btn"
-          :title="$t('Hide controls')"
-          aria-label="$t('Hide controls')"
-          @click.stop="hide"
-        >
-          <v-icon :icon="mdiEyeOffOutline" size="20" />
-        </button>
-        <!-- Close / Exit Button -->
-        <button
-          type="button"
-          class="glass-icon-btn hover:bg-red-600/80 hover:border-red-500 focus-visible:bg-red-600/80 focus-visible:border-red-500"
-          :title="$t('Close')"
-          @click.stop="emit('back')"
-        >
-          <v-icon :icon="mdiClose" size="20" />
-        </button>
-      </div>
+      <button
+        type="button"
+        class="glass-icon-btn shrink-0"
+        :title="$t('Hide controls')"
+        :aria-label="$t('Hide controls')"
+        @click.stop="hide"
+      >
+        <v-icon :icon="mdiEyeOffOutline" size="20" />
+      </button>
     </header>
 
     <!-- Centre: tap to pause, where the page gets the tap at all. Deliberately
          *not* `data-cut`: it spans the whole picture, and a hole that size
          subtracts every pixel mpv paints. -->
     <div
-      class="pointer-events-auto flex-1 grid place-items-center cursor-pointer"
-      @click="triggerCenterPlayPulse"
+      class="flex-1 grid place-items-center"
+      :class="isLiveVariant ? 'pointer-events-auto cursor-pointer' : 'pointer-events-none'"
+      @click="isLiveVariant ? triggerCenterPlayPulse() : undefined"
       @touchstart.passive="show"
     >
       <transition
@@ -520,40 +548,40 @@ defineExpose({ show, hide, visible })
         class="pointer-events-auto absolute inset-0 z-30 grid place-items-center p-6"
         :class="overlay ? 'bg-black' : 'bg-black/85 backdrop-blur-xl'"
       >
-        <div class="flex flex-col items-center text-center max-w-md p-6 rounded-2xl bg-[#0F1117] border border-white/10 shadow-2xl space-y-4">
-          <div class="size-14 rounded-full bg-red-950 border border-red-500/40 text-red-500 grid place-items-center">
+        <div class="flex max-w-md flex-col items-center space-y-4 p-6 text-center">
+          <div class="grid size-14 place-items-center rounded-full bg-red-950 text-red-400">
             <v-icon :icon="mdiAlertCircleOutline" size="32" />
           </div>
 
           <div class="space-y-1">
-            <h2 class="text-base font-bold text-white tracking-wide uppercase">
+            <h2 class="text-title-small font-semibold text-white">
               {{ $t('Playback Error') }}
             </h2>
-            <p class="text-xs text-gray-300 leading-relaxed">
-              {{ error }}
+            <p class="text-body-small leading-relaxed text-white/70">
+              {{ friendlyErrorText }}
             </p>
           </div>
 
-          <div class="flex items-center gap-3 pt-2">
+          <div class="flex flex-wrap items-center justify-center gap-2 pt-1">
             <button
               type="button"
-              class="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 focus-visible:bg-red-500 text-white text-xs font-bold transition-colors shadow-md flex items-center gap-1.5"
+              class="inline-flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2.5 text-body-small font-semibold text-on-primary transition-colors hover:brightness-110 focus-visible:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
               @click.stop="emit('retry')"
             >
-              <v-icon :icon="mdiReload" size="14" />
+              <v-icon :icon="mdiReload" size="16" />
               <span>{{ $t('Retry') }}</span>
             </button>
             <button
-              v-if="hasNext"
+              v-if="hasNext && isLiveVariant"
               type="button"
-              class="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 focus-visible:bg-white/20 text-white text-xs font-semibold transition-colors border border-white/10"
+              class="rounded-xl bg-white/10 px-4 py-2.5 text-body-small font-semibold text-white transition-colors hover:bg-white/16 focus-visible:bg-white/16 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
               @click.stop="emit('next')"
             >
               {{ $t('Next channel') }}
             </button>
             <button
               type="button"
-              class="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 focus-visible:bg-white/10 text-gray-300 text-xs font-semibold transition-colors border border-white/5"
+              class="rounded-xl bg-white/10 px-4 py-2.5 text-body-small font-semibold text-white/80 transition-colors hover:bg-white/16 hover:text-white focus-visible:bg-white/16 focus-visible:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
               @click.stop="emit('back')"
             >
               {{ $t('Back') }}
@@ -579,15 +607,12 @@ defineExpose({ show, hide, visible })
         :class="overlay ? 'bg-[#0F1117]' : 'bg-[#0F1117]/92 backdrop-blur-2xl'"
       >
         <!-- Header -->
-        <div class="flex items-center justify-between pb-3 border-b border-white/10">
-          <div class="flex items-center gap-2">
-            <v-icon :icon="mdiFormatListBulleted" size="20" class="text-red-500" />
-            <h2 class="text-sm font-bold text-white tracking-wide uppercase">
-              {{ $t('Channels') }}
-            </h2>
-          </div>
-          <button type="button" class="glass-icon-btn size-7" :title="$t('Close')" @click="showQuickZap = false">
-            <v-icon :icon="mdiClose" size="14" />
+        <div class="flex items-center justify-between border-b border-white/10 pb-3">
+          <h2 class="text-title-small font-semibold text-white">
+            {{ $t('Channels') }}
+          </h2>
+          <button type="button" class="glass-icon-btn !size-8" :title="$t('Close')" :aria-label="$t('Close')" @click="showQuickZap = false">
+            <v-icon :icon="mdiClose" size="16" />
           </button>
         </div>
 
@@ -618,7 +643,7 @@ defineExpose({ show, hide, visible })
               {{ ch.originalIndex + 1 }}
             </span>
             <div v-if="ch.logoUrl" class="size-8 shrink-0 rounded-lg bg-black/40 border border-white/10 p-0.5 overflow-hidden grid place-items-center">
-              <img :src="ch.logoUrl" :alt="ch.name" class="size-full object-contain">
+              <img :src="proxyLogo(ch.logoUrl)" :alt="ch.name" class="size-full object-contain">
             </div>
             <div class="min-w-0 flex-1">
               <span class="block text-xs font-semibold truncate">{{ ch.name }}</span>
@@ -629,12 +654,11 @@ defineExpose({ show, hide, visible })
       </div>
     </transition>
 
-    <!-- BOTTOM CONTROL BAR. Opaque under an overlay player, same as the header.
-         No scrubber: a live window has nothing to seek over, and the playlists
-         carry no EPG to draw a programme against. -->
+    <!-- BOTTOM CONTROL BAR — live channels only. VOD uses MpvPlayer's seek bar. -->
     <footer
+      v-if="isLiveVariant"
       data-cut
-      class="pointer-events-auto px-8 pb-7 pt-12 transition-transform duration-300 flex flex-col gap-4"
+      class="pointer-events-auto px-5 pb-5 pt-8 transition-transform duration-300 sm:px-6 sm:pb-6"
       :class="[
         overlay ? 'hud-solid-bottom' : 'hud-blur-bottom',
         visible ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0',
@@ -642,85 +666,96 @@ defineExpose({ show, hide, visible })
       @mouseenter="onBar = true"
       @mouseleave="onBar = false"
     >
-      <!-- MAIN MEDIA CONTROL DOCK -->
-      <div class="flex items-center justify-between">
-        <!-- Left Group: Playback & Zapping Navigation -->
-        <div class="flex items-center gap-3">
-          <!-- Large Accent Play/Pause Glass Button -->
-          <button
-            type="button"
-            class="size-12 rounded-full bg-red-600 hover:bg-red-500 focus-visible:bg-red-500 text-white grid place-items-center transition-[transform,background-color] transform hover:scale-105 focus-visible:scale-105 active:scale-95"
-            :title="playing ? $t('Pause') : $t('Play')"
-            @click.stop="emit('togglePlay')"
-          >
-            <v-icon :icon="playing ? mdiPause : mdiPlay" size="26" />
-          </button>
-
-          <!-- Channel Zapping: Prev -->
+      <div class="flex items-center justify-between gap-4">
+        <div class="flex items-center gap-2" data-dpad-start>
           <button
             type="button"
             class="glass-icon-btn"
             :disabled="!hasPrev"
             :title="$t('Previous channel')"
+            :aria-label="$t('Previous channel')"
             @click.stop="emit('prev')"
           >
             <v-icon :icon="mdiSkipPrevious" size="22" />
           </button>
 
-          <!-- Channel Zapping: Next -->
+          <button
+            type="button"
+            class="grid size-12 shrink-0 place-items-center rounded-full bg-primary text-on-primary transition-colors hover:brightness-110 focus-visible:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+            :title="playing ? $t('Pause') : $t('Play')"
+            :aria-label="playing ? $t('Pause') : $t('Play')"
+            @click.stop="emit('togglePlay')"
+          >
+            <v-icon :icon="playing ? mdiPause : mdiPlay" size="26" />
+          </button>
+
           <button
             type="button"
             class="glass-icon-btn"
             :disabled="!hasNext"
             :title="$t('Next channel')"
+            :aria-label="$t('Next channel')"
             @click.stop="emit('next')"
           >
             <v-icon :icon="mdiSkipNext" size="22" />
           </button>
 
-          <!-- The one piece of live state there is: is it filling the cache? -->
-          <span v-if="busy" class="ml-2 text-xs font-medium text-gray-300">
+          <button
+            v-if="behindLive"
+            type="button"
+            class="live-jump inline-flex h-12 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-label-medium font-bold tracking-wide"
+            :title="$t('Go live')"
+            :aria-label="$t('Go live')"
+            @click.stop="emit('goLive')"
+          >
+            <span class="size-2 animate-pulse rounded-full bg-white" aria-hidden="true" />
+            {{ $t('LIVE') }}
+          </button>
+
+          <span v-if="busy" class="ms-1 text-label-small font-medium text-white/50">
             {{ $t('Buffering…') }}
           </span>
         </div>
 
-        <!-- Right Group: Volume & Utility Overlays -->
-        <div class="flex items-center gap-3">
-          <!-- Dynamic Expandable Volume Module -->
-          <div class="flex items-center gap-2.5">
+        <div class="flex items-center gap-1.5 sm:gap-2">
+          <div class="flex items-center gap-1.5">
             <button
               type="button"
               class="glass-icon-btn"
               :title="muted ? $t('Unmute') : $t('Mute')"
+              :aria-label="muted ? $t('Unmute') : $t('Mute')"
               @click.stop="emit('toggleMute')"
             >
               <v-icon :icon="volumeIcon()" size="20" />
             </button>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              :value="muted ? 0 : volume"
-              class="custom-slider w-24 cursor-pointer"
-              @input="onVolumeInput"
-            >
-            <span class="text-xs font-mono text-gray-300 w-6 text-right tabular-nums font-semibold">
-              {{ muted ? 0 : volume }}
-            </span>
+            <template v-if="!touch">
+              <input
+                type="range"
+                min="0"
+                max="100"
+                :value="muted ? 0 : volume"
+                class="custom-slider w-20 cursor-pointer sm:w-24"
+                @input="onVolumeInput"
+              >
+              <span class="w-7 text-end font-mono text-label-small tabular-nums text-white/50">
+                {{ muted ? 0 : volume }}
+              </span>
+            </template>
           </div>
 
-          <!-- QuickZap Drawer Toggle -->
+          <span class="mx-1 hidden h-5 w-px bg-white/12 sm:block" aria-hidden="true" />
+
           <button
             type="button"
             class="glass-icon-btn"
-            :class="{ 'bg-red-600/30 border-red-500/50 text-white': showQuickZap }"
+            :class="{ 'border-primary/50 bg-primary/25 text-white': showQuickZap }"
             :title="$t('Channels')"
+            :aria-label="$t('Channels')"
             @click.stop="showQuickZap = !showQuickZap"
           >
             <v-icon :icon="mdiFormatListBulleted" size="20" />
           </button>
 
-          <!-- Quality Picker (only when variants exist) -->
           <button
             v-if="hasQualityVariants"
             type="button"
@@ -732,22 +767,32 @@ defineExpose({ show, hide, visible })
             <v-icon :icon="mdiMonitor" size="20" />
           </button>
 
-          <!-- Favorite Star Toggle -->
           <button
             type="button"
             class="glass-icon-btn"
             :class="{ 'text-amber-400': isFavorite }"
             :title="isFavorite ? $t('Remove from favourites') : $t('Add to favourites')"
+            :aria-label="isFavorite ? $t('Remove from favourites') : $t('Add to favourites')"
             @click.stop="emit('toggleFavorite')"
           >
             <v-icon :icon="isFavorite ? mdiStar : mdiStarOutline" size="20" />
           </button>
 
-          <!-- Fullscreen Toggle -->
+          <button
+            type="button"
+            class="glass-icon-btn"
+            :title="aspectLabel"
+            :aria-label="aspectLabel"
+            @click.stop="emit('cycleAspectRatio')"
+          >
+            <v-icon :icon="mdiCropFree" size="20" />
+          </button>
+
           <button
             type="button"
             class="glass-icon-btn"
             :title="isFullscreen ? $t('Exit Fullscreen') : $t('Fullscreen')"
+            :aria-label="isFullscreen ? $t('Exit Fullscreen') : $t('Fullscreen')"
             @click.stop="emit('toggleFullscreen')"
           >
             <v-icon :icon="isFullscreen ? mdiFullscreenExit : mdiFullscreen" size="20" />
@@ -800,11 +845,9 @@ defineExpose({ show, hide, visible })
 /* A remote has no hover, so focus has to say the same thing. */
 .glass-icon-btn:hover,
 .glass-icon-btn:focus-visible {
-  background: rgba(255, 255, 255, 0.18);
-  border-color: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.22);
   color: #ffffff;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
 }
 
 .glass-icon-btn:focus-visible {
@@ -819,6 +862,22 @@ defineExpose({ show, hide, visible })
 .glass-icon-btn:disabled {
   opacity: 0.35;
   pointer-events: none;
+}
+
+.live-jump {
+  background: #dc2626;
+  color: #fff;
+  cursor: pointer;
+}
+
+.live-jump:hover,
+.live-jump:focus-visible {
+  background: #ef4444;
+}
+
+.live-jump:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
 }
 
 /* Custom Volume Slider Styling */

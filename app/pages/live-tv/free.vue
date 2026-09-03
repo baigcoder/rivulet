@@ -17,16 +17,14 @@
  * shape `liveTv.categories` already has, and `LiveView` is the same four
  * names as `PremiumView`.
  *
- * The one thing Premium does not need: a *free* playlist is a list of
- * other people's servers, so a third of it is dead on any given day.
- * `liveTv.probeIds` rides the grid's existing visible-batch hook to dim
- * what will not open, and `watch.vue` zaps past it. See
- * `app/utils/livehealth.ts`.
+ * A free playlist is other people's servers, so some of it is dead.
+ * The browse grid does not probe them — that froze the page. The
+ * player marks a channel offline when it fails and zaps past it.
  */
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import type { LiveView } from '~/stores/liveTv'
 import type { LiveChannel } from '~/utils/iptv'
-import { mdiClose, mdiDeleteSweepOutline, mdiMagnify, mdiRefresh, mdiTelevisionOff, mdiTune } from '@mdi/js'
+import { mdiClose, mdiDeleteSweepOutline, mdiTelevisionOff } from '@mdi/js'
 import { listen } from '@tauri-apps/api/event'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
@@ -37,8 +35,22 @@ const route = useRoute()
 const router = useRouter()
 const { mdAndUp, lgAndUp } = useDisplay()
 
-/** `free.vue` is the parent route of `free/country|category|guide`. */
-const isNestedRoute = computed(() => /\/live-tv\/free\/(?:country|category|guide)/.test(route.path))
+/** Category from `/free/category/:category` or `?category=`. The parent
+ *  route's `params` is a union of every nested page, so `params.category`
+ *  is not always a field. A computed, not a helper called from `watch`:
+ *  WebKitGTK throws "Can't find variable" when setup looks up a function
+ *  binding that the compiler has not assigned yet. */
+const liveCategory = computed(() => {
+  const param = (route.params as Record<string, unknown>).category
+  if (typeof param === 'string' && param)
+    return decodeURIComponent(param)
+  const query = route.query.category
+  return typeof query === 'string' ? query : ''
+})
+
+/** `free.vue` is the parent route of `free/country|guide`. Category
+ *  deep-links stay on this shell — same as Premium's category route. */
+const isNestedRoute = computed(() => /\/live-tv\/free\/(?:country|guide)/.test(route.path))
 
 const railPinned = computed(() => lgAndUp.value)
 const sheetOpen = ref(false)
@@ -64,19 +76,28 @@ const heading = computed(() => {
     case 'recent':
       return $t('Recently watched')
     case 'category':
-      return liveTv.selectedCategory || $t('All channels')
+      return categoryLabel(liveTv.selectedCategory) || $t('All channels')
     default:
       return $t('All channels')
   }
 })
 
-/** Amber is the state a viewer can act on: the list is still importing. */
+/** Primary when the list is usable; tertiary while it is still arriving. */
 const status = computed(() => {
   if (liveTv.m3uImporting)
-    return { tone: 'bg-amber-400', label: $t('Importing the channel list…') }
+    return { tone: 'bg-tertiary', label: $t('Importing the channel list…') }
   if (liveTv.totalChannels === 0)
-    return { tone: 'bg-white/25', label: $t('No channels found') }
-  return { tone: 'bg-emerald-400', label: $t('Ready') }
+    return { tone: 'bg-outline', label: $t('No channels found') }
+  return { tone: 'bg-primary', label: $t('Ready') }
+})
+
+/** Favorites strip on All only — Recent has its own sidebar section. */
+const resumeStrip = computed(() => {
+  if (liveTv.view !== 'all' || liveTv.searchQuery)
+    return null
+  if (liveTv.favoriteChannels.length)
+    return { title: $t('Favorites'), channels: liveTv.favoriteChannels }
+  return null
 })
 
 const showEmpty = computed(() =>
@@ -95,13 +116,8 @@ const emptyMessage = computed(() => {
   return $t('Nothing in the playlist matches that filter.')
 })
 
-/**
- * EPG and the health probe ride the same hook: the grid hands over the
- * ids it just scrolled into view, debounced, capped at twenty.
- */
-function loadForVisible(ids: string[]): void {
-  void liveTv.loadEpgBatch(ids)
-  void liveTv.probeIds(ids)
+function goHub(): void {
+  void router.replace(localePath('/live-tv'))
 }
 
 function pickView(view: LiveView): void {
@@ -119,15 +135,13 @@ function playChannel(ch: LiveChannel): void {
   // URL would navigate to a blank player.
   if (!ch.streamUrl || ch.streamUrl === 'undefined' || ch.streamUrl === 'null')
     return
-  if (!liveTv.activeSourceId)
-    return
   liveTv.rememberChannel(ch.id)
   // The zap list is what is on screen: up/down on the player walks the
-  // same order the viewer was just reading. Capped because it travels as
-  // a query parameter.
+  // same order the viewer was just reading. It lives on the store so a
+  // zap is a small query change, not a 60-channel JSON rewrite.
   const zapList = channels.value
     .filter(c => c.streamUrl && c.streamUrl !== 'undefined' && c.streamUrl !== 'null')
-    .slice(0, 60)
+    .slice(0, 200)
     .map(c => ({
       id: c.id,
       name: c.name,
@@ -136,16 +150,27 @@ function playChannel(ch: LiveChannel): void {
       userAgent: c.userAgent,
       referer: c.referer,
     }))
+  liveTv.setZapList(zapList)
+  saveLivePlay({
+    id: ch.id,
+    title: ch.name,
+    logo: ch.logoUrl ?? '',
+    sourceId: liveTv.activeSourceId || 'free:iptv-org',
+    streamUrl: ch.streamUrl,
+    userAgent: ch.userAgent,
+    referer: ch.referer,
+    zapList,
+  })
+  // Identity only — the stream URL stays on the zap list. Putting it in
+  // the query broke on `&` in the path and blew the address bar up.
   void router.push({
     path: localePath('/live-tv/watch'),
     query: {
-      url: ch.streamUrl,
+      id: ch.id,
       title: ch.name,
       logo: ch.logoUrl ?? '',
-      id: ch.id,
       type: 'live',
-      sourceId: liveTv.activeSourceId,
-      list: encodeURIComponent(JSON.stringify(zapList)),
+      sourceId: liveTv.activeSourceId || 'free:iptv-org',
       from: route.fullPath,
     },
   })
@@ -185,7 +210,7 @@ onMounted(async () => {
   // Free TV must never inherit the premium source: the two entry points
   // are separate libraries, not two views of one list.
   await liveTv.useFreeSource()
-  const category = typeof route.query.category === 'string' ? route.query.category : ''
+  const category = liveCategory.value
   if (category)
     liveTv.setCategory(category)
   await Promise.all([
@@ -197,14 +222,25 @@ onMounted(async () => {
   // the event above is the only thing that will say when it does.
   if (liveTv.totalChannels === 0)
     liveTv.m3uImporting = true
+  window.addEventListener('keydown', onKey)
 })
 
-onUnmounted(() => unlisten?.())
+function onKey(e: KeyboardEvent) {
+  if (e.key === 'Escape' && sheetOpen.value) {
+    e.preventDefault()
+    sheetOpen.value = false
+  }
+}
 
-// Post-mount URL changes only (browser back/forward into a ?category=).
-watch(() => route.query.category, category => {
-  if (typeof category === 'string' && category && category !== liveTv.selectedCategory)
-    liveTv.setCategory(category)
+onUnmounted(() => {
+  unlisten?.()
+  window.removeEventListener('keydown', onKey)
+})
+
+// Post-mount URL changes only (browser back/forward into a category).
+watch(liveCategory, name => {
+  if (name && name !== liveTv.selectedCategory)
+    liveTv.setCategory(name)
 })
 </script>
 
@@ -212,112 +248,67 @@ watch(() => route.query.category, category => {
   <nuxt-page v-if="isNestedRoute" />
 
   <div v-else class="flex h-full min-h-0 flex-col gap-3 px-4 py-4 md:px-6">
-    <header class="flex flex-wrap items-center gap-x-3 gap-y-2">
-      <div class="flex min-w-0 items-baseline gap-2">
-        <h1 class="truncate text-title-medium font-bold">
-          {{ heading }}
-        </h1>
-        <span class="shrink-0 text-label-small tabular-nums opacity-45">
-          {{ $t('{count} channels', { count: count.toLocaleString() }) }}
-        </span>
-        <v-btn
-          v-if="liveTv.view === 'recent' && liveTv.recentChannels.length"
-          :icon="mdiDeleteSweepOutline"
-          variant="text"
-          size="small"
-          class="shrink-0"
-          :aria-label="$t('Clear recently watched')"
-          :title="$t('Clear recently watched')"
-          @click="liveTv.clearRecent()"
-        />
-        <v-btn
-          v-if="liveTv.view === 'category' || liveTv.searchQuery"
-          :icon="mdiClose"
-          variant="text"
-          size="x-small"
-          class="shrink-0"
-          :aria-label="$t('Clear filters')"
-          @click="liveTv.clearFilters()"
-        />
-      </div>
-
-      <div class="order-last w-full min-w-0 sm:order-none sm:ms-auto sm:w-64 md:w-72">
-        <v-text-field
-          v-model="liveTv.searchQuery"
-          :label="$t('Search channels')"
-          :prepend-inner-icon="mdiMagnify"
-          density="compact"
-          variant="outlined"
-          hide-details
-          clearable
-          autocomplete="off"
-        />
-      </div>
-
-      <div class="flex items-center gap-1.5">
-        <span
-          class="size-2 shrink-0 rounded-full"
-          :class="status.tone"
-          role="img"
-          :aria-label="status.label"
-          :title="status.label"
-        />
-        <span class="hidden max-w-40 truncate text-label-small opacity-55 lg:inline">
-          {{ $t('Free TV') }}
-        </span>
-        <span v-if="liveTv.offlineIds.size" class="hidden text-label-small opacity-35 xl:inline">
-          · {{ $t('{count} offline', { count: liveTv.offlineIds.size }) }}
-        </span>
-
-        <v-btn
-          :icon="mdiRefresh"
-          variant="text"
-          size="small"
-          :loading="liveTv.refreshing"
-          :aria-label="$t('Refresh')"
-          :title="$t('Refresh')"
-          @click="liveTv.refreshFreeTv()"
-        />
-        <v-btn
-          v-if="!railPinned"
-          :icon="mdiTune"
-          variant="text"
-          size="small"
-          :aria-label="$t('Categories')"
-          :title="$t('Categories')"
-          @click="sheetOpen = true"
-        />
-      </div>
-    </header>
-
-    <!-- Phone: the three fixed views as chips, so the common hop is one tap. -->
-    <div v-if="!railPinned" class="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+    <live-tv-live-browse-header
+      v-model:search="liveTv.searchQuery"
+      :heading="heading"
+      :count="count"
+      :status-tone="status.tone"
+      :status-label="status.label"
+      :status-text="$t('Free TV')"
+      :status-meta="liveTv.offlineIds.size ? $t('{count} offline', { count: liveTv.offlineIds.size }) : undefined"
+      :show-clear="liveTv.view === 'category' || !!liveTv.searchQuery"
+      :refreshing="liveTv.refreshing"
+      :show-tune="!railPinned"
+      @back="goHub"
+      @clear="liveTv.clearFilters()"
+      @refresh="liveTv.refreshFreeTv()"
+      @tune="sheetOpen = true"
+    >
       <button
-        v-for="v in (['all', 'favorites', 'recent'] as const)"
-        :key="v"
+        v-if="liveTv.view === 'recent' && liveTv.recentChannels.length"
         type="button"
-        class="shrink-0 rounded-full px-3 py-1.5 text-label-medium font-medium ring-1 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-        :class="liveTv.view === v
-          ? 'bg-primary text-on-primary ring-primary'
-          : 'bg-surface-container-high text-white/70 ring-white/10 hover:text-white'"
-        :aria-current="liveTv.view === v ? 'true' : undefined"
-        @click="pickView(v)"
+        class="grid size-11 shrink-0 place-items-center rounded-lg text-on-surface/70 transition-colors hover:bg-surface-container-highest hover:text-on-surface focus-visible:bg-surface-container-highest focus-visible:text-on-surface"
+        :aria-label="$t('Clear recently watched')"
+        @click="liveTv.clearRecent()"
       >
-        {{ v === 'all' ? $t('All channels') : v === 'favorites' ? $t('Favorites') : $t('Recently watched') }}
+        <v-icon :icon="mdiDeleteSweepOutline" size="22" />
       </button>
-      <button
-        v-if="liveTv.view === 'category' && liveTv.selectedCategory"
-        type="button"
-        class="shrink-0 rounded-full bg-primary px-3 py-1.5 text-label-medium font-medium text-on-primary ring-1 ring-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-        @click="liveTv.clearFilters()"
-      >
-        {{ liveTv.selectedCategory }}
-        <v-icon :icon="mdiClose" size="14" class="ms-1" />
-      </button>
-    </div>
+
+      <template v-if="!railPinned" #below>
+        <div
+          class="-mx-1 flex gap-1 overflow-x-auto border-t border-outline/10 px-1 pt-2"
+          role="tablist"
+          :aria-label="$t('Browse')"
+        >
+          <button
+            v-for="v in (['all', 'favorites', 'recent'] as const)"
+            :key="v"
+            type="button"
+            role="tab"
+            class="min-h-9 shrink-0 rounded-lg px-3 py-1.5 text-label-medium font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            :class="liveTv.view === v
+              ? 'bg-primary text-on-primary'
+              : 'text-on-surface/70 hover:bg-surface-container-high hover:text-on-surface focus-visible:bg-surface-container-high focus-visible:text-on-surface'"
+            :aria-selected="liveTv.view === v ? 'true' : 'false'"
+            @click="pickView(v)"
+          >
+            {{ v === 'all' ? $t('All channels') : v === 'favorites' ? $t('Favorites') : $t('Recently watched') }}
+          </button>
+          <button
+            v-if="liveTv.view === 'category' && liveTv.selectedCategory"
+            type="button"
+            class="shrink-0 rounded-full bg-primary px-3 py-1.5 text-label-medium font-medium text-on-primary ring-1 ring-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            @click="liveTv.clearFilters()"
+          >
+            {{ categoryLabel(liveTv.selectedCategory) }}
+            <v-icon :icon="mdiClose" size="14" class="ms-1" />
+          </button>
+        </div>
+      </template>
+    </live-tv-live-browse-header>
 
     <div class="flex min-h-0 flex-1 gap-4">
-      <aside v-if="railPinned" class="w-52 shrink-0 xl:w-56">
+      <aside v-if="railPinned" class="w-56 shrink-0 xl:w-60">
         <premium-tv-premium-sidebar
           :view="liveTv.view"
           :selected-category="liveTv.selectedCategory"
@@ -355,7 +346,7 @@ watch(() => route.query.category, category => {
           <div
             v-for="n in 24"
             :key="n"
-            class="h-[132px] animate-pulse rounded-xl bg-surface-container-high/60"
+            class="h-[176px] animate-pulse rounded-lg bg-surface-container-high/60"
           />
         </div>
 
@@ -381,52 +372,56 @@ watch(() => route.query.category, category => {
           </div>
         </div>
 
-        <live-tv-live-channel-grid
-          v-else
-          :channels="channels"
-          :get-epg="liveTv.getEpg"
-          :is-favorite="liveTv.isFavorite"
-          :is-offline="liveTv.isOffline"
-          :density="density"
-          :load-epg="loadForVisible"
-          :has-more="hasMore"
-          :loading="liveTv.visibleLoading"
-          @load-more="liveTv.loadMore()"
-          @play="playChannel"
-          @toggle-favorite="liveTv.toggleFavorite($event)"
-        />
+        <template v-else>
+          <live-tv-live-channel-scroll-row
+            v-if="resumeStrip"
+            class="shrink-0"
+            :title="resumeStrip.title"
+            :channels="resumeStrip.channels"
+            :get-epg="liveTv.getEpg"
+            :is-favorite="liveTv.isFavorite"
+            :is-offline="liveTv.isOffline"
+            @play="playChannel"
+            @toggle-favorite="liveTv.toggleFavorite($event)"
+          />
+          <live-tv-live-channel-grid
+            class="min-h-0 flex-1"
+            :channels="channels"
+            :get-epg="liveTv.getEpg"
+            :is-favorite="liveTv.isFavorite"
+            :is-offline="liveTv.isOffline"
+            :density="density"
+            :has-more="hasMore"
+            :loading="liveTv.visibleLoading"
+            @load-more="liveTv.loadMore()"
+            @play="playChannel"
+            @toggle-favorite="liveTv.toggleFavorite($event)"
+          />
+        </template>
       </section>
     </div>
 
-    <teleport to="body">
-      <transition name="fade">
-        <div
-          v-if="sheetOpen"
-          class="fixed inset-0 z-50 flex items-end justify-end bg-black/50 md:items-stretch"
-          @click.self="sheetOpen = false"
-        >
-          <div class="flex max-h-[80vh] w-full flex-col gap-3 rounded-t-2xl bg-surface-container p-4 md:h-full md:max-h-none md:w-80 md:rounded-none">
-            <div class="flex items-center justify-between">
-              <h2 class="text-title-large font-bold">
-                {{ $t('Categories') }}
-              </h2>
-              <v-btn :icon="mdiClose" variant="text" size="small" :aria-label="$t('Close')" @click="sheetOpen = false" />
-            </div>
-            <div class="min-h-0 flex-1">
-              <premium-tv-premium-sidebar
-                :view="liveTv.view"
-                :selected-category="liveTv.selectedCategory"
-                :categories="liveTv.categories"
-                :total-channels="liveTv.totalChannels"
-                :favorite-count="liveTv.favKeys.size"
-                :recent-count="liveTv.recentChannels.length"
-                @set-view="pickView"
-                @set-category="pickCategory"
-              />
-            </div>
-          </div>
+    <v-dialog v-model="sheetOpen" max-width="320" scrollable>
+      <v-card class="bg-surface-container">
+        <div class="flex items-center justify-between px-4 pt-4">
+          <h2 class="text-title-large font-bold">
+            {{ $t('Categories') }}
+          </h2>
+          <v-btn :icon="mdiClose" variant="text" size="small" :aria-label="$t('Close')" @click="sheetOpen = false" />
         </div>
-      </transition>
-    </teleport>
+        <v-card-text class="flex min-h-0 flex-1 flex-col !pt-2" style="height: min(80vh, 640px)">
+          <premium-tv-premium-sidebar
+            :view="liveTv.view"
+            :selected-category="liveTv.selectedCategory"
+            :categories="liveTv.categories"
+            :total-channels="liveTv.totalChannels"
+            :favorite-count="liveTv.favKeys.size"
+            :recent-count="liveTv.recentChannels.length"
+            @set-view="pickView"
+            @set-category="pickCategory"
+          />
+        </v-card-text>
+      </v-card>
+    </v-dialog>
   </div>
 </template>

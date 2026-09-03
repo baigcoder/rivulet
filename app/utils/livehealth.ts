@@ -5,11 +5,10 @@
  * looked, so some fraction of it is dead at any moment and no amount of
  * curation changes that. Two mitigations, both deliberately lazy:
  *
- * - **Probe what is on screen.** The grid already tells the store which
- *   channels are visible (it batches EPG the same way), so the probe rides
- *   that hook. Probing a 2,000-channel playlist up front would be two
- *   thousand requests to two thousand strangers' servers for a screen that
- *   shows twelve.
+ * - **Do not probe the browse grid.** Opening twenty strangers' streams
+ *   while someone scrolls saturates the local proxy and freezes the page
+ *   — Back stops answering. The player marks a channel dead when it
+ *   fails to open, and that is enough.
  * - **Zap past a failure.** A channel that will not open is one the player
  *   should leave, not one the viewer should stare at. `nextPlayable` picks
  *   the next channel that is not already known-dead, and `MAX_AUTO_SKIPS`

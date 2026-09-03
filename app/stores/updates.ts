@@ -1,6 +1,7 @@
 import type { Update } from '~/utils/updates'
 import { invoke } from '@tauri-apps/api/core'
 import { key } from '~/brand'
+import { androidDismissUpdateNotification, androidDownloadUpdate, androidGetUpdateProgress, androidInstallUpdate, androidNotifyUpdate, isAndroid } from '~/utils/platform'
 
 /**
  * Whether a newer Rivulet exists, and what this particular install can do with
@@ -53,20 +54,93 @@ export const useUpdatesStore = defineStore('updates', () => {
     capable.value = await invoke<boolean>('can_self_update').catch(() => false)
     release.value = await latestUpdate()
     status.value = 'idle'
+
+    // On Android: notify the user when a new version is found (once per version).
+    if (isAndroid() && available.value && !dismissed.value) {
+      androidNotifyUpdate(available.value.version)
+    }
+  }
+
+  /**
+   * Re-check periodically while the app is open (every 6 hours).
+   * Only runs on Android where `can_self_update` is false but we still
+   * want to notify the user.
+   */
+  let recheckTimer: ReturnType<typeof setInterval> | null = null
+  function startRecheckTimer() {
+    if (recheckTimer)
+      return
+    const SIX_HOURS = 6 * 60 * 60 * 1000
+    recheckTimer = setInterval(() => {
+      if (!isAndroid())
+        return
+      check()
+    }, SIX_HOURS)
   }
 
   /**
    * Download the new bundle and hand it to the platform's installer.
    *
-   * This is the updater plugin's own `check()`, not the release we already
-   * found: it reads the signed `latest.json` and carries the signature the
-   * install is verified against, which the GitHub API never sees. The two can
-   * disagree — a release whose manifest is missing this platform is a real
-   * possibility — so a null there is reported rather than swallowed, and the
-   * panel falls back to the download link.
+   * On desktop this is the updater plugin's own `check()`, not the release we
+   * already found: it reads the signed `latest.json` and carries the signature
+   * the install is verified against. On Android it is a direct APK download
+   * via DownloadManager.
    */
   async function install() {
-    if (!capable.value || !available.value)
+    if (!available.value)
+      return
+
+    // ── Android: direct APK download + system install ────────────────
+    if (isAndroid()) {
+      const apkUrl = available.value.apk || available.value.url
+      if (!apkUrl) {
+        status.value = 'failed'
+        error.value = $t('No downloadable APK found for this release.')
+        return
+      }
+      status.value = 'downloading'
+      progress.value = 0
+      error.value = ''
+      try {
+        androidDismissUpdateNotification()
+        const downloadId = androidDownloadUpdate(apkUrl)
+        if (downloadId <= 0)
+          throw new Error($t('Failed to start the download.'))
+
+        // Poll until done or failed.
+        await new Promise<void>((resolve, reject) => {
+          const poll = setInterval(() => {
+            const snap = androidGetUpdateProgress()
+            if (!snap)
+              return
+            if (snap.total > 0)
+              progress.value = snap.bytes / snap.total
+            if (snap.done) {
+              clearInterval(poll)
+              progress.value = 1
+              status.value = 'ready'
+              resolve()
+            }
+          }, 500)
+          // Safety timeout: 10 minutes — an APK is ~100 MB and a slow
+          // connection may need a few minutes; the 5-minute default was
+          // too tight when the OS needs a moment to transition from
+          // STATUS_RUNNING to STATUS_SUCCESSFUL after the last byte.
+          setTimeout(() => {
+            clearInterval(poll)
+            reject(new Error($t('Download timed out.')))
+          }, 10 * 60 * 1000)
+        })
+      }
+      catch (e) {
+        status.value = 'failed'
+        error.value = e instanceof Error ? e.message : String(e)
+      }
+      return
+    }
+
+    // ── Desktop: updater plugin ──────────────────────────────────────
+    if (!capable.value)
       return
     status.value = 'downloading'
     progress.value = 0
@@ -96,7 +170,27 @@ export const useUpdatesStore = defineStore('updates', () => {
     }
   }
 
+  /** On Android, open the downloaded APK so the system installer takes over. */
+  function openInstaller() {
+    androidInstallUpdate()
+  }
+
   const restart = () => useTauriProcessRelaunch()
 
-  return { current, release, capable, status, error, progress, available, dismissed, dismiss, check, install, restart }
+  return {
+    current,
+    release,
+    capable,
+    status,
+    error,
+    progress,
+    available,
+    dismissed,
+    dismiss,
+    check,
+    install,
+    openInstaller,
+    restart,
+    startRecheckTimer,
+  }
 })

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { EpgProgram, LiveChannel } from '~/utils/iptv'
 import { mdiClose } from '@mdi/js'
+import { proxyLogo } from '~/utils/premiumTv'
 
 const props = defineProps<{
   show: boolean
@@ -83,7 +84,7 @@ const upcomingPrograms = computed(() =>
           <div class="flex items-center gap-3 border-b border-white/10 px-5 py-4">
             <img
               v-if="channel.logoUrl"
-              :src="channel.logoUrl"
+              :src="proxyLogo(channel.logoUrl)"
               :alt="channel.name"
               class="size-10 rounded-lg object-contain"
             >

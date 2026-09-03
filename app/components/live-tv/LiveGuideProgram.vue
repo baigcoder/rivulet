@@ -55,7 +55,7 @@ const duration = computed(() => Math.max(15, Math.round((props.stop - props.star
 <template>
   <button
     type="button"
-    class="absolute top-0.5 h-[calc(100%-4px)] cursor-pointer overflow-hidden rounded border-l-2 px-2 py-1 text-left text-white shadow-sm transition-transform hover:scale-[1.02] hover:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+    class="absolute top-0.5 h-[calc(100%-4px)] cursor-pointer overflow-hidden rounded border-l-2 px-2 py-1 text-left text-white shadow-sm hover:z-10 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
     :class="colorClass"
     :style="{ width: `${duration}px` }"
     :title="`${title}\n${timeRange}`"
@@ -69,7 +69,7 @@ const duration = computed(() => Math.max(15, Math.round((props.stop - props.star
         v-if="isLive"
         class="rounded-full bg-red-500 px-1 py-px text-[9px] font-bold uppercase text-white"
       >
-        LIVE
+        {{ $t('LIVE') }}
       </span>
       <span class="truncate">{{ timeRange }}</span>
     </div>

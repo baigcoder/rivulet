@@ -151,12 +151,12 @@ export const useSettingsStore = defineStore('settings', () => {
   const sources = useLocalStorage<string[]>(key('sources'), [])
 
   /**
-   * Whether playing a title may start a torrent download at all.
+   * How the Play button starts a title.
    *
-   * Off is stream-only mode: the sources are still asked, but only answers
-   * carrying a direct link are considered — nothing touches the engine, the
-   * swarm or the disk. A title no added server can serve then shows an
-   * explanation instead of starting to download.
+   * On: Play picks a magnet and the torrent engine streams it while the rest
+   * of the file keeps downloading. Off: Play opens a Direct / debrid URL and
+   * never touches the engine. Download and picking a release are not this
+   * switch — they still file or play the row you named.
    */
   const allowTorrents = useLocalStorage(key('allowTorrents'), true)
 

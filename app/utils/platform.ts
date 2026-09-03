@@ -90,6 +90,11 @@ function bridge() {
       volumes?: () => string
       tv?: () => boolean
       openStorageSettings?: () => boolean
+      downloadUpdate?: (url: string) => number
+      getUpdateProgress?: () => string
+      installUpdate?: () => boolean
+      notifyUpdateAvailable?: (version: string) => void
+      dismissUpdateNotification?: () => void
     }
   }).RivuletScreen
 }
@@ -136,4 +141,39 @@ export function isAndroid() {
  */
 export function canOpenFolder() {
   return isDesktop()
+}
+
+// ── In-app updates (Android only) ───────────────────────────────────────
+
+/** Start downloading an APK update. Returns a download ID for polling. */
+export function androidDownloadUpdate(url: string): number {
+  return bridge()?.downloadUpdate?.(url) ?? -1
+}
+
+/** Poll the download progress. Returns JSON `{bytes,total,done,path}`. */
+export function androidGetUpdateProgress(): { bytes: number, total: number, done: boolean, path: string } | null {
+  const json = bridge()?.getUpdateProgress?.()
+  if (!json)
+    return null
+  try {
+    return JSON.parse(json) as { bytes: number, total: number, done: boolean, path: string }
+  }
+  catch {
+    return null
+  }
+}
+
+/** Open the downloaded APK so the user can install it. */
+export function androidInstallUpdate(): boolean {
+  return bridge()?.installUpdate?.() ?? false
+}
+
+/** Show a system notification that a new version is available. */
+export function androidNotifyUpdate(version: string) {
+  bridge()?.notifyUpdateAvailable?.(version)
+}
+
+/** Dismiss the update notification. */
+export function androidDismissUpdateNotification() {
+  bridge()?.dismissUpdateNotification?.()
 }

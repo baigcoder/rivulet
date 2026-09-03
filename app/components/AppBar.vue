@@ -12,10 +12,15 @@ const { mobile } = useDisplay()
 // the prefix ever comes back — see localePath in app/utils/i18n.ts.
 const routeName = useRouteBaseName()
 
-const isLiveTv = computed(() => {
-  const name = routeName(route)
-  return name === 'live-tv' || name === 'live-tv-free'
-})
+const isLiveTv = computed(() => route.path.includes('/live-tv'))
+
+function goBack() {
+  if (isLiveTv.value && !/\/live-tv\/?$/.test(route.path)) {
+    void router.replace(localePath(liveTvBackPath(route.path)))
+    return
+  }
+  router.back()
+}
 
 const query = ref((route.query.q as string) ?? '')
 
@@ -53,8 +58,7 @@ function toggleNav() {
       icon
       variant="text"
       color="on-surface"
-      class="hidden sm:flex"
-      @click="router.back()"
+      @click="goBack"
     >
       <v-icon :icon="mdiArrowLeft" />
       <v-tooltip activator="parent" :text="$t('Back')" />

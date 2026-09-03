@@ -106,11 +106,39 @@ const JUNK = /\b(?:cam|hdcam|ts|hdts|telesync|telecine|scr|screener|r5)\b/i
 
 const UNITS: Record<string, number> = { B: 1, KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3, TB: 1024 ** 4 }
 
+/** Resolution token in a release or addon label — "1080p", "4k HDR", … */
+const QUALITY_TOKEN = /\b(?:2160p|4k(?:\s*(?:dv|hdr)[^\s,|]*)?|1080p|720p|480p)\b/i
+
+/**
+ * What tier a stream is. Debrid addons often put the resolution only in the
+ * release name, not in `name`'s second line — MediaFusion is one of them.
+ */
+export function releaseQuality(raw: { quality?: string, rawName?: string, name?: string, title?: string, file?: string | null }) {
+  const preset = (raw.quality ?? '').trim()
+  if (preset && QUALITY_TOKEN.test(preset))
+    return preset
+  for (const line of (raw.rawName ?? '').split('\n').map(s => s.trim()).filter(Boolean)) {
+    const m = line.match(QUALITY_TOKEN)
+    // "MediaFusion\n1080p" uses the second line; a lone "MediaFusion" does not.
+    if (m && !/^(?:mediafusion|stremio|torrentio|comet|debrid|example)$/i.test(line))
+      return m[0].trim()
+  }
+  for (const text of [raw.name, raw.title, raw.file ?? '']) {
+    if (!text)
+      continue
+    const m = text.match(QUALITY_TOKEN)
+    if (m)
+      return m[0].trim()
+  }
+  return ''
+}
+
 /**
  * One result a source returned. Most are torrents, but the same protocol also
  * carries plain HTTP links — that is what a debrid addon answers with, having
  * already fetched the torrent on its own servers, and what an addon that hosts
- * its own files answers with. A release has an info hash or a `url`, never both.
+ * its own files answers with. A debrid row often has both: the URL is for
+ * Play, the hash (sometimes only inside that URL) is for Download.
  */
 export interface Release {
   /** Release name, e.g. "Sintel 2010 1080p BluRay x264". */
@@ -154,10 +182,73 @@ interface RawStream {
   /** What `title` was renamed to; addons emit one or the other. */
   description?: string
   infoHash?: string
+  /** Same field, other addons. */
+  infohash?: string
   fileIdx?: number
   url?: string
   sources?: string[]
-  behaviorHints?: { videoSize?: number, filename?: string }
+  behaviorHints?: { videoSize?: number, filename?: string, bingeGroup?: string }
+}
+
+const BTIH = /(?:urn:)?btih:([a-f0-9]{40}|[a-z2-7]{32})/i
+
+function hex40s(text: string): string[] {
+  return text.match(/[a-f0-9]{40}/gi) ?? []
+}
+
+/**
+ * Info hash a stream is actually a torrent for. Addons hide it: `infoHash`,
+ * lowercase `infohash`, a `dht:` source, a magnet in `url`, or — the debrid
+ * case — a 40-hex segment in the resolve URL with no `infoHash` field at all.
+ * That last one is what made every Releases row look like Direct and made
+ * Download save an HTTP file instead of starting the engine.
+ */
+function streamHash(raw: RawStream, rawUrl: string): string {
+  const listed = (raw.infoHash || raw.infohash || '').trim()
+  if (listed)
+    return listed
+  const dht = (raw.sources ?? []).find(s => s.startsWith('dht:'))
+  if (dht)
+    return dht.slice(4)
+  const magnet = rawUrl.startsWith('magnet:')
+    ? rawUrl
+    : (raw.sources ?? []).find(s => s.startsWith('magnet:')) ?? ''
+  const fromMagnet = magnet.match(BTIH)?.[1]
+  if (fromMagnet)
+    return fromMagnet
+  const fromUrl = hashFromUrl(rawUrl)
+  if (fromUrl)
+    return fromUrl
+  return hex40s(raw.behaviorHints?.bingeGroup ?? '')[0] ?? ''
+}
+
+/**
+ * Debrid resolve URLs look like `/resolve/{service}/{token}/{hash}/…`.
+ * The token is often also 40 hex, so the first match would steal the API
+ * key. Prefer the `{service}/{token}/{hash}` layout; otherwise the last
+ * 40-hex path segment.
+ */
+function hashFromUrl(url: string): string {
+  if (!url || url.startsWith('magnet:'))
+    return ''
+  let path = url
+  try {
+    path = new URL(url).pathname
+  }
+  catch { /* not absolute; still scan it as a path */ }
+  const resolve = path.match(/\/resolve\/[^/]+\/[^/]+\/([a-f0-9]{40})(?:\/|$)/i)
+  if (resolve)
+    return resolve[1]!
+  const found = hex40s(path)
+  return found.length ? found[found.length - 1]! : ''
+}
+
+/** `fileIdx` on the stream, or the `/null/0/filename` slot debrid URLs use. */
+function streamFileIdx(raw: RawStream, rawUrl: string): number | null {
+  if (typeof raw.fileIdx === 'number' && raw.fileIdx >= 0)
+    return raw.fileIdx
+  const m = rawUrl.match(/\/(?:null|\d+)\/(\d+)\/[^/?#]+$/i)
+  return m ? Number(m[1]) : null
 }
 
 function magnetFor(hash: string, name: string, sources?: string[]) {
@@ -173,16 +264,30 @@ function magnetFor(hash: string, name: string, sources?: string[]) {
  * in a multi-line display title whose stats line reads
  * `👤 375 💾 928.25 MB ⚙️ origin`, so it gets parsed back out here.
  */
-export function toRelease(raw: RawStream): Release | null {
+export function toRelease(raw: RawStream, base = ''): Release | null {
   // Either something to fetch or something to open. A stream with neither hands
   // playback to another app or another protocol, which is not ours to follow.
-  const url = /^https?:\/\//i.test(raw.url ?? '') ? raw.url! : ''
-  if (!raw.infoHash && !url)
+  // Debrid addons sometimes emit a path (`/playback/…`) against their own host.
+  let rawUrl = (raw.url ?? '').trim()
+  if (rawUrl && !/^https?:\/\//i.test(rawUrl) && !rawUrl.startsWith('magnet:') && base) {
+    try {
+      const root = new URL(base.endsWith('/') ? base : `${base}/`)
+      rawUrl = rawUrl.startsWith('/')
+        ? new URL(`${root.pathname.replace(/\/+$/, '')}${rawUrl}`, root.origin).href
+        : new URL(rawUrl, root).href
+    }
+    catch {
+      rawUrl = ''
+    }
+  }
+  const hash = streamHash(raw, rawUrl)
+  const url = /^https?:\/\//i.test(rawUrl) ? rawUrl : ''
+  if (!hash && !url)
     return null
 
   const title = raw.description || raw.title || ''
   const lines = title.split('\n').map(line => line.trim())
-  const name = lines[0] || (raw.behaviorHints?.filename ?? '')
+  const name = lines[0] || raw.behaviorHints?.filename || (raw.name ?? '').split('\n')[0] || (url ? 'Stream' : '')
   if (!name || JUNK.test(name))
     return null
 
@@ -193,9 +298,9 @@ export function toRelease(raw: RawStream): Release | null {
 
   return {
     name,
-    hash: raw.infoHash ?? '',
+    hash,
     url,
-    fileIdx: raw.fileIdx ?? null,
+    fileIdx: streamFileIdx(raw, rawUrl),
     file: lines.slice(1).find(line => VIDEO_EXT.test(line)) ?? null,
     seeders: Number(title.match(/👤\s*(\d+)/)?.[1] ?? 0),
     size: amount ? `${amount} ${unit}` : bytes ? bytesText(bytes) : '',
@@ -203,9 +308,8 @@ export function toRelease(raw: RawStream): Release | null {
     // "⚙️" is a gear plus a variation selector — match the gear, skip whatever
     // decoration follows it, and take the next word.
     source: title.match(/⚙\S*\s+(\S+)/)?.[1] ?? 'unknown',
-    // The source's own label line: "<source name>\n1080p".
-    quality: ((raw.name ?? '').split('\n')[1] ?? '').trim(),
-    magnet: raw.infoHash ? magnetFor(raw.infoHash, name, raw.sources) : '',
+    quality: releaseQuality({ rawName: raw.name, name, title, file: lines.slice(1).find(line => VIDEO_EXT.test(line)) ?? null }),
+    magnet: hash ? magnetFor(hash, name, raw.sources) : '',
   }
 }
 
@@ -222,6 +326,33 @@ export function sourceHost(via: string): string {
 /** What makes two results the same result — a hash for a torrent, the link itself for a link. */
 export function releaseKey(r: Release) {
   return r.url || r.hash
+}
+
+/**
+ * Filename for saving a Direct link to the download folder. The release
+ * name is what the user saw; a path in it would write outside that folder.
+ */
+export function releaseFileName(t: { name: string, file?: string | null, url?: string }) {
+  const raw = (t.file || t.name || 'download').split(/[/\\]/).pop() || 'download'
+  const cleaned = [...raw]
+    .map(c => (c.charCodeAt(0) < 32 || '<>:"|?*'.includes(c)) ? '_' : c)
+    .join('')
+    .replace(/\.+$/g, '')
+    .trim()
+    .slice(0, 180)
+  const base = cleaned || 'download'
+  if (VIDEO_EXT.test(base))
+    return base
+  let ext = 'mkv'
+  if (t.url) {
+    try {
+      const found = new URL(t.url).pathname.match(VIDEO_EXT)
+      if (found)
+        ext = found[0].slice(1)
+    }
+    catch { /* not a url */ }
+  }
+  return `${base}.${ext}`
 }
 
 function rank(t: Release) {
@@ -336,6 +467,49 @@ export function pickBest(list: Release[], maxBytes = MAX_BYTES, compatible = fal
 }
 
 /**
+ * What Play opens.
+ *
+ * Engine on: a magnet, so playback starts from the torrent engine and the rest
+ * of the file keeps downloading while you watch. Engine off: a Direct link
+ * only — nothing is added to the engine.
+ */
+export function pickPlay(list: Release[], maxBytes = MAX_BYTES, compatible = false, allowTorrents = false): Release | null {
+  const pool = hasNativePlayer() ? list : withoutUhd(list)
+  if (allowTorrents)
+    return pickBest(pool, maxBytes, compatible, true)
+  return pickBest(pool.filter(t => !!t.url), maxBytes, compatible, false)
+}
+
+/** Drop 4K when a lighter copy exists. Empty result means the list was 4K-only. */
+export function withoutUhd(list: Release[]): Release[] {
+  const hd = list.filter(t => !/\b(?:2160p|4k)\b/i.test(`${t.quality} ${t.name}`))
+  return hd.length ? hd : list
+}
+
+const AUDIO_LANGS = [
+  { re: /\bhindi\b|\bhin\b/i, code: 'hi' },
+  { re: /\benglish\b|\beng\b/i, code: 'en' },
+  { re: /\btamil\b|\btam\b/i, code: 'ta' },
+  { re: /\btelugu\b|\btel\b/i, code: 'te' },
+  { re: /\bmalayalam\b/i, code: 'ml' },
+  { re: /\bkannada\b/i, code: 'kn' },
+  { re: /\bspanish\b|\bspa\b|\besp\b/i, code: 'es' },
+  { re: /\bfrench\b|\bfre\b|\bfra\b/i, code: 'fr' },
+  { re: /\bjapanese\b|\bjpn\b/i, code: 'ja' },
+  { re: /\bkorean\b|\bkor\b/i, code: 'ko' },
+] as const
+
+/** Languages a release name claims to carry — "Dual Audio Hindi English". */
+export function releaseLangs(text: string): string[] {
+  const out: string[] = []
+  for (const l of AUDIO_LANGS) {
+    if (l.re.test(text) && !out.includes(l.code))
+      out.push(l.code)
+  }
+  return out
+}
+
+/**
  * Stream-only mode's answer when there is nothing to stream. Distinct from a
  * plain error because the watch page offers "turn torrents back on" beside it —
  * which is the one fix, and the toggle lives one setting away.
@@ -375,7 +549,7 @@ async function searchOne(base: string, path: string, timeoutMs = SOURCE_TIMEOUT)
     throw new Error(`${base} answered HTTP ${res.status}`)
 
   const data = await res.json() as { streams?: RawStream[] }
-  return (data.streams ?? []).flatMap(s => toRelease(s) ?? [])
+  return (data.streams ?? []).flatMap(s => toRelease(s, base) ?? [])
 }
 
 /**
@@ -410,22 +584,29 @@ async function runSources(
   let anyAnswered = false
   let anyFailed = false
 
+  let firstUseful!: () => void
+  const useful = new Promise<void>(resolve => {
+    firstUseful = resolve
+  })
+
   const settled = tasks.map(async (task, i) => {
     try {
       batches[i] = await task
       anyAnswered = true
+      // An empty 200 (a source whose filters matched nothing) is not a
+      // reason to start playback — wait for a source that actually has streams.
+      if (batches[i]!.length)
+        firstUseful()
     }
     catch {
       anyFailed = true
     }
   })
 
-  // First healthy answer starts the clock; everyone else gets `graceMs` to
+  // First *useful* answer starts the clock; everyone else gets `graceMs` to
   // join before the window shuts. In 'all' mode the window never shuts early.
-  const firstAnswer = settled[0]!.then(() => {}, () => {})
-  for (const s of settled.slice(1)) s.then(() => {}, () => {})
   const opened = wait.mode === 'first'
-    ? Promise.race([firstAnswer, ...settled])
+    ? Promise.race([useful, Promise.all(settled)])
     : Promise.all(settled)
   await Promise.race([
     opened.then(() => new Promise(r => setTimeout(r, wait.mode === 'first' ? wait.graceMs : 0))),
@@ -477,17 +658,29 @@ export async function findReleasesFast(
   imdbId: string,
   season: number,
   episode: number,
-  options: { graceMs?: number, onLate?: (releases: Release[]) => void } = {},
+  options: { graceMs?: number, onLate?: (releases: Release[]) => void, needUrl?: boolean } = {},
 ): Promise<Release[]> {
   const { releases, rest } = await runSources(
     searchPath(imdbId, season, episode),
     { mode: 'first', graceMs: options.graceMs ?? 600 },
   )
-  void rest.then(late => {
+  let out = releases
+  // Magnet-only first wave is common: the debrid host resolves a beat later.
+  if (options.needUrl && !out.some(r => r.url)) {
+    const late = await Promise.race([
+      rest,
+      new Promise<Release[]>(resolve => setTimeout(resolve, 2000, [])),
+    ])
     if (late.length)
-      options.onLate?.(late)
+      out = [...out, ...late]
+  }
+  const seen = new Set(out.map(releaseKey))
+  void rest.then(late => {
+    const extra = late.filter(r => !seen.has(releaseKey(r)))
+    if (extra.length)
+      options.onLate?.(extra)
   })
-  return releases
+  return out
 }
 
 // --- Local engine -------------------------------------------------------------
@@ -865,6 +1058,19 @@ export async function listTorrents(): Promise<EngineTorrent[]> {
   return data.torrents
 }
 
+/** Poll until a hash shows up in the engine list — add can return before the list catches up. */
+export async function waitForEngineHash(hash: string, ms = 20_000): Promise<boolean> {
+  const want = hash.toLowerCase()
+  const deadline = Date.now() + ms
+  while (Date.now() < deadline) {
+    const list = await listTorrents().catch(() => [])
+    if (list.some(t => t.info_hash.toLowerCase() === want))
+      return true
+    await new Promise(r => setTimeout(r, 400))
+  }
+  return false
+}
+
 // --- Seeding ------------------------------------------------------------------
 
 /**
@@ -1071,6 +1277,13 @@ export async function startTorrent(options: {
    */
   allowTorrents?: boolean
   /**
+   * The Download button: never resolve to a direct link. Play with the
+   * engine off opens a debrid URL and keeps nothing; a download that did
+   * the same would show "In downloads" with an empty disk. A magnet handed
+   * in by name already takes this path.
+   */
+  save?: boolean
+  /**
    * Race the added sources instead of waiting for every one: playback starts
    * on the first healthy answer, and slower servers stream into
    * `onAlternativesLate` afterwards.
@@ -1137,15 +1350,16 @@ export async function startTorrent(options: {
       // and third source answering a beat after the first; retries shrink
       // the window because the sources are warm by then.
       let found: Release[] = []
-      const MAX_SEARCH_ATTEMPTS = 3
+      const MAX_SEARCH_ATTEMPTS = options.fast ? 2 : 3
       for (let attempt = 1; attempt <= MAX_SEARCH_ATTEMPTS; attempt++) {
         step(attempt === 1 ? $t('Searching your sources…') : $t('Retrying sources…'))
         try {
           found = options.fast
             ? await findReleasesFast(imdbId, options.season ?? 0, options.episode ?? 0, {
-                // First attempt: long grace so cold sources can answer.
-                // Retries: short grace, sources are already warm.
-                graceMs: attempt === 1 ? 2_000 : 300,
+                // Engine on: start on the first magnet, don't wait 2s for a
+                // Direct URL. Engine off: wait for a link, that's the stream.
+                graceMs: attempt === 1 ? 250 : 100,
+                needUrl: !allowTorrents,
                 onLate: late => {
                   const more = serverCandidates(late, options.maxBytes ?? MAX_BYTES, options.compatible ?? !hasNativePlayer(), allowTorrents)
                   if (more.length)
@@ -1156,7 +1370,7 @@ export async function startTorrent(options: {
         }
         catch (searchError) {
           if (attempt < MAX_SEARCH_ATTEMPTS) {
-            await new Promise(r => setTimeout(r, 600))
+            await new Promise(r => setTimeout(r, options.fast ? 200 : 600))
             continue
           }
           throw searchError
@@ -1168,20 +1382,27 @@ export async function startTorrent(options: {
         if (found.length || attempt >= MAX_SEARCH_ATTEMPTS)
           break
         if (attempt < MAX_SEARCH_ATTEMPTS)
-          await new Promise(r => setTimeout(r, 600))
+          await new Promise(r => setTimeout(r, options.fast ? 200 : 600))
       }
 
       // Stream-only mode narrows before ranking: a torrent release is not a
-      // worse pick, it is no pick at all.
-      const pool = allowTorrents ? found : found.filter(t => !!t.url)
-      picked = pickBest(pool, options.maxBytes, options.compatible ?? !hasNativePlayer(), allowTorrents)
+      // worse pick, it is no pick at all. A save is the opposite — a link
+      // keeps nothing, so only magnets count.
+      const pool = options.save
+        ? found.filter(t => t.magnet)
+        : allowTorrents ? found : found.filter(t => !!t.url)
+      picked = options.save
+        ? pickBest(pool, options.maxBytes, options.compatible ?? !hasNativePlayer(), true)
+        : pickPlay(pool, options.maxBytes, options.compatible ?? !hasNativePlayer(), allowTorrents)
       if (!picked) {
+        if (options.save && found.length)
+          throw new Error($t('Nothing here is a download — these sources only stream this title.'))
         if (found.length && !allowTorrents) {
           // Which added servers can't serve this mode? Named on the explainer,
           // so "add one that streams" is actionable rather than abstract.
           const hosts = [...new Set(found.filter(t => !t.url).map(t => (t.via ? sourceHost(t.via) : '')))].filter(Boolean)
           const names = hosts.join(', ')
-          const msg = $t('None of your added sources stream this title directly. Add a Stremio URL that streams directly, or set Playback source to Best available.')
+          const msg = $t('None of your added sources stream this title directly. Add a source that answers with a Direct link, or set How Play works to Torrent engine.')
             + (names ? ` ${$t('{servers} serve downloads only here.', { servers: names })}` : '')
           throw new NoServerStream(msg, hosts)
         }
@@ -1190,28 +1411,9 @@ export async function startTorrent(options: {
           : $t('Your sources have nothing for this title.'))
       }
 
-      // If allowTorrents is true and a torrent magnet is available, use the torrent engine
-      // so it downloads to disk and shows progress in the UI and Transfers tab.
-      if (allowTorrents) {
-        const torrentRelease = picked.magnet ? picked : found.find(t => !!t.magnet)
-        if (torrentRelease) {
-          picked = torrentRelease
-          magnet = picked.magnet
-          hint = picked.fileIdx
-          // Continue to torrent engine logic below
-        }
-        else if (picked.url) {
-          return {
-            id: -1,
-            index: -1,
-            hash: '',
-            url: picked.url,
-            torrent: picked,
-            alternatives: serverCandidates(found, options.maxBytes, options.compatible ?? !hasNativePlayer(), allowTorrents),
-          }
-        }
-      }
-      else if (picked.url) {
+      // Engine off, or a link with no hash: the URL is the stream. Engine on
+      // with a magnet: the engine plays while the rest of the file downloads.
+      if (picked.url && !options.save && !(allowTorrents && picked.magnet)) {
         return {
           id: -1,
           index: -1,
@@ -1235,6 +1437,21 @@ export async function startTorrent(options: {
   if (already?.ready)
     return playHeld(already, picked)
 
+  // Re-adding a hash the engine is already fetching makes librqbit sit through
+  // metadata again and the Downloads page can miss it entirely.
+  if (already) {
+    const files = already.files
+    const index = options.fileIndex ?? already.index ?? pickVideoFile(files, hint, options)
+    if (index == null)
+      throw new Error($t('That torrent holds no video file.'))
+    const included = files.flatMap((f, i) => f.included ? [i] : [])
+    const narrowed = included.length < files.length
+    const wanted = [index, ...pickSubtitleFiles(files, index)]
+    const only = narrowed ? [...new Set([...included, ...wanted])] : wanted
+    await limitToFiles(already.id, only)
+    return { id: already.id, index, hash: already.hash, url: '', torrent: picked }
+  }
+
   step($t('Fetching metadata from peers…'))
   let added
   try {
@@ -1243,7 +1460,7 @@ export async function startTorrent(options: {
   catch (engineError) {
     // Engine offline (browser mode) — fall back to the direct URL if available.
     const directFallback = picked?.url || options.url
-    if (directFallback)
+    if (directFallback && !options.save)
       return { id: -1, index: -1, hash: '', url: directFallback, torrent: picked }
     throw engineError
   }

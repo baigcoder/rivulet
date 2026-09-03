@@ -483,6 +483,114 @@ fn disk_space(app: tauri::AppHandle, path: Option<String>) -> Result<DiskSpace, 
     }
 }
 
+/// Strip path separators so a release name cannot write outside `dir`.
+fn safe_download_name(name: &str) -> String {
+    let mut out = String::new();
+    for c in name.chars() {
+        if matches!(c, '/' | '\\' | '\0') {
+            continue;
+        }
+        if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*') {
+            out.push('_');
+        } else {
+            out.push(c);
+        }
+        if out.len() >= 180 {
+            break;
+        }
+    }
+    let out = out.trim_matches(|c: char| c == ' ' || c == '.').to_string();
+    if out.is_empty() || out == "." || out == ".." {
+        "download.mkv".into()
+    } else {
+        out
+    }
+}
+
+/// Save a Direct (HTTP) release to the torrent download folder. librqbit only
+/// accepts magnets, so a debrid URL that never sent a hash has nowhere else
+/// to land.
+///
+/// Returns as soon as the first bytes have been written. The rest of the file
+/// copies in the background — waiting for the whole film here is what left
+/// the Releases Download spinner turning after the transfer had already begun.
+#[tauri::command]
+async fn download_url(
+    app: tauri::AppHandle,
+    url: String,
+    filename: String,
+    dir: Option<String>,
+) -> Result<String, String> {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("not an http url".into());
+    }
+    let folder = match dir.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+        Some(p) => PathBuf::from(p),
+        None => cache_dir(&app).join("rivulet-torrents"),
+    };
+    tokio::fs::create_dir_all(&folder)
+        .await
+        .map_err(|e| e.to_string())?;
+    let dest = folder.join(safe_download_name(&filename));
+
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+        .build()
+        .map_err(|e| e.to_string())?;
+    let mut resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
+    let status = resp.status();
+    if !(status.is_success() || status == reqwest::StatusCode::PARTIAL_CONTENT) {
+        return Err(format!("download failed: {status}"));
+    }
+
+    use tokio::io::AsyncWriteExt;
+    let mut file = tokio::fs::File::create(&dest)
+        .await
+        .map_err(|e| e.to_string())?;
+    match resp.chunk().await.map_err(|e| e.to_string())? {
+        Some(chunk) => {
+            if let Err(e) = file.write_all(&chunk).await {
+                let _ = tokio::fs::remove_file(&dest).await;
+                return Err(e.to_string());
+            }
+        }
+        None => {
+            file.flush().await.map_err(|e| e.to_string())?;
+            return Ok(dest.to_string_lossy().into_owned());
+        }
+    }
+
+    let path = dest.to_string_lossy().into_owned();
+    tauri::async_runtime::spawn(async move {
+        let rest = async {
+            while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
+                file.write_all(&chunk).await.map_err(|e| e.to_string())?;
+            }
+            file.flush().await.map_err(|e| e.to_string())?;
+            Ok::<(), String>(())
+        };
+        if let Err(e) = rest.await {
+            eprintln!("[rivulet] download_url failed: {e}");
+            let _ = tokio::fs::remove_file(&dest).await;
+        }
+    });
+    Ok(path)
+}
+
+#[cfg(test)]
+mod download_url_tests {
+    #[test]
+    fn filename_cannot_escape_the_folder() {
+        let escaped = super::safe_download_name("a/../../etc/passwd");
+        assert!(!escaped.contains('/'), "{escaped}");
+        assert!(!escaped.contains('\\'), "{escaped}");
+        assert_eq!(super::safe_download_name(".."), "download.mkv");
+        assert_eq!(super::safe_download_name("Film.mkv"), "Film.mkv");
+    }
+}
+
 /// librqbit's own filesystem storage with its one 32-bit call routed around.
 ///
 /// Every chunk is written with `pwritev`, whose offset argument is `off_t` —
@@ -667,6 +775,14 @@ async fn run_torrent_server(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Install a rustls crypto provider (ring) before any TLS connections.
+    // reqwest's `rustls` feature pulls in `rustls-platform-verifier`, which
+    // panics on Android unless JNI-initialized. We install ring as the
+    // process-wide default so that ureq (used by the image proxy) and any
+    // other rustls consumer can make TLS connections without the platform
+    // verifier.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     // librqbit needs a full-featured multi-threaded tokio runtime (DHT, uTP,
     // HTTP streaming). Build one and hand it to Tauri's async runtime so
     // `tauri::async_runtime::spawn` schedules onto it.
@@ -718,6 +834,7 @@ pub fn run() {
             thumbnail,
             deep_link_fix_handler,
             disk_space,
+            download_url,
             can_self_update,
             // Free TV IPTV — DB-backed query surface. Premium TV (Xtream +
             // user-added M3U) has moved to a separate `premium/` module and
@@ -760,6 +877,32 @@ pub fn run() {
             api::commands::premium_entitlement,
         ])
         .setup(|app| {
+            // WebKitGTK's default user agent looks like Safari's, so YouTube
+            // serves an embed the Safari player config — which WebKitGTK then
+            // fails to run, and every trailer on a detail page dies with
+            // "player configuration error" (error 153). Claiming to be the
+            // Chrome the engine actually behaves like gets the Chromium
+            // player config, which works. Everywhere else the webview already
+            // is Chromium (WebView2, Android) or genuinely Safari (WKWebView),
+            // so this stays a Linux fix and the default is left alone.
+            #[cfg(target_os = "linux")]
+            {
+                use tauri::Manager;
+                use webkit2gtk::{SettingsExt, WebViewExt};
+                let webview = app
+                    .get_webview_window("main")
+                    .expect("the main window comes from tauri.conf.json");
+                webview.with_webview(|w| {
+                    w.inner()
+                        .settings()
+                        .expect("a webview always has settings")
+                        .set_user_agent(Some(
+                            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 \
+                             (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                        ));
+                })?;
+            }
+
             // The installers write the scheme association (registry keys on
             // Windows, a .desktop MimeType on Linux), so a build that was never
             // installed — `tauri dev`, a bare .exe, an unregistered AppImage —

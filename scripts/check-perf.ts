@@ -46,6 +46,24 @@ assert.match(
   'content-visibility needs a size to reserve, or the scrollbar jumps as cards are drawn',
 )
 
+// The hover/focus ring is inset on the poster. A box-shadow or outline on the
+// wrapping <a> boxed the title under the art — the caption is not the poster.
+assert.match(
+  card,
+  /ring-inset/,
+  'the hover ring must sit inside the poster, not around the whole card',
+)
+assert.match(
+  card,
+  /v-if="detail"/,
+  'the title under the poster is outside the ring',
+)
+assert.doesNotMatch(
+  card.replace(/<!--[\s\S]*?-->|\/\/[^\n]*/g, ''),
+  /hover\.value \? '1\.05'/,
+  'no whole-card hover scale: a TV paints that transform on every focus move',
+)
+
 // One frame-buffer readback per card, twenty on screen at once. Comments are
 // stripped first — the one above the badge says the word to explain its absence.
 assert.doesNotMatch(
@@ -117,6 +135,58 @@ assert.match(row, /useResizeObserver\(\[scroller, track\], measure\)/, 'the arro
 // Vuetify button, a tooltip and a watched dialog each — froze the page on
 // open and left three thousand focusables for the d-pad to measure a press.
 // The window is bounded by the viewport instead, as the live-tv grids do it.
+const liveCard = read('app/components/live-tv/LiveChannelCard.vue')
+assert.match(
+  liveCard,
+  /\[content-visibility:auto\]/,
+  'live channel cards must skip painting off-screen work the same way posters do',
+)
+assert.doesNotMatch(
+  liveCard.replace(/<!--[\s\S]*?-->|\/\/[^\n]*/g, ''),
+  /hover:-translate-y/,
+  'no per-card lift on the live grid: a TV paints that transform on every focus move',
+)
+assert.match(
+  liveCard,
+  /ring-inset/,
+  'the hover ring must sit inside the channel artwork, not around the whole card',
+)
+assert.doesNotMatch(
+  liveCard.replace(/<!--[\s\S]*?-->|\/\/[^\n]*/g, ''),
+  /hover:ring/,
+  'no whole-card hover:ring on live tiles: that boxed the title the same way posters used to',
+)
+assert.doesNotMatch(
+  liveCard.replace(/<!--[\s\S]*?-->|\/\/[^\n]*/g, ''),
+  /hover:scale/,
+  'no per-card scale on the live grid',
+)
+
+const premiumCard = read('app/components/premium-tv/PremiumChannelCard.vue')
+assert.match(
+  premiumCard,
+  /ring-inset/,
+  'Premium tiles share the inset-ring contract with Free TV',
+)
+assert.doesNotMatch(
+  premiumCard.replace(/<!--[\s\S]*?-->|\/\/[^\n]*/g, ''),
+  /hover:ring/,
+  'no whole-card hover:ring on Premium tiles',
+)
+assert.doesNotMatch(
+  premiumCard.replace(/<!--[\s\S]*?-->|\/\/[^\n]*/g, ''),
+  /\[content-visibility:auto\]/,
+  'Premium cards must not use content-visibility: the grid measures row height',
+)
+
+const liveHub = read('app/pages/live-tv/index.vue')
+assert.doesNotMatch(
+  liveHub.replace(/<!--[\s\S]*?-->|\/\/[^\n]*/g, ''),
+  /blur-2xl/,
+  'the Live TV hub must not paint decorative blur orbs',
+)
+assert.match(liveHub, /rounded-2xl/, 'hub tiles follow the home teaser, not marketing cards')
+
 const seasonPage = read('app/pages/tv/[id]/season/[season]/index.vue')
 assert.match(
   seasonPage,

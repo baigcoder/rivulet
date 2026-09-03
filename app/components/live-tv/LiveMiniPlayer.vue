@@ -3,6 +3,7 @@ import type { LiveChannel } from '~/utils/iptv'
 import { mdiClose, mdiFullscreen, mdiTelevision } from '@mdi/js'
 import { useEventListener } from '@vueuse/core'
 import { computed, ref, watch } from 'vue'
+import { proxyLogo } from '~/utils/premiumTv'
 
 const props = defineProps<{
   channel: LiveChannel | null
@@ -100,7 +101,7 @@ const nowProgram = computed(() => {
       >
         <img
           v-if="channel?.logoUrl && !imgError"
-          :src="channel.logoUrl"
+          :src="proxyLogo(channel.logoUrl)"
           :alt="channel.name"
           class="size-6 rounded object-contain"
           @error="imgError = true"

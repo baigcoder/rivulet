@@ -148,6 +148,59 @@ export interface PremiumStatus {
   catalog: CatalogState | null
 }
 
+/** Xtream VOD group — movies or series. */
+export interface VodCategory {
+  id: string
+  name: string
+  kind: 'movie' | 'series' | string
+}
+
+export interface PremiumVodItem {
+  id: string
+  name: string
+  posterUrl?: string | null
+  plot?: string | null
+  rating?: string | null
+  categoryId?: string | null
+  categoryName?: string | null
+  containerExtension?: string | null
+  isAdult?: boolean
+}
+
+export interface PremiumSeriesItem {
+  id: string
+  name: string
+  posterUrl?: string | null
+  plot?: string | null
+  rating?: string | null
+  categoryId?: string | null
+  isAdult?: boolean
+}
+
+export interface PremiumEpisode {
+  id: string
+  season: number
+  episode: number
+  title: string
+  plot?: string | null
+  containerExtension?: string | null
+}
+
+export interface PremiumSeriesDetail {
+  id: string
+  name: string
+  posterUrl?: string | null
+  plot?: string | null
+  rating?: string | null
+  episodes: PremiumEpisode[]
+}
+
+export interface VodPage<T> {
+  items: T[]
+  total: number
+  nextCursor: string | null
+}
+
 /** What `/connect` and `/refresh`-with-force answer. */
 export interface ConnectResult {
   account: PremiumAccount

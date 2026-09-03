@@ -19,6 +19,7 @@ pub mod provider;
 pub mod repository;
 pub mod storage;
 pub mod sync;
+pub mod vod_cache;
 pub mod xtream;
 
 // Only the two types every caller outside this module needs are

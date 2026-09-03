@@ -30,7 +30,6 @@ const watched = computed(() => library.isWatched(props.media))
 
 const hover = ref(false)
 const removing = ref(false)
-const pressed = ref(false)
 
 function handleRemove() {
   removing.value = true
@@ -44,25 +43,24 @@ function handleClick(e: MouseEvent) {
   }
 }
 
-const reserve = computed(() => `auto ${ui.cardWidth}px auto ${Math.round(ui.cardWidth * 1.5)}px`)
+function play() {
+  return navigateTo(props.resumeTo || props.to || mediaLink(props.media))
+}
+
+// Not while hovered, though. The card you're pointing at is the definition of
+// relevant, so skipping it saves nothing — and skipped content paints nothing at
+// all. WebKitGTK re-runs that decision while the poster ring repaints, gets it
+// wrong for a frame, and the overlay blinks out. Chromium never does.
+const reserve = computed(() =>
+  `auto ${ui.cardWidth}px auto ${Math.round(ui.cardWidth * 1.5) + (props.detail ? 44 : 0)}px`)
 
 const isResume = computed(() => !!props.onRemove && !props.selectable)
 
 const cardStyle = computed(() => {
-  if (isResume.value) {
-    return {
-      transform: removing.value ? 'scale(0.9)' : 'scale(1)',
-      transition: 'transform 0.3s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.25s ease',
-      opacity: removing.value ? '0' : '1',
-    }
-  }
-  const scale = removing.value ? '0.85' : pressed.value ? '0.92' : hover.value ? '1.05' : '1'
-  const shadow = hover.value && !removing.value
-    ? '0 12px 28px rgba(0,0,0,0.35), 0 0 0 1px rgba(255,255,255,0.08)'
-    : '0 2px 8px rgba(0,0,0,0.15)'
+  if (!isResume.value)
+    return {}
   return {
-    transform: `scale(${scale})`,
-    boxShadow: shadow,
+    transform: removing.value ? 'scale(0.9)' : 'scale(1)',
     transition: 'transform 0.3s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.25s ease',
     opacity: removing.value ? '0' : '1',
   }
@@ -70,26 +68,20 @@ const cardStyle = computed(() => {
 </script>
 
 <template>
-  <div
+  <nuxt-link
+    :to="to ?? mediaLink(media)"
     class="group relative block select-none outline-none"
     :class="{ '[content-visibility:auto]': !hover }"
     :style="{ containIntrinsicSize: reserve, ...cardStyle }"
     @mouseenter="hover = true; ui.preview(media)"
-    @mouseleave="hover = false; pressed = false"
+    @mouseleave="hover = false"
     @focus="hover = true; ui.hover(media)"
     @blur="hover = false"
-    @mousedown="pressed = true"
-    @mouseup="pressed = false"
+    @click="handleClick"
   >
-    <!-- Poster image container: only the IMAGE is clipped, not the whole box -->
+    <!-- Ring lives on the poster, not the title under it. An outside ring on
+         the whole card is what boxed the caption in on hover. -->
     <div class="relative aspect-2/3 overflow-hidden rounded-lg bg-surface-container">
-      <!-- Navigation link covers entire poster, sits below interactive elements -->
-      <nuxt-link
-        :to="to ?? mediaLink(media)"
-        class="absolute inset-0 z-10"
-        @click="handleClick"
-      />
-
       <media-poster
         :src="posterUrl(media.poster, ui.posterSize)"
         :alt="media.title"
@@ -109,6 +101,7 @@ const cardStyle = computed(() => {
         size="28"
         variant="flat"
         color="white"
+        tabindex="-1"
         class="absolute right-1 top-1 z-30 rounded-full transition-[transform,opacity] duration-200"
         :class="removing ? 'scale-0 opacity-0 pointer-events-none' : hover ? 'opacity-100 shadow-lg shadow-black/30' : 'opacity-0 group-hover:opacity-90 focus-visible:opacity-100'"
         :style="{ transition: 'transform 0.3s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.25s ease, box-shadow 0.25s ease' }"
@@ -143,7 +136,8 @@ const cardStyle = computed(() => {
         </div>
       </div>
 
-      <!-- Hover overlay: play icon + title + year/rating on the poster -->
+      <!-- Hover / d-pad overlay: play, then title, then year and rating.
+           `hover` is also set from @focus, so a remote sees the same stack. -->
       <transition
         enter-active-class="transition-[opacity] duration-250 ease-out"
         leave-active-class="transition-[opacity] duration-200 ease-in"
@@ -152,21 +146,24 @@ const cardStyle = computed(() => {
       >
         <div
           v-if="hover && !removing"
-          class="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/50"
+          class="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/50 px-2"
         >
-          <nuxt-link
-            :to="resumeTo || to || mediaLink(media)"
-            class="grid size-14 place-items-center rounded-full bg-white shadow-xl transition-[transform,box-shadow] duration-200 hover:scale-110 hover:shadow-[0_4px_24px_rgba(255,255,255,0.35)]"
+          <button
+            type="button"
+            tabindex="-1"
+            class="grid size-14 place-items-center rounded-full bg-white shadow-xl transition-[transform,box-shadow] duration-200 hover:scale-110 hover:shadow-[0_4px_24px_rgba(255,255,255,0.35)] focus-visible:scale-110 focus-visible:shadow-[0_4px_24px_rgba(255,255,255,0.35)]"
             @pointerdown.stop
+            @click.stop.prevent="play()"
           >
             <v-icon :icon="mdiPlay" size="30" class="ml-0.5 text-black" />
-          </nuxt-link>
-          <div class="mt-2 text-center">
-            <div class="line-clamp-1 px-2 text-title-small font-semibold leading-tight text-white drop-shadow-[0_1px_4px_rgba(0,0,0,0.8)]">
+          </button>
+          <div class="mt-3 max-w-full text-center">
+            <div class="line-clamp-2 text-title-small font-semibold leading-tight text-white drop-shadow-[0_1px_4px_rgba(0,0,0,0.8)]">
               {{ media.title }}
             </div>
             <div class="mt-0.5 flex items-center justify-center gap-1 text-body-small text-white/80 drop-shadow-[0_1px_3px_rgba(0,0,0,0.7)]">
               <span v-if="media.year">{{ media.year }}</span>
+              <span v-if="media.year && media.rating" class="opacity-50">·</span>
               <span v-if="media.rating" class="flex items-center gap-0.5">
                 <svg viewBox="0 0 24 24" class="size-3 fill-amber-400"><path :d="mdiStar" /></svg>
                 {{ media.rating.toFixed(1) }}
@@ -176,8 +173,18 @@ const cardStyle = computed(() => {
         </div>
       </transition>
 
-      <!-- Focus ring -->
-      <div class="pointer-events-none absolute inset-0 rounded-lg opacity-0 ring-2 ring-inset ring-primary/50 transition-opacity duration-250 group-focus-visible:opacity-100 z-20" />
+      <!-- Inside the poster: hover, d-pad focus, and script-moved focus all
+           have to light this. An outside ring on the <a> boxed the title. -->
+      <div class="pointer-events-none absolute inset-0 z-20 rounded-lg opacity-0 ring-2 ring-inset ring-white transition-opacity duration-200 group-hover:opacity-100 group-focus:opacity-100 group-focus-visible:opacity-100" />
     </div>
-  </div>
+
+    <div v-if="detail" class="pt-2">
+      <div class="truncate text-title-small">
+        {{ media.title }}
+      </div>
+      <div class="truncate text-body-small opacity-55">
+        {{ media.year || $t('unknown') }}
+      </div>
+    </div>
+  </nuxt-link>
 </template>

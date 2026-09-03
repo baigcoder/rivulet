@@ -55,6 +55,16 @@ class RivuletPlayer(private val activity: MainActivity) {
   /** mpv keeps volume and mute apart, and the element has no mute at all. */
   private var vol = 100
   private var muted = false
+  private var videoScaleMode = MediaPlayer.ScaleType.SURFACE_BEST_FIT
+
+  /**
+   * Whether the user explicitly paused, as opposed to libVLC pausing because
+   * it is buffering. `paused-for-cache` must only be true when the player is
+   * stalling for data, not when the user hit pause — otherwise the frontend
+   * shows the loading spinner over the pause overlay.
+   */
+  @Volatile
+  private var userPaused = false
 
   @Volatile
   private var snap = JSONObject()
@@ -80,6 +90,7 @@ class RivuletPlayer(private val activity: MainActivity) {
   fun start(url: String) {
     failure = null
     running = true
+    userPaused = false
     onMain {
       val p = ensure()
       activity.setVlcVideoMode(true)
@@ -96,11 +107,21 @@ class RivuletPlayer(private val activity: MainActivity) {
       // Hardware decoders on; libVLC falls back to FFmpeg itself when a
       // device's MediaCodec claim doesn't pan out (the very reason E-AC-3
       // is silent under ExoPlayer on a lot of cheap TV boxes).
-      media.setHWDecoderEnabled(true, true)
+      media.setHWDecoderEnabled(true, false)
       // Options have to be added before the media is handed to the player and
       // before it is released. Adding one afterwards calls into a freed native
       // object and is the release-build crash seen when opening a stream.
       media.addOption(":network-caching=300")
+      media.addOption(":no-mediacodec-dr")
+      // Hardware decoders on with software fallback. For 4K content the
+      // hardware decoder may hit its resolution ceiling; FFmpeg picks up
+      // the frames it cannot handle. `avcodec-fast` disables certain
+      // quality features that are expensive on a phone-sized SoC, and
+      // skipping the loop filter shaves enough CPU for 4K on mid-range
+      // chips without visible quality loss at viewing distance.
+      media.addOption(":avcodec-fast")
+      media.addOption(":avcodec-skiploopfilter=4")
+      media.addOption(":avcodec-skipidct=4")
       p.media = media
       media.release()
       // Keep the page's mute/volume state when switching channels. This also
@@ -133,6 +154,10 @@ class RivuletPlayer(private val activity: MainActivity) {
       val name = cmd.optString(1)
       val value = cmd.opt(2)
       onMain { setProp(name, value) }
+    } else if (cmd.optString(0) == "seek") {
+      val amount = cmd.optDouble(1)
+      val flags = cmd.optString(2)
+      onMain { seek(amount, flags) }
     }
     // `sub-add` never reaches here: external subtitles are downloaded, parsed
     // and drawn by the page (utils/subtitles.ts), so the shim answers it itself.
@@ -211,7 +236,10 @@ class RivuletPlayer(private val activity: MainActivity) {
       // output module initialises successfully but produces silence. libVLC's
       // Android default selects AudioTrack/AAudio as appropriate for the
       // device and remains the safest route for APK builds.
-      lib = LibVLC(activity, arrayListOf("--no-stats"))
+      // TextureView + MediaCodec direct rendering is the usual 4K black
+      // frame: the decoder "succeeds" and never delivers pixels. Keep HW
+      // decode, but copy frames through the SurfaceTexture.
+      lib = LibVLC(activity, arrayListOf("--no-stats", "--no-mediacodec-dr"))
     }
 
     val p = MediaPlayer(lib)
@@ -221,11 +249,13 @@ class RivuletPlayer(private val activity: MainActivity) {
         MediaPlayer.Event.EncounteredError -> {
           running = false
           failure = "libVLC could not play this file."
-          android.util.Log.e("RivuletPlayer", "EncounteredError")
+          android.util.Log.e("RivuletPlayer", "EncounteredError — decoder failed or codec unsupported")
         }
         MediaPlayer.Event.EndReached -> running = false
-        MediaPlayer.Event.Paused, MediaPlayer.Event.Playing -> Unit
+        MediaPlayer.Event.Paused -> android.util.Log.d("RivuletPlayer", "Paused")
+        MediaPlayer.Event.Playing -> android.util.Log.d("RivuletPlayer", "Playing")
         MediaPlayer.Event.TimeChanged -> Unit
+        else -> android.util.Log.d("RivuletPlayer", "Event: ${event.type}")
       }
     }
 
@@ -285,11 +315,9 @@ class RivuletPlayer(private val activity: MainActivity) {
     activity.findViewById<ViewGroup>(android.R.id.content).addView(tv, 0, params)
     textureView = tv
     player = p
-    // Fill the player rectangle. `SURFACE_BEST_FIT` preserves a stale surface
-    // aspect after Android rotates and is the source of the right-hand blank
-    // area. Cropping a little edge content is preferable to a third of the
-    // screen being unusable, and matches normal fullscreen player behaviour.
-    p.setVideoScale(MediaPlayer.ScaleType.SURFACE_FILL)
+    // Same default as the page (contain / best-fit). Rotation is handled in
+    // `updateVideoLayout`, which reapplies the mode the user last picked.
+    p.setVideoScale(videoScaleMode)
     // Usually the listener runs after this assignment, but Android may report
     // an already-created TextureView synchronously. Attach in both orders so
     // a fast route transition cannot leave a playing stream with no output.
@@ -317,13 +345,16 @@ class RivuletPlayer(private val activity: MainActivity) {
     val view = textureView ?: return
     if (view.width <= 0 || view.height <= 0) return
     p.vlcVout.setWindowSize(view.width, view.height)
-    p.setVideoScale(MediaPlayer.ScaleType.SURFACE_FILL)
+    p.setVideoScale(videoScaleMode)
   }
 
   private fun setProp(name: String, value: Any?) {
     val p = player ?: return
     when (name) {
-      "pause" -> if (value == true) p.pause() else p.play()
+      "pause" -> {
+        userPaused = value == true
+        if (value == true) p.pause() else p.play()
+      }
       "time-pos" -> p.setTime((num(value, 0.0) * 1000).toLong())
       "volume" -> {
         vol = num(value, 100.0).toInt().coerceIn(0, 100)
@@ -335,6 +366,15 @@ class RivuletPlayer(private val activity: MainActivity) {
         p.volume = if (muted) 0 else vol
       }
       "speed" -> p.setRate(num(value, 1.0).toFloat().coerceAtLeast(0.1f))
+      "video-scale" -> {
+        val mode = value?.toString() ?: "fill"
+        videoScaleMode = when (mode) {
+          "contain" -> MediaPlayer.ScaleType.SURFACE_BEST_FIT
+          "cover" -> MediaPlayer.ScaleType.SURFACE_FILL
+          else -> MediaPlayer.ScaleType.SURFACE_FIT_SCREEN
+        }
+        p.setVideoScale(videoScaleMode)
+      }
       // Track selection. libVLC's `setAudioTrack(int)` / `setSpuTrack(int)`
       // take a track id (the values reported in `getAudioTrack()` / `getSpuTrack()`).
       // The page asks by `track-list` id; we map the negative "no track" case
@@ -347,6 +387,22 @@ class RivuletPlayer(private val activity: MainActivity) {
         val want = num(value, 0.0).toInt()
         p.setSpuTrack(if (want <= 0) -1 else subIdForListIndex(want - 1))
       }
+    }
+  }
+
+  /**
+   * Same flags as mpv's `seek`. Percent-seek is how live jumps to the edge:
+   * a live window has no useful duration, so 100% is `setPosition(1)`.
+   */
+  private fun seek(amount: Double, flags: String) {
+    val p = player ?: return
+    when {
+      flags.contains("absolute-percent") ->
+        p.setPosition((amount / 100.0).toFloat().coerceIn(0f, 1f))
+      flags.contains("absolute") ->
+        p.setTime((amount * 1000).toLong())
+      else ->
+        p.setTime(p.time + (amount * 1000).toLong())
     }
   }
 
@@ -398,7 +454,7 @@ class RivuletPlayer(private val activity: MainActivity) {
     val rate = p.rate.toDouble()
     snap = JSONObject()
       .put("pause", !p.isPlaying)
-      .put("paused-for-cache", !p.isPlaying && pos < duration)
+      .put("paused-for-cache", !p.isPlaying && !userPaused && pos < duration)
       .put("duration", duration)
       .put("time-pos", pos)
       .put("demuxer-cache-time", pos)

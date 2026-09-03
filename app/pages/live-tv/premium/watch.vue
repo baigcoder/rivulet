@@ -21,22 +21,39 @@
  * every transition, and nothing on this page keeps a second copy of it.
  */
 import type { EpgProgram, IPTVChannel } from '~/types/premium'
-import { mdiArrowLeft, mdiCheck, mdiCropFree, mdiFormatListBulleted, mdiMagnify, mdiReload, mdiStar, mdiStarOutline } from '@mdi/js'
+import { mdiArrowLeft, mdiCheck, mdiClose, mdiReload } from '@mdi/js'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { usePlaybackSource } from '~/composables/usePlaybackSource'
 import { MAX_RECONNECT_ATTEMPTS } from '~/stores/premiumTv'
+import { applyAspect, cycleAspect } from '~/utils/aspectRatio'
+import { friendlyPlaybackError } from '~/utils/playbackError'
 import { premiumApi } from '~/utils/premiumTv'
 
 definePageMeta({ layout: false })
 
 /** How often mpv's transport state is mirrored for the overlay. */
-const POLL_MS = 500
+const POLL_MS = 250
 
 const route = useRoute()
 const router = useRouter()
 const premium = usePremiumTvStore()
 const playback = usePlaybackSource()
 
-const channelId = computed(() => String(route.query.id ?? ''))
+const playKind = computed(() => {
+  const k = String(route.query.kind ?? 'live')
+  if (k === 'movie' || k === 'episode')
+    return k
+  return 'live'
+})
+
+const playId = computed(() => String(route.query.id ?? ''))
+const playExt = computed(() => String(route.query.ext ?? 'mkv'))
+const playTitle = computed(() => String(route.query.title ?? ''))
+
+const isVod = computed(() => playKind.value === 'movie' || playKind.value === 'episode')
+const playerMode = computed(() => isVod.value ? 'vod' : 'live')
+
+const channelId = computed(() => isVod.value ? '' : String(route.query.id ?? ''))
 
 /**
  * The channel being watched. Usually already in the store's page, but a
@@ -54,18 +71,41 @@ const playerRef = ref<{
   muted: boolean
   started: boolean
   buffering: boolean
-  ui: { value: boolean }
-  catchError?: { value: string }
-  videoWidth: { value: number }
-  videoHeight: { value: number }
-  resolutionLabel: { value: string }
+  ui: boolean
+  catchError?: string
+  errorMsg?: string
+  position?: number
+  duration?: number
+  videoWidth: number
+  videoHeight: number
+  resolutionLabel: string
+  ipc: (command: unknown[]) => Promise<unknown>
+  goLive: () => void | Promise<void>
+  behindLive?: boolean
 } | null>(null)
+
+function asBool(v: boolean | { value?: boolean } | undefined): boolean {
+  if (v && typeof v === 'object' && 'value' in v)
+    return !!v.value
+  return !!v
+}
+
+function asText(v: string | { value?: string } | undefined): string {
+  if (typeof v === 'string')
+    return v
+  if (v && typeof v === 'object' && 'value' in v)
+    return v.value ?? ''
+  return ''
+}
 const overlayRef = ref<{ show: () => void, hide: () => void, visible: boolean } | null>(null)
 
 const playerPlaying = ref(false)
+const playerBehindLive = ref(false)
 const playerVolume = ref(100)
 const playerMuted = ref(false)
 const playerCatchError = ref('')
+const playerPosition = ref(0)
+const playerDuration = ref(0)
 /**
  * Mirrored from the player rather than sensed here: on X11 and Win32 mpv's
  * window is in front of the page and swallows every mousemove, so the HUD's
@@ -73,8 +113,6 @@ const playerCatchError = ref('')
  */
 const playerChrome = ref(false)
 
-const showChannelDrawer = ref(false)
-const drawerSearch = ref('')
 const aspectRatio = ref<'contain' | 'cover' | 'fill'>('contain')
 const guideLoading = ref(false)
 
@@ -88,7 +126,11 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
 // ── What is on screen ────────────────────────────────────────────
 
-const channelName = computed(() => channel.value?.name ?? $t('Channel'))
+const channelName = computed(() => {
+  if (playTitle.value)
+    return playTitle.value
+  return channel.value?.name ?? $t('Channel')
+})
 const channelLogo = computed(() => channel.value?.logoUrl ?? '')
 
 const zapList = computed(() => premium.zapList)
@@ -110,6 +152,17 @@ const nowTitle = computed(() => {
  * error case is a full overlay below, not a line of small text.
  */
 const statusLine = computed(() => {
+  if (isVod.value) {
+    switch (premium.player) {
+      case 'loading': return $t('Loading…')
+      case 'buffering': return $t('Buffering…')
+      case 'reconnecting': return $t('Reconnecting… attempt {attempt} of {total}', {
+        attempt: premium.reconnectAttempt,
+        total: MAX_RECONNECT_ATTEMPTS,
+      })
+      default: return ''
+    }
+  }
   switch (premium.player) {
     case 'loading': return $t('Connecting to live stream…')
     case 'buffering': return $t('Buffering…')
@@ -129,17 +182,16 @@ const busy = computed(() =>
 const fatal = computed(() => premium.player === 'error')
 
 const overlayError = computed(() => {
-  if (premium.player === 'error')
-    return premium.playerError
-  if (playback.error.value)
-    return playback.error.value
-  return playerCatchError.value
-})
-
-const filteredDrawerChannels = computed(() => {
-  const q = drawerSearch.value.trim().toLowerCase()
-  const rows = zapList.value.map((c, originalIndex) => ({ ...c, originalIndex }))
-  return q ? rows.filter(c => c.name.toLowerCase().includes(q)) : rows
+  // VOD errors live in MpvPlayer's centre overlay — duplicating them here
+  // showed "Playback failed" over a title that was still playing audio.
+  if (isVod.value)
+    return ''
+  const raw = premium.player === 'error'
+    ? premium.playerError
+    : playback.error.value || playerCatchError.value
+  if (!raw)
+    return ''
+  return friendlyPlaybackError(raw)
 })
 
 // ── Loading a channel ────────────────────────────────────────────
@@ -220,33 +272,46 @@ function switchQuality(ch: IPTVChannel): void {
  * and the guide, a reconnect keeps the counter that scheduled it.
  */
 async function load({ fresh } = { fresh: true }): Promise<void> {
-  const id = channelId.value
+  const id = isVod.value ? playId.value : channelId.value
+  const kind = playKind.value === 'movie'
+    ? 'movie' as const
+    : playKind.value === 'episode'
+      ? 'episode' as const
+      : 'channel' as const
   clearReconnect()
   if (!id) {
-    premium.setPlayer('error', $t('No channel was given to play.'))
+    premium.setPlayer('error', isVod.value ? $t('Nothing was given to play.') : $t('No channel was given to play.'))
     return
   }
   if (fresh) {
     premium.resetPlayer()
     void premium.ensureLoaded()
+    await premium.probeAccount()
+    if (premium.atConnectionLimit === true) {
+      const a = premium.account
+      premium.setPlayer('error', $t('Your provider is at its connection limit ({active} of {max} streams in use). Stop playback on your other devices, then try again.', {
+        active: a?.activeConnections ?? 1,
+        max: a?.maxConnections ?? 1,
+      }))
+      return
+    }
   }
   premium.setPlayer(fresh ? 'loading' : 'reconnecting')
   playerCatchError.value = ''
 
-  await playback.load(id)
+  await playback.load(id, { kind, ext: playExt.value })
   // A zap that landed while this was in flight owns the page now.
-  if (id !== channelId.value)
+  if (id !== (isVod.value ? playId.value : channelId.value))
     return
 
   if (playback.error.value || !playback.source.value) {
-    // Failing to *mint* a source is not a dead stream — it is the API
-    // saying no (entitlement, no provider, channel gone). Retrying it on
-    // a timer would only repeat the refusal, so it is final and said once.
-    premium.setPlayer('error', playback.error.value || $t('This channel could not be opened.'))
+    premium.setPlayer('error', playback.error.value || (isVod.value
+      ? $t('This title could not be opened.')
+      : $t('This channel could not be opened.')))
     return
   }
 
-  if (fresh) {
+  if (fresh && !isVod.value) {
     const ch = await resolveChannel(id)
     if (id !== channelId.value)
       return
@@ -277,6 +342,27 @@ function retry(): void {
  */
 async function onPlaybackFailed(reason?: 'stub' | 'dead' | 'refused'): Promise<void> {
   clearReconnect()
+  if (isVod.value) {
+    // mpv can log a failed sub-stream while the main file keeps playing —
+    // only treat it as dead when transport has actually stopped.
+    if (playerPlaying.value || playerPosition.value > 0.5)
+      return
+    if (reason === 'refused') {
+      await premium.probeAccount()
+      if (premium.atConnectionLimit === true) {
+        const a = premium.account
+        premium.setPlayer('error', $t('Your provider is at its connection limit ({active} of {max} streams in use). Stop playback on your other devices, then try again.', {
+          active: a?.activeConnections ?? 1,
+          max: a?.maxConnections ?? 1,
+        }))
+        return
+      }
+    }
+    premium.setPlayer('error', reason === 'refused'
+      ? $t('The provider refused this stream. Your account may be at its connection limit.')
+      : $t('This title stopped responding. Try again.'))
+    return
+  }
   if (reason === 'refused') {
     await premium.probeAccount()
     // A limit we can see is a limit worth naming: retrying cannot help
@@ -318,11 +404,20 @@ function syncPlayerState(): void {
   if (!p)
     return
   const wasPlaying = playerPlaying.value
-  playerPlaying.value = p.started && !p.paused
-  playerVolume.value = p.volume
-  playerMuted.value = p.muted
-  playerChrome.value = p.ui?.value === true
-  playerCatchError.value = p.catchError?.value ?? ''
+  playerPlaying.value = asBool(p.started) && !asBool(p.paused)
+  playerBehindLive.value = asBool(p.behindLive)
+  playerVolume.value = typeof p.volume === 'number' ? p.volume : 100
+  playerMuted.value = asBool(p.muted)
+  playerChrome.value = asBool(p.ui)
+  playerPosition.value = typeof p.position === 'number' ? p.position : 0
+  playerDuration.value = typeof p.duration === 'number' ? p.duration : 0
+
+  // Drop stale player errors while the clock is moving — a log line from
+  // startup must not cover a title that is already playing.
+  if (playerPlaying.value || playerPosition.value > 0.5)
+    playerCatchError.value = ''
+  else
+    playerCatchError.value = asText(p.errorMsg ?? p.catchError)
 
   // Successful start → clear any stale errors from the previous load or
   // reconnect attempt. Otherwise a dead-token error sits forever under a
@@ -331,24 +426,39 @@ function syncPlayerState(): void {
     premium.resetPlayer()
     premium.setPlayer('playing')
     playerCatchError.value = ''
-    if (p.catchError?.value != null)
-      p.catchError!.value = ''
+    if (typeof p.catchError === 'object' && p.catchError && 'value' in p.catchError)
+      (p.catchError as { value: string }).value = ''
+    const i = channelIndex.value
+    playback.prefetch([zapList.value[i - 1]?.id, zapList.value[i + 1]?.id])
   }
 
   if (premium.player === 'reconnecting' || premium.player === 'error')
     return
-  if (!p.started)
+  if (!asBool(p.started))
     return
-  if (p.buffering)
+  if (asBool(p.buffering))
     premium.setPlayer('buffering')
-  else if (p.paused)
+  else if (asBool(p.paused))
     premium.setPlayer('paused')
   else
     premium.setPlayer('playing')
 }
 
 function onTogglePlay(): void {
-  playerRef.value?.togglePlay()
+  const p = playerRef.value
+  if (!p) {
+    void load({ fresh: true })
+    return
+  }
+  p.togglePlay()
+  setTimeout(syncPlayerState, 0)
+}
+
+function onGoLive(): void {
+  const p = playerRef.value
+  if (!p?.goLive)
+    return
+  void p.goLive()
   setTimeout(syncPlayerState, 0)
 }
 
@@ -367,10 +477,11 @@ function onActivity(): void {
 }
 
 function cycleAspectRatio(): void {
-  aspectRatio.value = aspectRatio.value === 'contain'
-    ? 'cover'
-    : aspectRatio.value === 'cover' ? 'fill' : 'contain'
+  aspectRatio.value = cycleAspect(aspectRatio.value)
+  applyAspect(playerRef.value, aspectRatio.value)
 }
+watch(aspectRatio, mode => applyAspect(playerRef.value, mode))
+watch(playerRef, player => applyAspect(player, aspectRatio.value))
 
 function toggleFav(): void {
   const ch = channel.value
@@ -394,15 +505,7 @@ function toggleFullscreen(): void {
 function goBack(): void {
   premium.resetPlayer()
   playerCatchError.value = ''
-  const from = String(route.query.from ?? '')
-  if (from) {
-    void router.replace(from)
-    return
-  }
-  if (window.history.length > 1)
-    router.back()
-  else
-    void router.replace(localePath('/live-tv/premium'))
+  void router.replace(localePath(liveTvFrom(String(route.query.from ?? ''), '/live-tv/premium')))
 }
 
 /**
@@ -415,7 +518,6 @@ function zapTo(index: number): void {
   const target = zapList.value[index]
   if (!target || target.id === channelId.value)
     return
-  showChannelDrawer.value = false
   void router.replace({
     path: localePath('/live-tv/premium/watch'),
     query: { id: target.id, from: String(route.query.from ?? '') },
@@ -431,10 +533,11 @@ function zap(direction: 1 | -1): void {
 function onKey(e: KeyboardEvent): void {
   if (e.key === 'Escape' || e.key === 'Backspace' || e.key === 'GoBack') {
     e.preventDefault()
-    if (showChannelDrawer.value)
-      showChannelDrawer.value = false
-    else
-      goBack()
+    if (showQualityPicker.value) {
+      showQualityPicker.value = false
+      return
+    }
+    goBack()
   }
   else if ((e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === 'ChannelUp') && hasNext.value) {
     e.preventDefault()
@@ -458,7 +561,7 @@ onMounted(() => {
 
 // A zap only changes the query, so the page stays mounted and this is
 // what starts the next channel.
-watch(channelId, () => {
+watch([channelId, playId, playKind], () => {
   void load({ fresh: true })
 })
 
@@ -507,7 +610,7 @@ onUnmounted(() => {
         :src="playback.source.value.url"
         :status="statusLine"
         :title="channelName"
-        mode="live"
+        :mode="playerMode"
         :user-agent="playback.source.value.userAgent"
         :referer="playback.source.value.referer"
         @failed="reason => void onPlaybackFailed(reason)"
@@ -520,104 +623,53 @@ onUnmounted(() => {
          center error modal, so when the premium state machine lands on
          "error" the overlay must still be mounted to show it. -->
     <live-tv-live-player-overlay
-      v-if="playback.source.value || fatal"
       ref="overlayRef"
       class="!z-40"
+      :variant="isVod ? 'vod' : 'live'"
       :playing="playerPlaying"
+      :behind-live="playerBehindLive"
       :volume="playerVolume"
       :muted="playerMuted"
-      :has-prev="hasPrev"
-      :has-next="hasNext"
+      :has-prev="isVod ? false : hasPrev"
+      :has-next="isVod ? false : hasNext"
       :busy="busy"
       :channel-name="channelName"
-      :channel-logo="channelLogo"
-      :channel-index="channelIndex >= 0 ? channelIndex : 0"
-      :channel-total="zapList.length"
-      :channel-list="zapList"
+      :now-playing="isVod ? '' : nowTitle"
+      :channel-logo="isVod ? '' : channelLogo"
+      :channel-index="isVod ? 0 : (channelIndex >= 0 ? channelIndex : 0)"
+      :channel-total="isVod ? 0 : zapList.length"
+      :channel-list="isVod ? [] : zapList"
+      :position="playerPosition"
+      :duration="playerDuration"
       :is-favorite="isFavorite"
       :is-fullscreen="isFullscreen"
       :chrome-up="playerChrome"
       :error="overlayError"
-      :resolution-label="playerRef?.resolutionLabel?.value ?? ''"
+      :resolution-label="typeof playerRef?.resolutionLabel === 'string' ? playerRef.resolutionLabel : ''"
       :source-quality="playback.source.value?.quality ?? null"
       :quality-variants="qualityVariants"
       :quality-loading="qualityLoading"
+      :aspect-ratio="aspectRatio"
       @back="goBack"
       @prev="zap(-1)"
       @next="zap(1)"
       @zap-to="zapTo"
       @retry="() => void load({ fresh: true })"
       @toggle-play="onTogglePlay"
+      @go-live="onGoLive"
       @toggle-mute="onToggleMute"
       @set-volume="onSetVolume"
       @toggle-favorite="toggleFav"
       @toggle-fullscreen="toggleFullscreen"
       @show-quality-picker="showQualityPicker = !showQualityPicker"
-    >
-      <template #info>
-        <div
-          v-if="channelLogo"
-          class="grid size-10 shrink-0 place-items-center overflow-hidden rounded-xl bg-white/10 p-1 ring-1 ring-white/15"
-        >
-          <img :src="channelLogo" :alt="channelName" class="size-full object-contain" loading="lazy" decoding="async">
-        </div>
-        <div class="min-w-0">
-          <div class="flex items-center gap-2">
-            <span class="inline-flex items-center gap-1 rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-bold tracking-wide text-white">
-              <span class="size-1.5 rounded-full bg-white" /> {{ $t('LIVE') }}
-            </span>
-            <span v-if="channelIndex >= 0" class="text-label-small text-white/70 tabular-nums">
-              {{ $t('CH {number} / {total}', { number: channelIndex + 1, total: zapList.length }) }}
-            </span>
-          </div>
-          <h1 class="mt-0.5 truncate text-title-medium font-bold text-white">
-            {{ channelName }}
-          </h1>
-          <p v-if="nowTitle" class="truncate text-body-small text-white/70">
-            {{ nowTitle }}
-          </p>
-        </div>
-      </template>
-      <template #actions>
-        <button
-          v-if="channel"
-          type="button"
-          class="grid size-10 place-items-center rounded-full bg-black/40 text-white transition-colors hover:bg-black/60 focus-visible:bg-black/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-          :title="premium.isFavorite(channel) ? $t('Remove from favorites') : $t('Add to favorites')"
-          :aria-label="premium.isFavorite(channel) ? $t('Remove from favorites') : $t('Add to favorites')"
-          :aria-pressed="premium.isFavorite(channel)"
-          @click="toggleFav"
-        >
-          <v-icon :icon="premium.isFavorite(channel) ? mdiStar : mdiStarOutline" size="18" />
-        </button>
-        <button
-          type="button"
-          class="grid size-10 place-items-center rounded-full bg-black/40 text-white transition-colors hover:bg-black/60 focus-visible:bg-black/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-          :title="$t('Aspect Ratio')"
-          :aria-label="$t('Aspect Ratio')"
-          @click="cycleAspectRatio"
-        >
-          <v-icon :icon="mdiCropFree" size="18" />
-        </button>
-        <button
-          v-if="zapList.length > 0"
-          type="button"
-          class="grid size-10 place-items-center rounded-full bg-black/40 text-white transition-colors hover:bg-black/60 focus-visible:bg-black/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-          :title="$t('Channels')"
-          :aria-label="$t('Channels')"
-          @click="showChannelDrawer = !showChannelDrawer"
-        >
-          <v-icon :icon="mdiFormatListBulleted" size="18" />
-        </button>
-      </template>
-    </live-tv-live-player-overlay>
+      @cycle-aspect-ratio="cycleAspectRatio"
+    />
 
     <!-- Guide. Renders nothing at all when the provider has no listing for
          this channel — an empty container with headings in it is worse
-         than no panel. Hidden while the drawer is open so the two do not
-         fight over the same corner. -->
+         than no panel. -->
     <div
-      v-if="!fatal && !showChannelDrawer && (guide.length > 0 || guideLoading)"
+      v-if="!fatal && !isVod && (guide.length > 0 || guideLoading)"
       class="pointer-events-none absolute bottom-24 left-4 z-30 w-80 max-w-[85vw] rounded-2xl bg-black/70 p-4 text-white ring-1 ring-white/10 transition-opacity duration-300"
       :class="overlayRef?.visible ? 'opacity-100' : 'opacity-0'"
     >
@@ -665,115 +717,57 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Quick channel list. The zap list as displayed, so it matches what
-         channel-up walks; searchable, because a thousand-channel provider
-         makes scrolling to a name absurd. -->
-    <div
-      v-if="showChannelDrawer"
-      class="absolute inset-y-0 right-0 z-40 flex w-80 max-w-[85vw] flex-col border-s border-white/10 bg-black/85 p-4 text-white"
-    >
-      <div class="flex items-center justify-between gap-2 pb-3">
-        <h2 class="text-title-medium font-bold">
-          {{ $t('Channels') }}
-        </h2>
-        <v-btn
-          icon
-          size="x-small"
-          variant="text"
-          :aria-label="$t('Close')"
-          @click="showChannelDrawer = false"
-        >
-          <v-icon :icon="mdiArrowLeft" />
-        </v-btn>
-      </div>
-
-      <div class="relative mb-3">
-        <v-icon :icon="mdiMagnify" size="18" class="absolute left-3 top-2.5 text-white/50" />
-        <input
-          v-model="drawerSearch"
-          type="text"
-          :placeholder="$t('Search channels')"
-          :aria-label="$t('Search channels')"
-          class="w-full rounded-xl border border-white/15 bg-white/10 py-1.5 pl-9 pr-3 text-body-small text-white placeholder-white/40 outline-none focus:border-primary"
-        >
-      </div>
-
-      <div class="flex-1 space-y-1 overflow-y-auto" data-dpad-start>
-        <button
-          v-for="ch in filteredDrawerChannels"
-          :key="ch.id"
-          type="button"
-          class="flex w-full items-center gap-3 rounded-xl p-2.5 text-start transition-colors"
-          :class="ch.originalIndex === channelIndex
-            ? 'bg-primary font-bold text-on-primary'
-            : 'text-white/80 hover:bg-white/10 hover:text-white focus-visible:bg-white/10 focus-visible:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary'"
-          :aria-current="ch.originalIndex === channelIndex ? 'true' : undefined"
-          @click="zapTo(ch.originalIndex)"
-        >
-          <span class="w-7 shrink-0 text-label-small tabular-nums opacity-60">
-            {{ ch.originalIndex + 1 }}
-          </span>
-          <div v-if="ch.logoUrl" class="grid size-7 shrink-0 place-items-center overflow-hidden rounded-md bg-white/10">
-            <img :src="ch.logoUrl" :alt="ch.name" class="size-full object-contain" loading="lazy" decoding="async">
-          </div>
-          <span class="flex-1 truncate text-body-small">{{ ch.name }}</span>
-        </button>
-        <p v-if="filteredDrawerChannels.length === 0" class="p-3 text-body-small opacity-60">
-          {{ $t('No channels match that search.') }}
-        </p>
-      </div>
-    </div>
-
-    <!-- Quality picker. Lists quality variants for the current channel
-         (e.g. "BBC One HD", "BBC One 4K"). Hidden when no variants exist.
-         z-50 to sit above the overlay (z-40). -->
+    <!-- Quality picker. A compact card, not a full-height drawer: the
+         drawer started at the top-right of the window and sat under the
+         title-bar controls and the LIVE header. `data-cut` punches the
+         mpv hole; a translucent fill there would show the page's black. -->
     <div
       v-if="showQualityPicker && qualityVariants.length > 0"
-      class="absolute inset-0 z-50 flex justify-end"
+      class="absolute inset-0 z-50"
       @click.self="showQualityPicker = false"
     >
       <div
-        class="flex h-full w-72 max-w-[85vw] flex-col border-s border-white/10 bg-black/90 p-4 text-white shadow-2xl"
+        data-cut
+        class="absolute end-4 top-24 flex w-80 max-w-[calc(100vw-2rem)] max-h-[min(70vh,24rem)] flex-col overflow-hidden rounded-2xl border border-white/15 bg-neutral-950 text-white shadow-2xl"
         @click.stop
       >
-        <div class="flex items-center justify-between gap-2 pb-3">
-          <h2 class="text-title-medium font-bold">
+        <div class="flex shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+          <h2 class="text-title-small font-bold">
             {{ $t('Quality') }}
           </h2>
-          <v-btn
-            icon
-            size="x-small"
-            variant="text"
+          <button
+            type="button"
+            class="grid size-8 shrink-0 place-items-center rounded-lg text-white/70 transition-colors hover:bg-white/10 hover:text-white focus-visible:bg-white/10 focus-visible:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             :aria-label="$t('Close')"
             @click="showQualityPicker = false"
           >
-            <v-icon :icon="mdiArrowLeft" />
-          </v-btn>
+            <v-icon :icon="mdiClose" size="18" />
+          </button>
         </div>
 
-        <div class="flex-1 space-y-1 overflow-y-auto" data-dpad-start>
+        <div class="min-h-0 flex-1 space-y-1 overflow-y-auto p-2" data-dpad-start>
           <!-- Current channel -->
           <button
             type="button"
-            class="flex w-full items-center gap-3 rounded-xl p-2.5 text-start transition-colors bg-primary font-bold text-on-primary"
+            class="flex w-full items-center gap-3 rounded-xl bg-primary p-2.5 text-start font-bold text-on-primary"
             aria-current="true"
           >
-            <span class="flex-1 truncate text-body-small">{{ channelName }}</span>
-            <span v-if="playback.source.value?.quality" class="text-label-small opacity-70">
+            <span class="min-w-0 flex-1 truncate text-body-small">{{ channelName }}</span>
+            <span v-if="playback.source.value?.quality" class="shrink-0 text-label-small opacity-80">
               {{ playback.source.value.quality }}
             </span>
-            <v-icon :icon="mdiCheck" size="16" />
+            <v-icon :icon="mdiCheck" size="16" class="shrink-0" />
           </button>
           <!-- Variants -->
           <button
             v-for="variant in qualityVariants"
             :key="variant.id"
             type="button"
-            class="flex w-full items-center gap-3 rounded-xl p-2.5 text-start transition-colors text-white/80 hover:bg-white/10 hover:text-white focus-visible:bg-white/10 focus-visible:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            class="flex w-full items-center gap-3 rounded-xl p-2.5 text-start text-white/80 transition-colors hover:bg-white/10 hover:text-white focus-visible:bg-white/10 focus-visible:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             @click="switchQuality(variant)"
           >
-            <span class="flex-1 truncate text-body-small">{{ variant.name }}</span>
-            <span v-if="variant.quality" class="text-label-small opacity-70">
+            <span class="min-w-0 flex-1 truncate text-body-small">{{ variant.name }}</span>
+            <span v-if="variant.quality" class="shrink-0 text-label-small opacity-70">
               {{ variant.quality }}
             </span>
           </button>
