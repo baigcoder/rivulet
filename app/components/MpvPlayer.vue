@@ -321,7 +321,10 @@ const scrubbing = ref(false)
 /** While the volume slider is being dragged, the poll must not fight it back. */
 const volumeHeld = ref(false)
 const errorMsg = ref('')
-const friendlyError = computed(() => friendlyPlaybackError(errorMsg.value))
+/** Empty stays empty: `friendlyPlaybackError('')` is the generic overlay
+ *  sentence, and the live watch page treats any string here as a full-screen
+ *  failure — including while the stream has not started yet. */
+const friendlyError = computed(() => errorMsg.value ? friendlyPlaybackError(errorMsg.value) : '')
 /** The current stream was a debrid stub clip (quota/key error) — remembered for the failover verdict. */
 const stubSeen = ref(false)
 /** Chapter list fetched once when the file opens. */
@@ -1805,11 +1808,17 @@ async function waitForStream(url: string, timeoutMs = 60000): Promise<{ ok: bool
   const deadline = Date.now() + (local ? timeoutMs : proxy ? 10000 : timeoutMs)
   let status = 0
   while (Date.now() < deadline) {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), Math.max(1, deadline - Date.now()))
     try {
-      const res = await fetch(url, proxy ? undefined : { headers: { Range: 'bytes=0-0' } })
+      const res = await fetch(url, proxy
+        ? { signal: ctrl.signal, cache: 'no-store' }
+        : { signal: ctrl.signal, cache: 'no-store', headers: { Range: 'bytes=0-0' } })
       status = res.status
-      // Release the connection so librqbit isn't left holding a reader.
-      await res.arrayBuffer().catch(() => {})
+      // A live MPEG-TS has no end. `arrayBuffer()` waited for it, so Free TV
+      // hung in the probe and mpv never started. Cancel the body: the status
+      // is the verdict, and librqbit is not left holding a reader either.
+      void res.body?.cancel().catch(() => {})
       if (res.ok || res.status === 206) {
         // Some debrid resolvers answer a dead quota with a tiny placeholder
         // clip ("limits_exceeded.mp4") — valid video bytes, wrong movie. The
@@ -1857,6 +1866,9 @@ async function waitForStream(url: string, timeoutMs = 60000): Promise<{ ok: bool
       }
       // Engine momentarily unreachable — keep waiting.
     }
+    finally {
+      clearTimeout(timer)
+    }
     await new Promise(r => setTimeout(r, 150))
   }
   return { ok: false, status }
@@ -1901,17 +1913,19 @@ async function startPlayer() {
     // so a `fetch()` probe would always fail (or, worse, leak the
     // password in the request URL). Native mpv has no CORS constraint
     // and is the one that opens the stream — let it be the verdict.
+    // Proxied Free TV is the same call: a live TS never ends, so reading
+    // the probe body used to hang until the upstream dropped and mpv never
+    // started. The proxy already answered CORS; mpv is the judge.
     interface Probe { ok: boolean, status: number, unknown?: boolean, stub?: boolean }
     let probe: Probe
-    if (fromIptv.value) {
+    if (fromIptv.value || fromProxy.value) {
       probe = { ok: true, status: 0, unknown: true }
     }
     else {
       // Never hand mpv a URL that isn't serving yet — it exits instantly on a 500.
       // A torrent stream gets the patient window (peers need time to appear);
-      // a proxied live stream gets a medium window (upstream may be slow to
-      // answer the first HLS manifest request); a direct debrid/server link
-      // is one probe (or an instant CORS miss) and then mpv opens it.
+      // a direct debrid/server link is one probe (or an instant CORS miss)
+      // and then mpv opens it. Proxied live streams skip this: see above.
       waiting.value = true
       probe = await waitForStream(
         props.src,
@@ -2835,6 +2849,11 @@ const centre = computed(() => {
     return 'error'
   if (ended.value)
     return 'ended'
+  // The live watch page draws its own connecting / skip notice over the
+  // player. Returning a centre overlay here stacked "Buffering" on
+  // "trying the next one" in the same pill.
+  if (isLive.value && props.resolving)
+    return ''
   if (busy.value || props.resolving)
     return 'loading'
   // Show the buffering indicator when the engine is running but no frame has
@@ -3464,7 +3483,7 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
 
       <template v-else>
         <v-progress-circular indeterminate color="primary" size="28" width="3" />
-        <span>{{ $t('Buffering') }}<template v-if="status"> · {{ status }}</template></span>
+        <span>{{ $t('Buffering') }}<template v-if="status && !isLive"> · {{ status }}</template></span>
       </template>
     </div>
 

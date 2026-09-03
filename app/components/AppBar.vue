@@ -15,7 +15,7 @@ const routeName = useRouteBaseName()
 const isLiveTv = computed(() => route.path.includes('/live-tv'))
 
 function goBack() {
-  if (isLiveTv.value && !/\/live-tv\/?$/.test(route.path)) {
+  if (isLiveTv.value) {
     void router.replace(localePath(liveTvBackPath(route.path)))
     return
   }

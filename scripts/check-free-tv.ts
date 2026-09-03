@@ -108,6 +108,44 @@ assert.match(watchPage, /@go-live=/, 'resume after pause must offer a jump back 
 assert.doesNotMatch(watchPage, /playNow\(rawUrl/, 'the free player must never hand mpv a raw upstream URL')
 assert.match(watchPage, /proxyFreeStreamUrl\([\s\S]*\.ts/, 'm3u8 failure retries .ts through the loopback proxy')
 assert.match(freePage, /saveLivePlay/, 'play must stage the stream before navigating')
+assert.match(watchPage, /@retry="\(\) => void onRetry\(\)"/, 'Retry must restart the player, not only re-mint a cached proxy URL')
+assert.match(
+  watchPage,
+  /:resolving="resolving \|\| autoSkipping"/,
+  'the player must not draw Buffering while the skip notice is on screen',
+)
+assert.doesNotMatch(
+  watchPage,
+  /:status="statusLine"/,
+  'the skip sentence is the page overlay, not a second line inside Buffering',
+)
+
+const playerSrc = readFileSync(new URL('../app/components/MpvPlayer.vue', import.meta.url), 'utf8')
+assert.match(
+  playerSrc,
+  /fromIptv\.value \|\| fromProxy\.value/,
+  'proxied live streams skip the HTTP probe — a live TS has no end',
+)
+assert.match(
+  playerSrc,
+  /res\.body\?\.cancel/,
+  'if the probe does run, it must not read a live body into an arrayBuffer',
+)
+assert.match(
+  playerSrc,
+  /errorMsg\.value \? friendlyPlaybackError/,
+  'an empty player error is not the generic overlay sentence',
+)
+assert.match(
+  playerSrc,
+  /isLive\.value && props\.resolving/,
+  'live mode must not paint a centre overlay while the page owns the notice',
+)
+assert.match(
+  playerSrc,
+  /status && !isLive/,
+  'Buffering must not append the live skip sentence',
+)
 
 const categoryPage = readFileSync(new URL('../app/pages/live-tv/free/category/[category].vue', import.meta.url), 'utf8')
 assert.doesNotMatch(categoryPage, /LiveCategoryPage/, 'category deep-links stay on the unified Free TV shell')
@@ -142,8 +180,18 @@ assert.ok(
 )
 
 assert.equal(liveTvBackPath('/live-tv/free'), '/live-tv', 'Free TV browse goes to the hub')
+assert.equal(liveTvBackPath('/live-tv'), '/', 'the hub goes home, not into a stack of live-tv pages')
+assert.equal(liveTvBackPath('/live-tv/'), '/', 'trailing slash on the hub is still home')
 assert.equal(liveTvBackPath('/live-tv/watch'), '/live-tv/free', 'the free player goes to Free TV, not history')
 assert.equal(liveTvBackPath('/live-tv/premium/watch'), '/live-tv/premium', 'the premium player goes to Premium TV')
+
+const appBar = readFileSync(new URL('../app/components/AppBar.vue', import.meta.url), 'utf8')
+assert.match(appBar, /if \(isLiveTv\.value\) \{/, 'the toolbar Back arrow uses the live-tv ladder on every live-tv route')
+assert.doesNotMatch(
+  appBar,
+  /isLiveTv\.value && !/,
+  'the hub must not fall through to router.back() — that never reaches Home',
+)
 assert.equal(liveTvFrom('/live-tv/watch?id=1', '/live-tv/free'), '/live-tv/free', 'a player URL is never a from= target')
 assert.equal(liveTvFrom('/live-tv/free', '/live-tv'), '/live-tv/free', 'a browse path is kept')
 

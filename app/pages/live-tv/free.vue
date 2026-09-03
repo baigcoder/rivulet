@@ -91,15 +91,6 @@ const status = computed(() => {
   return { tone: 'bg-primary', label: $t('Ready') }
 })
 
-/** Favorites strip on All only — Recent has its own sidebar section. */
-const resumeStrip = computed(() => {
-  if (liveTv.view !== 'all' || liveTv.searchQuery)
-    return null
-  if (liveTv.favoriteChannels.length)
-    return { title: $t('Favorites'), channels: liveTv.favoriteChannels }
-  return null
-})
-
 const showEmpty = computed(() =>
   !liveTv.visibleLoading && !liveTv.m3uImporting && channels.value.length === 0,
 )
@@ -308,7 +299,7 @@ watch(liveCategory, name => {
     </live-tv-live-browse-header>
 
     <div class="flex min-h-0 flex-1 gap-4">
-      <aside v-if="railPinned" class="w-56 shrink-0 xl:w-60">
+      <aside v-if="railPinned" class="flex min-h-0 w-56 shrink-0 flex-col xl:w-60">
         <premium-tv-premium-sidebar
           :view="liveTv.view"
           :selected-category="liveTv.selectedCategory"
@@ -316,6 +307,7 @@ watch(liveCategory, name => {
           :total-channels="liveTv.totalChannels"
           :favorite-count="liveTv.favKeys.size"
           :recent-count="liveTv.recentChannels.length"
+          categories-open
           @set-view="pickView"
           @set-category="liveTv.setCategory($event)"
         />
@@ -373,17 +365,6 @@ watch(liveCategory, name => {
         </div>
 
         <template v-else>
-          <live-tv-live-channel-scroll-row
-            v-if="resumeStrip"
-            class="shrink-0"
-            :title="resumeStrip.title"
-            :channels="resumeStrip.channels"
-            :get-epg="liveTv.getEpg"
-            :is-favorite="liveTv.isFavorite"
-            :is-offline="liveTv.isOffline"
-            @play="playChannel"
-            @toggle-favorite="liveTv.toggleFavorite($event)"
-          />
           <live-tv-live-channel-grid
             class="min-h-0 flex-1"
             :channels="channels"
@@ -417,6 +398,7 @@ watch(liveCategory, name => {
             :total-channels="liveTv.totalChannels"
             :favorite-count="liveTv.favKeys.size"
             :recent-count="liveTv.recentChannels.length"
+            categories-open
             @set-view="pickView"
             @set-category="pickCategory"
           />

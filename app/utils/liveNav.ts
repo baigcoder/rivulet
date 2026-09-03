@@ -14,6 +14,10 @@ export function liveTvBackPath(path: string): string {
     return '/live-tv/free'
   if (/\/live-tv\/premium\//.test(path))
     return '/live-tv/premium'
+  // The hub itself. `router.back()` from here walks a stack of replaced
+  // browse/player entries and never reaches Home.
+  if (/\/live-tv\/?$/.test(path))
+    return '/'
   return '/live-tv'
 }
 

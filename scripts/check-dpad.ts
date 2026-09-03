@@ -147,6 +147,12 @@ for (const hook of ['__tvBack', '__tvOk']) {
   assert.ok(plugin.includes(`window.${hook} =`), `and dpad.client.ts still defines it`)
 }
 
+assert.match(
+  plugin,
+  /liveTvBackPath/,
+  'remote Back on Live TV uses the same ladder as the toolbar arrow',
+)
+
 // BACK arrives by two different mechanisms and the app must not care which:
 // below API 33 as a KeyEvent, and from API 33 (declared) or 35 (whether declared
 // or not) through OnBackInvokedDispatcher, where `onKeyDown` is never called at

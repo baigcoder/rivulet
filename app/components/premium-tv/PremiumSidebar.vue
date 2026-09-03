@@ -17,7 +17,7 @@
 import type { PremiumView } from '~/stores/premiumTv'
 import type { CategoryCount } from '~/types/premium'
 import { mdiChevronDown, mdiChevronRight, mdiHistory, mdiStar, mdiTelevisionClassic } from '@mdi/js'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { categoryLabel, isBundleCategory, parseCategoryName } from '~/utils/categoryLabel'
 
 const props = defineProps<{
@@ -27,6 +27,8 @@ const props = defineProps<{
   totalChannels: number
   favoriteCount: number
   recentCount: number
+  /** Free TV's iptv-org list is short — keep it open so the rail matches Premium. */
+  categoriesOpen?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -44,7 +46,16 @@ const filter = ref('')
  * wall. Open by default — hiding the catalog behind a click would be the
  * opposite mistake.
  */
-const groupsOpen = ref(false)
+const groupsOpen = ref(props.categoriesOpen === true)
+
+watch(
+  () => props.view,
+  v => {
+    if (v === 'category')
+      groupsOpen.value = true
+  },
+  { immediate: true },
+)
 
 const shown = computed(() => {
   const q = filter.value.trim().toLowerCase()
@@ -159,11 +170,11 @@ function fmt(n: number): string {
                 @click="emit('setCategory', row.cat.name)"
               >
                 <span
-                  v-if="row.code && !row.bundle"
+                  v-if="!row.bundle"
                   class="grid size-8 shrink-0 place-items-center rounded-md text-label-small font-semibold tabular-nums"
                   :class="isActive(row.cat.name) ? 'bg-on-primary/20' : 'bg-surface-container-highest'"
                 >
-                  {{ row.code }}
+                  {{ row.code || row.label.slice(0, 2).toUpperCase() }}
                 </span>
                 <span class="min-w-0 flex-1 leading-snug" :class="row.bundle ? 'line-clamp-2 font-medium' : 'truncate'">{{ row.label }}</span>
                 <span class="w-10 shrink-0 text-end text-label-small tabular-nums opacity-55">{{ fmt(row.cat.count) }}</span>

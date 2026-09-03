@@ -241,6 +241,13 @@ export default defineNuxtPlugin(() => {
     // The player claims Escape for its own menus, then for leaving playback.
     if (escapeConsumed())
       return true
+    // Live TV replaces rather than walking history: a player or browse
+    // page left in the stack would make Back from the hub a no-op.
+    const path = router.currentRoute.value.path
+    if (path.includes('/live-tv')) {
+      void router.replace(localePath(liveTvBackPath(path)))
+      return true
+    }
     if (window.history.state?.back) {
       router.back()
       return true

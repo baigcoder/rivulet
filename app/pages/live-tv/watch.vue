@@ -75,7 +75,6 @@ const playerCatchError = ref('')
 
 let pollHandle: ReturnType<typeof setInterval> | null = null
 
-const statusLine = ref('')
 const resolving = ref(false)
 const resolveError = ref('')
 const errorMsg = ref('')
@@ -100,7 +99,6 @@ function syncPlayerState() {
     errorMsg.value = ''
     resolveError.value = ''
     playerCatchError.value = ''
-    statusLine.value = ''
   }
 }
 
@@ -193,11 +191,13 @@ const hasNext = computed(() => channelIndex.value >= 0 && channelIndex.value < c
  *  1. resolveError  — liveResolveStream / URL minting failed (API level).
  *  2. errorMsg      — @failed on the <mpv-player>, or the MAX_AUTO_SKIPS
  *                     final failure message.
- *  3. playerCatchError — transient but *current* catchError from the
- *                     player's own ref. Only surfaced while the stream has
- *                     not actually started playing — so a brief open-error
- *                     that mpv itself recovers from (and flips started=true)
- *                     vanishes of its own accord instead of getting stuck.
+ *  3. playerCatchError — a *current* error from the player's own ref.
+ *                     Only surfaced while the stream has not started —
+ *                     so a brief open-error that mpv recovers from
+ *                     vanishes instead of getting stuck. Must be a real
+ *                     message: the player used to expose the generic
+ *                     fallback for an empty error, which painted this
+ *                     overlay over a stream that was still opening.
  */
 const overlayError = computed(() => {
   const raw = resolveError.value
@@ -322,7 +322,6 @@ function goBack() {
   resolveError.value = ''
   errorMsg.value = ''
   playerCatchError.value = ''
-  statusLine.value = ''
   void router.replace(localePath(liveTvFrom(String(route.query.from ?? ''), '/live-tv/free')))
 }
 
@@ -396,7 +395,6 @@ function autoSkip(): boolean {
   if (next < 0)
     return false
   autoSkips.value++
-  statusLine.value = $t('Channel unavailable — trying the next one…')
   zapTo(next)
   return true
 }
@@ -490,6 +488,21 @@ async function onPlaybackFailed() {
   errorMsg.value = $t('Stream playback failed. The channel may be offline or temporarily unavailable.')
 }
 
+async function onRetry() {
+  errorMsg.value = ''
+  resolveError.value = ''
+  playerCatchError.value = ''
+  attemptedFallback.value = false
+  const id = channelId.value
+  if (id)
+    resolvedById.delete(id)
+  const prev = streamUrl.value
+  await resolveStreamUrl()
+  // Same URL does not fire `watch(src)`, so the player has to be kicked.
+  if (streamUrl.value === prev)
+    await playerRef.value?.zapTo()
+}
+
 function onKey(e: KeyboardEvent) {
   if (e.key === 'Escape' || e.key === 'Backspace' || e.key === 'GoBack') {
     e.preventDefault()
@@ -568,9 +581,9 @@ onUnmounted(() => {
         v-if="streamUrl"
         ref="playerRef"
         :src="streamUrl"
-        :status="statusLine"
         :title="channelName"
         mode="live"
+        :resolving="resolving || autoSkipping"
         :user-agent="userAgent"
         :referer="referer"
         @failed="onPlaybackFailed"
@@ -603,7 +616,7 @@ onUnmounted(() => {
       @prev="zap(-1)"
       @next="zap(1)"
       @zap-to="zapTo"
-      @retry="resolveStreamUrl"
+      @retry="() => void onRetry()"
       @toggle-play="onTogglePlay"
       @go-live="onGoLive"
       @toggle-mute="onToggleMute"
