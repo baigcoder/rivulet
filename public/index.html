@@ -1,0 +1,1254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <script>document.documentElement.className = 'js'</script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rivulet — Play it while it lands</title>
+  <meta name="description" content="A local media library with a real player window. Torrents play while they download, direct links play immediately, and live TV plus on-demand sit on the same sofa. No account. No sources until you add one." />
+  <meta name="theme-color" content="#0e0f11" />
+  <meta name="color-scheme" content="dark" />
+  <link rel="icon" href="/logo.svg" type="image/svg+xml" />
+
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Rivulet — Play it while it lands" />
+  <meta property="og:description" content="Torrents, direct links, and live TV in a real player. The library never leaves this device." />
+  <meta property="og:image" content="/landing-showcase.jpg" />
+  <meta name="twitter:card" content="summary_large_image" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Roboto:wght@400;500;700&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --ground: #0e0f11;
+      --ground-rgb: 14, 15, 17;
+      --surface: #16181b;
+      --accent: #6fe3ff;
+      --accent-rgb: 111, 227, 255;
+      --warm: #ffc978;
+      --warm-rgb: 255, 201, 120;
+      --on: #e8e9ea;
+      --muted: #a3a7ad;
+      --dim: #71767d;
+      --faint: #4e535a;
+      --line: rgba(255, 255, 255, .08);
+      --font: 'Roboto', system-ui, sans-serif;
+      --display: 'Syne', var(--font);
+      --mono: 'IBM Plex Mono', ui-monospace, monospace;
+      --gutter: clamp(20px, 5vw, 48px);
+      --max: 1240px;
+      --bezel: 18px;
+      --reveal: reveal-up 640ms cubic-bezier(.2, .8, .2, 1) both;
+      --stagger: 70ms;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      :root {
+        --reveal: motion-fade 200ms linear both;
+        --stagger: 0ms;
+      }
+      html { scroll-behavior: auto; }
+    }
+
+    @keyframes reveal-up { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+    @keyframes motion-fade { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes glow-pulse {
+      0%, 100% { opacity: .45; }
+      50% { opacity: .8; }
+    }
+
+    html {
+      scroll-behavior: smooth;
+      background: var(--ground);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body {
+      font-family: var(--font);
+      background: var(--ground);
+      color: var(--on);
+      font-size: 1.0625rem;
+      line-height: 1.65;
+      overflow-x: hidden;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    img { display: block; max-width: 100%; }
+    ::selection { background: rgba(var(--accent-rgb), .28); color: #fff; }
+
+    :focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 3px;
+    }
+
+    .skip {
+      position: absolute;
+      left: var(--gutter);
+      top: 12px;
+      z-index: 400;
+      padding: 8px 14px;
+      background: var(--accent);
+      color: #003644;
+      font-weight: 700;
+      transform: translateY(-140%);
+    }
+    .skip:focus { transform: none; }
+
+    .js .reveal { opacity: 0; }
+    .in .reveal, .in.reveal {
+      animation: var(--reveal);
+      animation-delay: calc(var(--i, 0) * var(--stagger));
+    }
+
+    section[id] { scroll-margin-top: 80px; }
+    .wrap { max-width: var(--max); margin: 0 auto; padding: 0 var(--gutter); }
+    .band { padding: clamp(64px, 8vw, 104px) 0; }
+    .band + .band { border-top: 1px solid var(--line); }
+
+    .kicker {
+      font-family: var(--mono);
+      font-size: .75rem;
+      font-weight: 500;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    h1, h2, .display {
+      font-family: var(--display);
+      font-weight: 800;
+      letter-spacing: -.04em;
+      line-height: 1.05;
+    }
+
+    h1 { font-size: clamp(2.6rem, 7vw, 5.4rem); max-width: 14ch; }
+    h2 { font-size: clamp(1.85rem, 4vw, 2.85rem); max-width: 18ch; line-height: 1.12; }
+    .lede { color: var(--muted); max-width: 42ch; font-size: 1.125rem; }
+
+    /* ── Nav ────────────────────────────────────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 200;
+      background: rgba(var(--ground-rgb), .88);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      border-bottom: 1px solid var(--line);
+    }
+    .nav-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: relative;
+      min-height: 68px;
+      gap: 16px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--on);
+      font-family: var(--display);
+      font-weight: 700;
+      letter-spacing: -.03em;
+      font-size: 1.1875rem;
+      position: relative;
+      z-index: 1;
+    }
+    .brand img { width: 30px; height: 30px; }
+    .brand:hover, .brand:focus-visible { color: #fff; }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      gap: 6px;
+    }
+    .nav-links a {
+      color: #c5c9cf;
+      font-size: .9375rem;
+      font-weight: 600;
+      padding: 8px 16px;
+      border-radius: 999px;
+    }
+    .nav-links a:hover, .nav-links a:focus-visible {
+      color: #fff;
+      background: rgba(255,255,255,.08);
+    }
+    .nav-links a.is-active {
+      color: #fff;
+      background: rgba(var(--accent-rgb), .12);
+    }
+
+    a.nav-dl {
+      position: relative;
+      z-index: 1;
+      min-height: 40px;
+      padding: 0 20px;
+      font-size: .875rem;
+      font-weight: 700;
+      color: #003644;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, .18) inset;
+    }
+    a.nav-dl:hover, a.nav-dl:focus-visible {
+      background: #9aedff;
+      color: #003644;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 44px;
+      padding: 0 18px;
+      border-radius: 999px;
+      font-weight: 700;
+      font-size: .9375rem;
+      border: 1px solid transparent;
+      cursor: pointer;
+      transition: background .15s, color .15s, border-color .15s, transform .15s;
+    }
+    .btn svg { width: 16px; height: 16px; }
+    .btn-primary { background: var(--accent); color: #003644; }
+    .btn-primary:hover, .btn-primary:focus-visible { background: #9aedff; color: #003644; }
+    .btn-ghost { background: transparent; color: var(--on); border-color: var(--line); }
+    .btn-ghost:hover, .btn-ghost:focus-visible { border-color: var(--accent); color: var(--accent); }
+
+    .hamburger {
+      display: none;
+      width: 40px;
+      height: 40px;
+      border: 0;
+      border-radius: 10px;
+      background: none;
+      color: var(--on);
+      cursor: pointer;
+    }
+    .hamburger:hover, .hamburger:focus-visible {
+      background: rgba(255,255,255,.08);
+    }
+    .hamburger svg { width: 22px; height: 22px; }
+
+    /* ── Hero ───────────────────────────────────────────────────────────── */
+    .hero {
+      padding: clamp(48px, 8vw, 88px) 0 clamp(32px, 5vw, 56px);
+      position: relative;
+    }
+    .hero::before {
+      content: '';
+      position: absolute;
+      inset: -20% 10% auto;
+      height: 55%;
+      background: radial-gradient(ellipse at 50% 0%, rgba(var(--accent-rgb), .14), transparent 70%);
+      pointer-events: none;
+    }
+    .hero-copy { position: relative; margin-bottom: clamp(36px, 6vw, 56px); }
+    .hero .kicker { margin-bottom: 18px; }
+    .hero .lede { margin: 22px 0 28px; }
+    .hero-cta { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 20px; }
+    .hero-alt { color: var(--dim); font-size: .875rem; }
+    .hero-alt a { color: var(--muted); }
+    .hero-alt a:hover { color: var(--accent); }
+
+    /* Signature: TV bezel */
+    .bezel {
+      position: relative;
+      padding: 10px;
+      border-radius: calc(var(--bezel) + 8px);
+      background: linear-gradient(180deg, #1c1f24, #0a0b0d);
+      box-shadow:
+        0 0 0 1px rgba(var(--accent-rgb), .22),
+        0 40px 80px rgba(0, 0, 0, .55),
+        0 0 80px rgba(var(--accent-rgb), .08);
+    }
+    .bezel::after {
+      content: '';
+      position: absolute;
+      inset: -1px;
+      border-radius: inherit;
+      pointer-events: none;
+      box-shadow: 0 0 48px rgba(var(--accent-rgb), .18);
+      animation: glow-pulse 6s ease-in-out infinite;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .bezel::after { animation: none; }
+    }
+    .bezel img, .bezel video, .bezel-video-wrap video {
+      width: 100%;
+      max-width: 100%;
+      height: auto;
+      aspect-ratio: 1376 / 768;
+      object-fit: cover;
+      background: #000;
+      display: block;
+    }
+    .bezel-video-wrap {
+      position: relative;
+      overflow: hidden;
+      border-radius: 12px;
+    }
+    .hero-duration {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 5px;
+      background: rgba(255,255,255,.2);
+      z-index: 5;
+      cursor: pointer;
+      transition: height .15s;
+    }
+    .hero-duration:hover { height: 8px; }
+    .hero-duration-fill {
+      height: 100%;
+      background: var(--accent);
+      width: 0%;
+      pointer-events: none;
+      position: relative;
+    }
+    .hero-duration-fill::after {
+      content: '';
+      position: absolute;
+      right: -5px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--accent);
+      opacity: 0;
+      transition: opacity .15s;
+      box-shadow: 0 0 6px rgba(var(--accent-rgb), .6);
+    }
+    .hero-duration:hover .hero-duration-fill::after { opacity: 1; }
+    .hero-duration.hidden { display: none; }
+    .bezel-play {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      z-index: 2;
+      transition: background .2s;
+    }
+    .bezel-play:hover { background: rgba(0,0,0,.25); }
+    .bezel-play-icon {
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,.35);
+      background: rgba(0,0,0,.45);
+      backdrop-filter: blur(6px);
+      display: grid;
+      place-items: center;
+      transition: transform .2s, border-color .2s, background .2s;
+      box-shadow: 0 0 40px rgba(0,0,0,.5);
+    }
+    .bezel-play:hover .bezel-play-icon {
+      transform: scale(1.1);
+      border-color: var(--accent);
+      background: rgba(var(--accent-rgb), .15);
+    }
+    .bezel-play-icon svg {
+      width: 32px;
+      height: 32px;
+      margin-left: 3px;
+      fill: #fff;
+    }
+    .bezel-play.hidden { display: none; }
+    .bezel video::-webkit-media-controls-panel { background: rgba(0,0,0,.6); }
+    .bezel-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px 2px;
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: .6875rem;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .bezel-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent);
+    }
+
+    /* ── Offers + Live TV ───────────────────────────────────────────────── */
+    .sec-lead { margin-bottom: 36px; }
+    .sec-lead h2 { margin-top: 10px; }
+    .sec-lead .lede { margin-top: 12px; }
+
+    .ways {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .way {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 24px 22px 22px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      min-height: 100%;
+    }
+    .way h3 {
+      font-family: var(--font);
+      font-size: 1.125rem;
+      font-weight: 700;
+      letter-spacing: -.01em;
+      line-height: 1.3;
+      margin: 0;
+    }
+    .way p { color: var(--muted); font-size: .9375rem; line-height: 1.55; }
+    .way .points { margin-top: auto; padding-top: 8px; }
+    .way:hover, .live-card:hover, .plat:hover,
+    .way:focus-within, .live-card:focus-within, .plat:focus-within {
+      border-color: rgba(var(--accent-rgb), .35);
+    }
+    .way-mark {
+      font-family: var(--mono);
+      font-size: .6875rem;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--warm);
+    }
+
+    .live-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .live-card {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 28px 26px 24px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+    }
+    .live-card h3 {
+      font-family: var(--font);
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: -.02em;
+      line-height: 1.25;
+    }
+    .live-card p { color: var(--muted); font-size: .96875rem; }
+    .live-card .chips { margin-top: 4px; }
+    .way-mark.cool { color: var(--accent); }
+
+    /* ── Picture ────────────────────────────────────────────────────────── */
+    .points {
+      margin: 4px 0 0;
+      padding: 0;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .points li {
+      position: relative;
+      padding: 0 0 0 16px;
+      color: var(--muted);
+      font-size: .96875rem;
+      line-height: 1.45;
+    }
+    .points li::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: .55em;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+    .chip {
+      font-family: var(--mono);
+      font-size: .6875rem;
+      padding: 5px 8px;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+    }
+
+    .picture-lead {
+      display: grid;
+      grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr);
+      gap: clamp(24px, 4vw, 48px);
+      align-items: end;
+      margin-bottom: 28px;
+    }
+    .picture-lead h2 {
+      max-width: 12ch;
+      font-size: clamp(1.85rem, 3.6vw, 2.7rem);
+      line-height: 1.14;
+    }
+    .picture-lead .lede { max-width: 46ch; margin: 10px 0 0; }
+    .picture-meta { display: flex; flex-direction: column; gap: 14px; }
+    .picture-screen { margin: 0; }
+
+    /* ── Platforms ──────────────────────────────────────────────────────── */
+    .couch-head { margin-bottom: 28px; }
+    .plats {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .plat {
+      padding: 20px 18px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+    }
+    .plat .engine {
+      font-family: var(--mono);
+      font-size: .75rem;
+      color: var(--accent);
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    .plat h3 {
+      font-size: 1.05rem;
+      font-weight: 700;
+      margin: 8px 0 6px;
+    }
+    .plat p { color: var(--muted); font-size: .875rem; line-height: 1.5; }
+
+    .swatches {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 10px;
+      margin-top: 36px;
+    }
+    .swatch {
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+    }
+    .swatch b {
+      display: block;
+      height: 52px;
+    }
+    .swatch span {
+      display: block;
+      padding: 8px 10px;
+      font-size: .75rem;
+      color: var(--muted);
+      background: var(--surface);
+    }
+    .swatch-dark { background: #0e0f11; box-shadow: inset 0 0 0 40px #6fe3ff22; }
+    .swatch-midnight { background: #000; }
+    .swatch-nord { background: #272c36; box-shadow: inset 0 0 0 40px #88c0d022; }
+    .swatch-tokyo { background: #1a1b26; box-shadow: inset 0 0 0 40px #7aa2f722; }
+    .swatch-mocha { background: #1e1e2e; box-shadow: inset 0 0 0 40px #cba6f722; }
+    .swatch-dracula { background: #282a36; box-shadow: inset 0 0 0 40px #bd93f922; }
+
+    /* ── Yours ──────────────────────────────────────────────────────────── */
+    .yours {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+    }
+    .yours article {
+      padding: 22px 20px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+    }
+    .yours article h3 {
+      font-family: var(--font);
+      font-size: 1.0625rem;
+      font-weight: 700;
+      letter-spacing: -.01em;
+      margin-bottom: 8px;
+    }
+    .yours p { color: var(--muted); font-size: .96875rem; }
+    .note {
+      margin-top: 36px;
+      padding: 18px 22px;
+      border-left: 3px solid var(--accent);
+      background: rgba(var(--accent-rgb), .05);
+      color: var(--dim);
+      font-size: .9rem;
+    }
+
+    /* ── Get it ─────────────────────────────────────────────────────────── */
+    .get { text-align: center; }
+    .get h2 { max-width: 16ch; }
+    .get-panel {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: clamp(32px, 5vw, 48px) 28px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+    }
+    .get h2, .get .lede { margin-left: auto; margin-right: auto; }
+    .get .lede { margin-top: 16px; margin-bottom: 28px; }
+    .detected {
+      font-family: var(--mono);
+      font-size: .8125rem;
+      color: var(--dim);
+      margin-bottom: 16px;
+    }
+    .dl-buttons {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .hint { margin-top: 14px; font-size: .8125rem; color: var(--faint); }
+
+    /* ── FAQ ────────────────────────────────────────────────────────────── */
+    .faq-list {
+      max-width: 720px;
+      margin: 32px auto 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    details {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+    }
+    summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 18px 48px 18px 22px;
+      font-weight: 700;
+      position: relative;
+    }
+    summary::after {
+      content: '';
+      position: absolute;
+      right: 20px;
+      top: 50%;
+      width: 8px;
+      height: 8px;
+      border-right: 2px solid var(--dim);
+      border-bottom: 2px solid var(--dim);
+      transform: translateY(-70%) rotate(45deg);
+    }
+    details[open] summary::after { transform: translateY(-30%) rotate(225deg); }
+    summary::-webkit-details-marker { display: none; }
+    details p {
+      padding: 0 22px 20px;
+      color: var(--muted);
+      font-size: .96875rem;
+    }
+    details[open] summary { color: var(--accent); }
+
+    /* ── Footer ─────────────────────────────────────────────────────────── */
+    footer {
+      padding: 48px 0 32px;
+      border-top: 1px solid var(--line);
+      color: var(--dim);
+      font-size: .875rem;
+    }
+    .foot-grid {
+      display: grid;
+      grid-template-columns: 1.4fr 1fr 1fr 1fr;
+      gap: 32px;
+    }
+    .foot-grid p { margin-top: 12px; max-width: 36ch; }
+    .foot-col h5 {
+      font-family: var(--mono);
+      font-size: .6875rem;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: var(--faint);
+      margin-bottom: 12px;
+    }
+    .foot-col a { display: block; color: var(--muted); padding: 4px 0; }
+    .foot-col a:hover { color: var(--on); }
+    .foot-bottom {
+      margin-top: 36px;
+      padding-top: 20px;
+      border-top: 1px solid var(--line);
+      font-size: .75rem;
+      color: var(--faint);
+      line-height: 1.8;
+    }
+    .foot-bottom a { color: var(--dim); }
+
+    @media (max-width: 980px) {
+      .yours, .swatches, .plats { grid-template-columns: 1fr 1fr; }
+      .picture-lead, .live-grid { grid-template-columns: 1fr; }
+      .foot-grid { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 720px) {
+      .ways { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 680px) {
+      .nav-inner {
+        min-height: 60px;
+      }
+      .hamburger { display: grid; place-items: center; position: relative; z-index: 1; }
+      a.nav-dl { min-height: 36px; padding: 0 14px; }
+      .nav-links { display: none; transform: none; left: auto; position: static; }
+      .nav-links.open {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        justify-self: stretch;
+        position: fixed;
+        inset: 61px 0 0;
+        background: rgba(var(--ground-rgb), .97);
+        padding: 12px var(--gutter) 28px;
+        z-index: 199;
+        overflow-y: auto;
+        gap: 0;
+      }
+      .nav-links.open a {
+        padding: 16px 4px;
+        border-bottom: 1px solid var(--line);
+        border-radius: 0;
+        font-size: 1.0625rem;
+      }
+      .ways, .yours, .swatches, .live-grid, .picture-lead, .plats, .foot-grid { grid-template-columns: 1fr; }
+      h1 { max-width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip" href="#download">Skip to download</a>
+
+  <nav>
+    <div class="wrap nav-inner">
+      <a class="brand" href="#">
+        <img src="/logo.svg" alt="" />
+        Rivulet
+      </a>
+      <div class="nav-links" id="nav-links">
+        <a href="#watch">Watch</a>
+        <a href="#live">Live</a>
+        <a href="#picture">Player</a>
+        <a href="#faq">FAQ</a>
+      </div>
+      <a href="#download" class="btn btn-primary nav-dl">Download</a>
+      <button type="button" class="hamburger" id="menu-btn" aria-label="Open menu" aria-expanded="false" aria-controls="nav-links">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+    </div>
+  </nav>
+
+  <section class="hero">
+    <div class="wrap">
+      <div class="hero-copy">
+        <p class="kicker reveal" style="--i:0">Desktop · Android TV · No account</p>
+        <h1 class="reveal" style="--i:1">Play it while it lands.</h1>
+        <p class="lede reveal" style="--i:2">
+          Torrents, direct links, and live TV in a real player window.
+          The library stays on this machine. No sources until you add one.
+        </p>
+        <div class="hero-cta reveal" style="--i:3">
+          <a href="#download" class="btn btn-primary" id="hero-dl">Download Rivulet</a>
+          <p class="hero-alt" id="hero-alt"></p>
+        </div>
+      </div>
+      <div class="reveal" style="--i:4">
+        <div class="bezel-video-wrap">
+          <video
+            id="hero-video"
+            src="/hero.mp4"
+            autoplay
+            loop
+            playsinline
+            muted
+            preload="metadata"
+          ></video>
+          <div class="bezel-play" id="hero-play" role="button" tabindex="0" aria-label="Play video">
+            <div class="bezel-play-icon">
+              <svg viewBox="0 0 24 24"><polygon points="6,3 20,12 6,21"/></svg>
+            </div>
+          </div>
+          <div class="hero-duration" id="hero-duration">
+            <div class="hero-duration-fill" id="hero-duration-fill"></div>
+          </div>        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="watch">
+    <div class="wrap">
+      <div class="sec-lead reveal">
+        <p class="kicker">What it offers</p>
+        <h2>Watch it. Keep it. Find it again.</h2>
+        <p class="lede">Torrents and direct links share the same posters, progress, and player. Live TV is its own screen — below. Nothing here needs an account.</p>
+      </div>
+      <div class="ways">
+        <article class="way reveal" style="--i:0">
+          <p class="way-mark">Torrent</p>
+          <h3>Watch while it downloads</h3>
+          <p>The engine runs inside the app. Playback starts on the first bytes. The file stays on disk for next time.</p>
+          <ul class="points">
+            <li>Magnets and .torrent files</li>
+            <li>Seeding, speed limits, a disk budget</li>
+            <li>Nothing playing is ever evicted</li>
+          </ul>
+        </article>
+        <article class="way reveal" style="--i:1">
+          <p class="way-mark">Direct</p>
+          <h3>Play a link now</h3>
+          <p>A source can return a plain URL. That stream never joins a swarm and never writes to disk.</p>
+          <ul class="points">
+            <li>Starts when the server answers</li>
+            <li>No P2P, no cache</li>
+            <li>Flip this on a title already playing</li>
+          </ul>
+        </article>
+        <article class="way reveal" style="--i:2">
+          <p class="way-mark">Library</p>
+          <h3>This machine is the account</h3>
+          <p>Progress, favourites, and the watchlist live in local storage. A backup file is how they move. There is nothing to sign in to.</p>
+          <ul class="points">
+            <li>Resume from the card, not a cloud</li>
+            <li>Favourites and a watchlist, uncapped</li>
+            <li>One file copies the library to another PC</li>
+          </ul>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="live">
+    <div class="wrap">
+      <div class="sec-lead reveal">
+        <p class="kicker">Live TV</p>
+        <h2>Free channels. Your provider. Same sofa.</h2>
+        <p class="lede">Two backends, one screen. Guide, favourites, and the player chrome do not change when you switch.</p>
+      </div>
+      <div class="live-grid">
+        <article class="live-card reveal" style="--i:0">
+          <p class="way-mark cool">Free TV</p>
+          <h3>Open and watch</h3>
+          <p>Thousands of channels grouped by country and category. No account, no playlist to paste — just pick a tile.</p>
+          <ul class="points">
+            <li>Country, language, and category filters</li>
+            <li>Channel search and a guide when EPG exists</li>
+            <li>Favourites and recent, kept on this device</li>
+          </ul>
+          <div class="chips">
+            <span class="chip">No account</span>
+            <span class="chip">EPG</span>
+            <span class="chip">Favourites</span>
+            <span class="chip">Search</span>
+          </div>
+        </article>
+        <article class="live-card reveal" style="--i:1">
+          <p class="way-mark">Premium</p>
+          <h3>Your Xtream or M3U</h3>
+          <p>Connect a provider you already pay for. Live sits next to that account’s movies and series — posters, seasons, play.</p>
+          <ul class="points">
+            <li>Username and password, or a playlist URL</li>
+            <li>Live, movies, and TV shows from the same login</li>
+            <li>EPG per channel; zap without leaving the player</li>
+          </ul>
+          <div class="chips">
+            <span class="chip">Xtream</span>
+            <span class="chip">M3U</span>
+            <span class="chip">Movies</span>
+            <span class="chip">Series</span>
+          </div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="picture">
+    <div class="wrap">
+      <div class="picture-lead reveal">
+        <div>
+          <p class="kicker">The picture</p>
+          <h2>A real player, not a video tag</h2>
+          <p class="lede">
+            Desktop uses mpv. Android uses libVLC. Same controls on both — a new button is not a second player.
+          </p>
+        </div>
+        <div class="picture-meta">
+          <ul class="points">
+            <li>Seek-preview frames, warmed only while the bar is up</li>
+            <li>Audio, file subs, and OpenSubtitles in one menu</li>
+            <li>Auto-sync slides a mismatch onto the audio’s silence map</li>
+            <li>Progress per episode, resumed from the card</li>
+          </ul>
+          <div class="chips">
+            <span class="chip">HEVC</span>
+            <span class="chip">AV1</span>
+            <span class="chip">10-bit</span>
+            <span class="chip">E-AC-3</span>
+            <span class="chip">DTS</span>
+            <span class="chip">MKV</span>
+            <span class="chip">Partial files</span>
+          </div>
+        </div>
+      </div>
+      <figure class="reveal" style="--i:1">
+        <img
+          src="/player.png"
+          alt="Rivulet player with the subtitle menu open over a film"
+          width="1376"
+          height="768"
+          loading="lazy"
+          style="width: 100%; height: auto; border-radius: 12px;"
+        />
+      </figure>
+    </div>
+  </section>
+
+  <section class="band" id="couch">
+    <div class="wrap">
+      <div class="couch-head reveal">
+        <p class="kicker">From the sofa</p>
+        <h2>Up, down, left, right, OK, back</h2>
+        <p class="lede">
+          Every screen is a remote screen. Real buttons, a focus twin for every hover, nothing that depends on a keyboard.
+        </p>
+      </div>
+      <div class="plats reveal">
+        <article class="plat">
+          <p class="engine">mpv</p>
+          <h3>Linux</h3>
+          <p>Install mpv and ffmpeg from your package manager. The rest is the AppImage.</p>
+        </article>
+        <article class="plat">
+          <p class="engine">mpv</p>
+          <h3>Windows</h3>
+          <p>Ships its own mpv. Nothing extra to install.</p>
+        </article>
+        <article class="plat">
+          <p class="engine">libmpv</p>
+          <h3>macOS</h3>
+          <p>Linked in the app and drawn under the webview. No child window.</p>
+        </article>
+        <article class="plat">
+          <p class="engine">libVLC</p>
+          <h3>Android · TV</h3>
+          <p>Sideload the APK. Landscape and immersive while a title is up.</p>
+        </article>
+      </div>
+      <div class="swatches reveal" style="--i:1" aria-label="Theme samples">
+        <div class="swatch"><b class="swatch-dark"></b><span>Rivulet Dark</span></div>
+        <div class="swatch"><b class="swatch-midnight"></b><span>Midnight</span></div>
+        <div class="swatch"><b class="swatch-nord"></b><span>Nord</span></div>
+        <div class="swatch"><b class="swatch-tokyo"></b><span>Tokyo Night</span></div>
+        <div class="swatch"><b class="swatch-mocha"></b><span>Mocha</span></div>
+        <div class="swatch"><b class="swatch-dracula"></b><span>Dracula</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="yours">
+    <div class="wrap">
+      <p class="kicker reveal">Yours</p>
+      <h2 class="reveal" style="--i:1">It ships with nowhere to look</h2>
+      <p class="lede reveal" style="--i:2;margin:16px 0 36px">
+        Rivulet hosts no content and indexes no content. A source is a URL you add. With none configured it is still a torrent client with a very good player.
+      </p>
+      <div class="yours">
+        <article class="reveal" style="--i:0">
+          <h3>Empty on purpose</h3>
+          <p>No default, suggested, or bundled source list. Deep links always ask before adding anything. HTTP JSON only — no plugin runtime.</p>
+        </article>
+        <article class="reveal" style="--i:1">
+          <h3>The library stays here</h3>
+          <p>History, progress, favourites, and the watchlist live in this device’s storage. One backup file moves them. There is no account.</p>
+        </article>
+        <article class="reveal" style="--i:2">
+          <h3>Nothing phones home</h3>
+          <p>No analytics, no telemetry, no crash reporter. Credentials stay in the source URL you pasted. Backup files skip those keys.</p>
+        </article>
+      </div>
+      <p class="note reveal">
+        This project does not host, run, bundle, endorse, or recommend any source, and distributes no list of them.
+        What a given source offers, and whether you have the right to play it, is between you and whoever operates it.
+      </p>
+    </div>
+  </section>
+
+  <section class="band get" id="download">
+    <div class="wrap">
+      <div class="get-panel reveal">
+        <p class="kicker">Get Rivulet</p>
+        <h2>Put it on the machine you watch on</h2>
+        <p class="lede">One download. No account. A first run that searches nothing until you say so.</p>
+        <p class="detected">We detected <strong id="detected-os">your platform</strong></p>
+        <div class="dl-buttons" id="dl-buttons"></div>
+        <p class="hint" id="dl-hint"></p>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="faq">
+    <div class="wrap">
+      <p class="kicker reveal" style="text-align:center">FAQ</p>
+      <h2 class="reveal" style="--i:1;margin:0 auto;text-align:center">The questions that keep coming up</h2>
+      <div class="faq-list reveal" style="--i:2">
+        <details>
+          <summary>Does Rivulet provide content?</summary>
+          <p>No. It hosts no content, indexes no content, and ships with no sources. It is a local library and player for files and URLs you choose to add.</p>
+        </details>
+        <details>
+          <summary>Do I need a source at all?</summary>
+          <p>No. Magnets, .torrent files, and local video play without one. A source is only for searching releases you do not already have.</p>
+        </details>
+        <details>
+          <summary>Why is there no default source?</summary>
+          <p>Bundling someone else’s catalog would pick a side. You type a URL you found yourself. That is the whole onboarding flow.</p>
+        </details>
+        <details>
+          <summary>Does it work on a TV?</summary>
+          <p>Yes. The Android APK is a leanback build: d-pad navigation, 10-foot scale, and a performance switch for weak GPUs.</p>
+        </details>
+        <details>
+          <summary>What plays on Android?</summary>
+          <p>libVLC, not the webview’s video tag. Landscape and immersive while a title is up. Background downloads stay alive through a foreground service.</p>
+        </details>
+        <details>
+          <summary>macOS says the app is damaged. Is it?</summary>
+          <p>No. Gatekeeper says that for unsigned GitHub builds. In Terminal: <code>xattr -cr /Applications/Rivulet.app</code></p>
+        </details>
+        <details>
+          <summary>Watch while it downloads, or play a link now?</summary>
+          <p>The playback-source setting. On: the torrent engine, an offline copy, full codecs. Off: only direct HTTP links — instant start, no disk, no swarm. You can flip it on a title that is already playing.</p>
+        </details>
+        <details>
+          <summary>Why Tauri instead of Electron?</summary>
+          <p>The OS webview and a Rust shell: a smaller binary, less RAM, and a real native window to glue mpv into.</p>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap">
+      <div class="foot-grid">
+        <div>
+          <a class="brand" href="#"><img src="/logo.svg" alt="" /> Rivulet</a>
+          <p>A media library and BitTorrent player for the desktop and Android TV. MIT-licensed, built for a sofa.</p>
+        </div>
+        <div class="foot-col">
+          <h5>Get it</h5>
+          <a href="#download">Download</a>
+          <a href="https://github.com/baigcoder/rivulet/releases">All releases</a>
+          <a href="https://github.com/baigcoder/rivulet">Source</a>
+        </div>
+        <div class="foot-col">
+          <h5>Learn</h5>
+          <a href="#watch">Watch</a>
+          <a href="#live">Live TV</a>
+          <a href="#picture">Player</a>
+          <a href="#couch">TV</a>
+          <a href="#faq">FAQ</a>
+        </div>
+        <div class="foot-col">
+          <h5>Project</h5>
+          <a href="https://github.com/baigcoder/rivulet">GitHub</a>
+          <a href="https://github.com/baigcoder/rivulet/issues">Issues</a>
+          <a href="https://github.com/baigcoder/rivulet/blob/main/LICENSE">Licence (MIT)</a>
+        </div>
+      </div>
+      <div class="foot-bottom">
+        © 2026 Rivulet contributors ·
+        <a href="https://github.com/baigcoder">Hassan Baig</a>
+        · Metadata by <a href="https://www.themoviedb.org/">TMDB</a>.
+        This product uses the TMDB API but is not endorsed or certified by TMDB.
+        Rivulet hosts no content, indexes no content, and ships with no sources configured.
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    var groups = document.querySelectorAll('section, footer');
+    function release(el) { el.classList.add('in'); }
+    if ('IntersectionObserver' in window) {
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+          if (!e.isIntersecting) return;
+          release(e.target);
+          io.unobserve(e.target);
+        });
+      }, { rootMargin: '0px 0px -40px 0px' });
+      groups.forEach(function (el) { io.observe(el); });
+      window.addEventListener('load', function () {
+        groups.forEach(function (el) {
+          var r = el.getBoundingClientRect();
+          if (r.top < window.innerHeight && r.bottom > 0) {
+            release(el);
+            io.unobserve(el);
+          }
+        });
+      });
+    } else {
+      groups.forEach(release);
+    }
+
+    var menuBtn = document.getElementById('menu-btn');
+    var navLinks = document.getElementById('nav-links');
+    if (menuBtn && navLinks) {
+      menuBtn.addEventListener('click', function () {
+        var open = navLinks.classList.toggle('open');
+        menuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        menuBtn.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+      });
+      navLinks.querySelectorAll('a').forEach(function (a) {
+        a.addEventListener('click', function () {
+          navLinks.classList.remove('open');
+          menuBtn.setAttribute('aria-expanded', 'false');
+          menuBtn.setAttribute('aria-label', 'Open menu');
+        });
+      });
+    }
+
+    var spyLinks = document.querySelectorAll('.nav-links a[href^="#"]');
+    var spySections = [];
+    spyLinks.forEach(function (a) {
+      var el = document.getElementById(a.getAttribute('href').slice(1));
+      if (el) spySections.push({ el: el, a: a });
+    });
+    function markNav() {
+      var y = 96;
+      var current = null;
+      spySections.forEach(function (s) {
+        if (s.el.getBoundingClientRect().top <= y) current = s;
+      });
+      spyLinks.forEach(function (a) { a.classList.remove('is-active'); });
+      if (current && current.el.getBoundingClientRect().bottom > y) current.a.classList.add('is-active');
+    }
+    window.addEventListener('scroll', markNav, { passive: true });
+    markNav();
+
+    try {
+      var DL = 'https://github.com/baigcoder/rivulet/releases/latest/download/';
+      var P = {
+        linux:   { name: 'Linux',   href: DL + 'Rivulet.AppImage', hint: 'Linux needs system mpv and ffmpeg.' },
+        windows: { name: 'Windows', href: DL + 'Rivulet_Setup.exe', hint: '' },
+        macos:   { name: 'macOS',   href: DL + 'Rivulet.dmg', hint: 'Gatekeeper may warn on first open — see FAQ.' },
+        android: { name: 'Android', href: DL + 'Rivulet.apk', hint: 'Sideload. Same APK for phone and Android TV.' }
+      };
+
+      var ua = navigator.userAgent;
+      var det = 'linux';
+      if (/android/i.test(ua)) det = 'android';
+      else if (/windows|win32/i.test(ua)) det = 'windows';
+      else if (/mac os x|macintosh/i.test(ua) && !/iphone|ipad/i.test(ua)) det = 'macos';
+
+      var label = document.getElementById('detected-os');
+      if (label) label.textContent = P[det].name;
+
+      var order = [det].concat(Object.keys(P).filter(function (k) { return k !== det; }));
+      var btnBox = document.getElementById('dl-buttons');
+      if (btnBox) {
+        order.forEach(function (k, i) {
+          var a = document.createElement('a');
+          a.href = P[k].href;
+          a.className = i === 0 ? 'btn btn-primary' : 'btn btn-ghost';
+          a.textContent = (i === 0 ? 'Download for ' : '') + P[k].name;
+          btnBox.appendChild(a);
+        });
+      }
+
+      var hero = document.getElementById('hero-dl');
+      if (hero) {
+        hero.href = P[det].href;
+        hero.textContent = 'Download for ' + P[det].name;
+      }
+      var heroAlt = document.getElementById('hero-alt');
+      if (heroAlt) {
+        heroAlt.innerHTML = order.slice(1).map(function (k) {
+          return '<a href="' + P[k].href + '">' + P[k].name + '</a>';
+        }).join(' · ');
+      }
+
+      var hint = document.getElementById('dl-hint');
+      if (hint && P[det].hint) hint.textContent = P[det].hint;
+    } catch (e) { /* keep the static Download Rivulet link */ }
+
+    var heroVid = document.getElementById('hero-video');
+    var heroPlay = document.getElementById('hero-play');
+    var heroDuration = document.getElementById('hero-duration');
+    var heroFill = document.getElementById('hero-duration-fill');
+    if (heroVid && heroPlay) {
+      heroVid.play();
+      function toggleHeroVideo() {
+        if (heroVid.paused) {
+          heroVid.muted = false;
+          heroVid.play();
+          heroPlay.classList.add('hidden');
+          if (heroDuration) heroDuration.classList.remove('hidden');
+        } else {
+          heroVid.pause();
+          heroPlay.classList.remove('hidden');
+          if (heroDuration) heroDuration.classList.add('hidden');
+        }
+      }
+      heroPlay.addEventListener('click', toggleHeroVideo);
+      heroPlay.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleHeroVideo(); }
+      });
+      heroVid.addEventListener('click', function () {
+        if (!heroVid.paused) toggleHeroVideo();
+      });
+      heroVid.addEventListener('timeupdate', function () {
+        if (heroVid.duration && heroFill) {
+          heroFill.style.width = (heroVid.currentTime / heroVid.duration * 100) + '%';
+        }
+      });
+      document.addEventListener('keydown', function (e) {
+        if (!heroVid) return;
+        if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          heroVid.currentTime = Math.min(heroVid.duration || 0, heroVid.currentTime + 5);
+        } else if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          heroVid.currentTime = Math.max(0, heroVid.currentTime - 5);
+        } else if (e.key === ' ' || e.key === 'k') {
+          e.preventDefault();
+          toggleHeroVideo();
+        }
+      });
+    }
+
+    if (heroDuration && heroVid) {
+      function seekHero(e) {
+        var rect = heroDuration.getBoundingClientRect();
+        var pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        if (heroVid.duration) heroVid.currentTime = pct * heroVid.duration;
+      }
+      heroDuration.addEventListener('click', function (e) {
+        e.stopPropagation();
+        seekHero(e);
+      });
+      var dragging = false;
+      heroDuration.addEventListener('mousedown', function (e) {
+        e.stopPropagation();
+        dragging = true;
+        seekHero(e);
+      });
+      document.addEventListener('mousemove', function (e) {
+        if (dragging) seekHero(e);
+      });
+      document.addEventListener('mouseup', function () {
+        dragging = false;
+      });
+    }
+  </script>
+</body>
+</html>
