@@ -281,14 +281,90 @@
     @media (prefers-reduced-motion: reduce) {
       .bezel::after { animation: none; }
     }
-    .bezel img {
+    .bezel img, .bezel video, .bezel-video-wrap video {
       width: 100%;
+      max-width: 100%;
       height: auto;
       aspect-ratio: 1376 / 768;
       object-fit: cover;
-      border-radius: var(--bezel);
       background: #000;
+      display: block;
     }
+    .bezel-video-wrap {
+      position: relative;
+      overflow: hidden;
+      border-radius: 12px;
+    }
+    .hero-duration {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 5px;
+      background: rgba(255,255,255,.2);
+      z-index: 5;
+      cursor: pointer;
+      transition: height .15s;
+    }
+    .hero-duration:hover { height: 8px; }
+    .hero-duration-fill {
+      height: 100%;
+      background: var(--accent);
+      width: 0%;
+      pointer-events: none;
+      position: relative;
+    }
+    .hero-duration-fill::after {
+      content: '';
+      position: absolute;
+      right: -5px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--accent);
+      opacity: 0;
+      transition: opacity .15s;
+      box-shadow: 0 0 6px rgba(var(--accent-rgb), .6);
+    }
+    .hero-duration:hover .hero-duration-fill::after { opacity: 1; }
+    .hero-duration.hidden { display: none; }
+    .bezel-play {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      z-index: 2;
+      transition: background .2s;
+    }
+    .bezel-play:hover { background: rgba(0,0,0,.25); }
+    .bezel-play-icon {
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,.35);
+      background: rgba(0,0,0,.45);
+      backdrop-filter: blur(6px);
+      display: grid;
+      place-items: center;
+      transition: transform .2s, border-color .2s, background .2s;
+      box-shadow: 0 0 40px rgba(0,0,0,.5);
+    }
+    .bezel-play:hover .bezel-play-icon {
+      transform: scale(1.1);
+      border-color: var(--accent);
+      background: rgba(var(--accent-rgb), .15);
+    }
+    .bezel-play-icon svg {
+      width: 32px;
+      height: 32px;
+      margin-left: 3px;
+      fill: #fff;
+    }
+    .bezel-play.hidden { display: none; }
+    .bezel video::-webkit-media-controls-panel { background: rgba(0,0,0,.6); }
     .bezel-bar {
       display: flex;
       align-items: center;
@@ -687,19 +763,25 @@
           <p class="hero-alt" id="hero-alt"></p>
         </div>
       </div>
-      <div class="bezel reveal" style="--i:4">
-        <div class="bezel-bar">
-          <span>Home</span>
-          <span class="bezel-dot" aria-hidden="true"></span>
-          <span>Rivulet</span>
-        </div>
-        <img
-          src="/landing-showcase.jpg"
-          alt="Rivulet home screen with a featured title and rows of posters"
-          width="1376"
-          height="768"
-          fetchpriority="high"
-        />
+      <div class="reveal" style="--i:4">
+        <div class="bezel-video-wrap">
+          <video
+            id="hero-video"
+            src="/hero.mp4"
+            autoplay
+            loop
+            playsinline
+            muted
+            preload="metadata"
+          ></video>
+          <div class="bezel-play" id="hero-play" role="button" tabindex="0" aria-label="Play video">
+            <div class="bezel-play-icon">
+              <svg viewBox="0 0 24 24"><polygon points="6,3 20,12 6,21"/></svg>
+            </div>
+          </div>
+          <div class="hero-duration" id="hero-duration">
+            <div class="hero-duration-fill" id="hero-duration-fill"></div>
+          </div>        </div>
       </div>
     </div>
   </section>
@@ -818,18 +900,14 @@
           </div>
         </div>
       </div>
-      <figure class="bezel picture-screen reveal" style="--i:1">
-        <div class="bezel-bar">
-          <span>Player</span>
-          <span class="bezel-dot" aria-hidden="true"></span>
-          <span>mpv · libVLC</span>
-        </div>
+      <figure class="reveal" style="--i:1">
         <img
-          src="/landing-player-real.jpg"
+          src="/player.png"
           alt="Rivulet player with the subtitle menu open over a film"
           width="1376"
           height="768"
           loading="lazy"
+          style="width: 100%; height: auto; border-radius: 12px;"
         />
       </figure>
     </div>
@@ -1102,6 +1180,75 @@
       var hint = document.getElementById('dl-hint');
       if (hint && P[det].hint) hint.textContent = P[det].hint;
     } catch (e) { /* keep the static Download Rivulet link */ }
+
+    var heroVid = document.getElementById('hero-video');
+    var heroPlay = document.getElementById('hero-play');
+    var heroDuration = document.getElementById('hero-duration');
+    var heroFill = document.getElementById('hero-duration-fill');
+    if (heroVid && heroPlay) {
+      heroVid.play();
+      function toggleHeroVideo() {
+        if (heroVid.paused) {
+          heroVid.muted = false;
+          heroVid.play();
+          heroPlay.classList.add('hidden');
+          if (heroDuration) heroDuration.classList.remove('hidden');
+        } else {
+          heroVid.pause();
+          heroPlay.classList.remove('hidden');
+          if (heroDuration) heroDuration.classList.add('hidden');
+        }
+      }
+      heroPlay.addEventListener('click', toggleHeroVideo);
+      heroPlay.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleHeroVideo(); }
+      });
+      heroVid.addEventListener('click', function () {
+        if (!heroVid.paused) toggleHeroVideo();
+      });
+      heroVid.addEventListener('timeupdate', function () {
+        if (heroVid.duration && heroFill) {
+          heroFill.style.width = (heroVid.currentTime / heroVid.duration * 100) + '%';
+        }
+      });
+      document.addEventListener('keydown', function (e) {
+        if (!heroVid) return;
+        if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          heroVid.currentTime = Math.min(heroVid.duration || 0, heroVid.currentTime + 5);
+        } else if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          heroVid.currentTime = Math.max(0, heroVid.currentTime - 5);
+        } else if (e.key === ' ' || e.key === 'k') {
+          e.preventDefault();
+          toggleHeroVideo();
+        }
+      });
+    }
+
+    if (heroDuration && heroVid) {
+      function seekHero(e) {
+        var rect = heroDuration.getBoundingClientRect();
+        var pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        if (heroVid.duration) heroVid.currentTime = pct * heroVid.duration;
+      }
+      heroDuration.addEventListener('click', function (e) {
+        e.stopPropagation();
+        seekHero(e);
+      });
+      var dragging = false;
+      heroDuration.addEventListener('mousedown', function (e) {
+        e.stopPropagation();
+        dragging = true;
+        seekHero(e);
+      });
+      document.addEventListener('mousemove', function (e) {
+        if (dragging) seekHero(e);
+      });
+      document.addEventListener('mouseup', function () {
+        dragging = false;
+      });
+    }
   </script>
 </body>
 </html>
