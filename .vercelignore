@@ -1,0 +1,7 @@
+nuxt.config.ts
+nuxt.config.js
+package.json
+package-lock.json
+yarn.lock
+bun.lockb
+.node_modules
