@@ -3,5 +3,5 @@
   "installCommand": "echo skip",
   "buildCommand": "echo skip",
   "outputDirectory": "public",
-  "rewrites": [{ "source": "/((?!landing\\.html$).*)", "destination": "/landing.html" }]
+  "rewrites": [{ "source": "/", "destination": "/landing.html" }]
 }
