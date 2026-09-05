@@ -35,6 +35,9 @@ const hasStream = computed(() => {
   return !!s && s !== 'undefined' && s !== 'null'
 })
 
+/** No URL, or the player already found the stream dead. Advisory: click still works. */
+const dead = computed(() => offline.value || !hasStream.value)
+
 const nowMs = ref(Date.now())
 let progressTimer: ReturnType<typeof setInterval> | undefined
 watch(nowProgram, prog => {
@@ -114,12 +117,12 @@ function onLogoLoad(e: Event): void {
     :class="hasStream ? 'cursor-pointer' : 'cursor-not-allowed opacity-40'"
     :style="{ containIntrinsicSize: compact ? 'auto 200px' : 'auto 248px' }"
     :disabled="!hasStream"
-    :aria-label="displayName"
+    :aria-label="`${displayName}, ${dead ? $t('Offline') : $t('LIVE')}`"
     @click="emit('play', channel)"
   >
     <div
       class="relative aspect-video w-full overflow-hidden rounded-xl bg-zinc-950 ring-1 ring-white/10 transition-shadow group-focus-visible:ring-2 group-focus-visible:ring-inset group-focus-visible:ring-primary"
-      :class="offline ? 'opacity-50' : ''"
+      :class="dead ? 'opacity-50' : ''"
     >
       <div
         v-if="wantsLogo && !imgLoaded && !imgError"
@@ -150,12 +153,24 @@ function onLogoLoad(e: Event): void {
         </span>
       </div>
 
-      <span
-        v-if="parsedName.quality"
-        class="pointer-events-none absolute start-1.5 top-1.5 z-10 rounded bg-black/60 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-200"
-      >
-        {{ parsedName.quality }}
-      </span>
+      <div class="pointer-events-none absolute start-1.5 top-1.5 z-10 flex items-center gap-1">
+        <span
+          class="flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+          :class="dead ? 'bg-zinc-800/90 text-white/75' : 'bg-red-600 text-white'"
+        >
+          <span
+            v-if="!dead"
+            class="size-1.5 rounded-full bg-white animate-pulse"
+          />
+          {{ dead ? $t('Offline') : $t('LIVE') }}
+        </span>
+        <span
+          v-if="parsedName.quality"
+          class="rounded bg-black/60 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-200"
+        >
+          {{ parsedName.quality }}
+        </span>
+      </div>
 
       <span
         class="absolute end-1.5 top-1.5 z-10 grid size-6 cursor-pointer place-items-center rounded-full bg-black/55 opacity-0 shadow transition-opacity hover:bg-black/75 focus-visible:bg-black/75 group-hover:opacity-100 group-focus-visible:opacity-100"
@@ -181,7 +196,7 @@ function onLogoLoad(e: Event): void {
       </div>
 
       <div
-        v-if="nowProgram && !offline"
+        v-if="nowProgram && !dead"
         class="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-0.5 bg-black/50"
       >
         <div
@@ -199,11 +214,8 @@ function onLogoLoad(e: Event): void {
       >
         {{ displayName }}
       </p>
-      <p v-if="offline" class="line-clamp-1 text-label-small text-tertiary">
-        {{ $t('Offline') }}
-      </p>
       <p
-        v-else-if="subtitle"
+        v-if="subtitle"
         class="line-clamp-1 text-label-small opacity-45"
       >
         {{ subtitle }}

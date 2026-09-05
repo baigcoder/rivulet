@@ -8,6 +8,7 @@ const props = defineProps<{
   channels: LiveChannel[]
   getEpg: (id: string) => Array<{ title: string, description?: string | null, start: string, stop?: string | null }>
   isFavorite: (ch: LiveChannel) => boolean
+  isOffline?: (ch: LiveChannel) => boolean
   loadEpg?: (ids: string[]) => void
   hasMore?: boolean
   loading?: boolean
@@ -86,6 +87,7 @@ watch(
           :channel="channels[virtualRow.index]!"
           :get-epg="getEpg"
           :is-favorite="isFavorite"
+          :is-offline="isOffline"
           class="mb-1"
           @play="emit('play', $event)"
           @toggle-favorite="emit('toggleFavorite', $event)"

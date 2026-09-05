@@ -196,6 +196,8 @@ function openMovie(item: PremiumVodItem): void {
     query: {
       from: route.fullPath,
       ext: item.containerExtension || 'mkv',
+      title: item.name,
+      poster: item.posterUrl || undefined,
     },
   })
 }
@@ -203,7 +205,7 @@ function openMovie(item: PremiumVodItem): void {
 function openSeries(item: PremiumSeriesItem): void {
   void router.push({
     path: localePath(`/live-tv/premium/series/${item.id}`),
-    query: { from: route.fullPath },
+    query: { from: route.fullPath, title: item.name, poster: item.posterUrl || undefined },
   })
 }
 

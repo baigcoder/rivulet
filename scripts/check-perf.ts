@@ -20,6 +20,7 @@
 import assert from 'node:assert'
 import { readdirSync, readFileSync } from 'node:fs'
 import process from 'node:process'
+import { youtubeCommand, youtubeError, youtubePlaying } from '../app/utils/youtube'
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
 
@@ -198,6 +199,120 @@ assert.doesNotMatch(
   'the Live TV hub must not paint decorative blur orbs',
 )
 assert.match(liveHub, /rounded-2xl/, 'hub tiles follow the home teaser, not marketing cards')
+
+assert.match(
+  read('app/pages/[type]/[id].vue'),
+  /<media-detail-view/,
+  'the library title route must render the shared title page',
+)
+const detail = read('app/components/MediaDetailView.vue')
+assert.match(
+  detail,
+  /setTimeout\(go, 4000\)/,
+  'the YouTube hero iframe must wait after first paint — requestIdleCallback fires too soon',
+)
+assert.match(
+  detail,
+  /heroIdle/,
+  'the trailer src must stay empty until the page has painted',
+)
+assert.match(
+  detail,
+  /<v-lazy/,
+  'cast, seasons and recommendations on the title page must lazy-mount',
+)
+assert.doesNotMatch(
+  detail.replace(/<!--[\s\S]*?-->|\/\/[^\n]*/g, ''),
+  /backdrop-blur/,
+  'no backdrop-filter on the title hero: it is a GPU readback on the first frame',
+)
+assert.match(
+  detail,
+  /ui\.opening/,
+  'the title page must paint the card snapshot while TMDB is still in flight',
+)
+assert.match(
+  detail,
+  /backdropUrl\([^)]*'w780'/,
+  'the hero backdrop is w780: w1280 is a second decode on the first frame',
+)
+assert.match(
+  detail,
+  /heroPoster/,
+  'the hero must paint the cached card poster before the backdrop decodes',
+)
+assert.match(
+  detail,
+  /requestAnimationFrame/,
+  'select() must wait for the first paint: it decodes the window backdrop and may retheme',
+)
+assert.match(
+  read('app/components/MediaCard.vue'),
+  /ui\.open\(/,
+  'a card press snapshots the title only — select() on pointerdown hitchs the click',
+)
+assert.match(
+  detail,
+  /media\.value\?\.seasons \?\? \[\]/,
+  'Play on a show must not wait for the TMDB detail to name S1 E1',
+)
+const tmdb = read('app/utils/tmdb.ts')
+assert.doesNotMatch(
+  tmdb,
+  /new Image\(\)/,
+  'prefetch must not decode a backdrop on the click that opens the title',
+)
+assert.match(tmdb, /DETAIL_CORE/, 'the first title request must stay small')
+assert.doesNotMatch(tmdb, /DETAIL_APPEND/, 'the fat credits\+images append must not ride with first paint')
+assert.match(tmdb, /prefetchMediaDetail/, 'a card press must start the title request before the page mounts')
+assert.match(tmdb, /getCachedData/, 'a prefetched title must be on the page on the first frame')
+assert.doesNotMatch(
+  read('app/components/MediaCard.vue'),
+  /preloadRouteComponents/,
+  'do not preload the title route from a card: Vite locks the WebView',
+)
+assert.match(tmdb, /immediate: false/, 'credits must not start until the title request has landed')
+assert.match(tmdb, /extra\.execute/, 'credits start only after the title record is in hand')
+assert.doesNotMatch(
+  tmdb.replace(/\/\*[\s\S]*?\*\//g, ''),
+  /\$\{[^}]+\}\/images/,
+  'do not fetch /images on open: it is every poster and backdrop',
+)
+assert.match(
+  detail,
+  /media-images/,
+  'the title page shows stills after first paint, not in the hero request',
+)
+assert.match(
+  read('app/utils/titleImages.ts'),
+  /include_image_language/,
+  'the stills request must not ask for every language poster',
+)
+assert.match(
+  detail,
+  /unMute/,
+  'the hero volume button must talk to the player, not rebuild the iframe src',
+)
+assert.doesNotMatch(
+  detail.replace(/<!--[\s\S]*?-->|\/\/[^\n]*/g, ''),
+  /youtubeEmbedSrc\([^)]*heroMuted/,
+  'mute must not sit in the hero src: changing it reloads YouTube from the start',
+)
+assert.match(detail, /hd720/, 'the hero must lock YouTube at 720p')
+assert.match(detail, /heroPlaying/, 'the hero iframe stays hidden until YouTube is playing')
+assert.match(detail, /pauseVideo/, 'the hero must pause when scrolled off the page')
+assert.match(detail, /useIntersectionObserver/, 'hero pause is driven by the hero box leaving the viewport')
+assert.match(detail, /nextTrailer/, 'a geo-blocked YouTube key must fall through to the next TMDB trailer')
+assert.match(detail, /youtubeError/, 'YouTube onError must skip the blocked embed, not paint the country card')
+
+const youtube = read('app/utils/youtube.ts')
+assert.match(youtube, /vq:\s*['"]hd720['"]/, 'browser embeds request 720p')
+assert.match(read('src-tauri/src/iptv/proxy.rs'), /vq=hd720/, 'the Tauri YouTube relay requests 720p')
+assert.equal(youtubeCommand('setPlaybackQuality', ['hd720']), '{"event":"command","func":"setPlaybackQuality","args":["hd720"]}')
+assert.equal(youtubePlaying('{"info":{"playerState":1}}'), true)
+assert.equal(youtubePlaying('{"info":{"playerState":3}}'), false)
+assert.equal(youtubeError('{"event":"onError","info":150}'), true)
+assert.equal(youtubeError('{"info":{"playerState":1}}'), false)
 
 const seasonPage = read('app/pages/tv/[id]/season/[season]/index.vue')
 assert.match(

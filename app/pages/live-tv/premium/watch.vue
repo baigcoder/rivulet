@@ -21,7 +21,7 @@
  * every transition, and nothing on this page keeps a second copy of it.
  */
 import type { EpgProgram, IPTVChannel } from '~/types/premium'
-import { mdiArrowLeft, mdiCheck, mdiClose, mdiReload } from '@mdi/js'
+import { mdiCheck, mdiClose } from '@mdi/js'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { usePlaybackSource } from '~/composables/usePlaybackSource'
 import { MAX_RECONNECT_ATTEMPTS } from '~/stores/premiumTv'
@@ -176,15 +176,20 @@ const statusLine = computed(() => {
 
 /** Spinner-worthy: something is in flight and there is no picture yet. */
 const busy = computed(() =>
-  premium.player === 'loading' || premium.player === 'reconnecting' || playback.loading.value,
+  premium.player === 'loading'
+  || premium.player === 'reconnecting'
+  || premium.player === 'buffering'
+  || playback.loading.value,
 )
 
 const fatal = computed(() => premium.player === 'error')
 
 const overlayError = computed(() => {
-  // VOD errors live in MpvPlayer's centre overlay — duplicating them here
-  // showed "Playback failed" over a title that was still playing audio.
-  if (isVod.value)
+  // One modal. A second card on this page painted "Playback Error"
+  // under the same sentence. VOD keeps its own centre overlay while
+  // the file is still up; once the machine is `error` the player is
+  // unmounted and this is the only place left to say so.
+  if (isVod.value && premium.player !== 'error')
     return ''
   const raw = premium.player === 'error'
     ? premium.playerError
@@ -324,11 +329,6 @@ async function load({ fresh } = { fresh: true }): Promise<void> {
   }
 }
 
-function retry(): void {
-  premium.resetPlayer()
-  void load({ fresh: true })
-}
-
 /**
  * The stream died. Ask the store for the next backoff step; `null` means
  * the four attempts are spent, which is where the retrying stops and the
@@ -404,7 +404,8 @@ function syncPlayerState(): void {
   if (!p)
     return
   const wasPlaying = playerPlaying.value
-  playerPlaying.value = asBool(p.started) && !asBool(p.paused)
+  const picture = typeof p.videoWidth === 'number' && p.videoWidth > 0
+  playerPlaying.value = asBool(p.started) && !asBool(p.paused) && picture
   playerBehindLive.value = asBool(p.behindLive)
   playerVolume.value = typeof p.volume === 'number' ? p.volume : 100
   playerMuted.value = asBool(p.muted)
@@ -436,7 +437,7 @@ function syncPlayerState(): void {
     return
   if (!asBool(p.started))
     return
-  if (asBool(p.buffering))
+  if (asBool(p.buffering) || !picture)
     premium.setPlayer('buffering')
   else if (asBool(p.paused))
     premium.setPlayer('paused')
@@ -550,14 +551,21 @@ onMounted(() => {
   window.addEventListener('pointermove', onActivity, { passive: true })
   if (isAndroid())
     setAndroidPlayerMode(true)
-  void load({ fresh: true })
   pollHandle = setInterval(syncPlayerState, POLL_MS)
 })
 
-// A zap only changes the query, so the page stays mounted and this is
-// what starts the next channel.
+// Immediate: the first mint and every zap. onMounted must not also
+// call `load` — two mints is two mpv starts, and a 1-slot account
+// answers the second with the connection-limit card.
 watch([channelId, playId, playKind], () => {
   void load({ fresh: true })
+}, { immediate: true })
+
+// Release the slot so Retry is one start, not a remount of the dead
+// token plus a new one.
+watch(fatal, isFatal => {
+  if (isFatal)
+    playback.clear()
 })
 
 onUnmounted(() => {
@@ -618,9 +626,7 @@ onUnmounted(() => {
 
     <!-- Live chrome. Auto-hides after 3s of stillness; the guide panel
          below follows its visibility rather than keeping its own timer.
-         NOTE: intentionally NOT gated by !fatal — the overlay owns the
-         center error modal, so when the premium state machine lands on
-         "error" the overlay must still be mounted to show it. -->
+         Stays mounted on fatal: this overlay is the only error modal. -->
     <live-tv-live-player-overlay
       ref="overlayRef"
       class="!z-40"
@@ -676,7 +682,8 @@ onUnmounted(() => {
     </div>
 
     <!-- First connect, and every reconnect: one spinner, one line saying
-         which of the two this is. -->
+         which of the two this is. Fatal is the overlay's modal, not a
+         second card on this page. -->
     <div
       v-if="busy && !playback.source.value && !fatal"
       class="absolute inset-0 z-40 grid place-items-center text-white"
@@ -686,33 +693,6 @@ onUnmounted(() => {
         <p class="text-body-medium font-medium opacity-70">
           {{ statusLine || $t('Connecting to live stream…') }}
         </p>
-      </div>
-    </div>
-
-    <!-- The end of the road: attempts spent, or a refusal that retrying
-         cannot change. One message, and something to do about it. -->
-    <div
-      v-else-if="fatal"
-      class="absolute inset-0 z-40 grid place-items-center bg-black/90 px-6 text-center text-white"
-    >
-      <div class="flex max-w-md flex-col items-center gap-4">
-        <h2 class="text-title-medium font-bold">
-          {{ channelName }}
-        </h2>
-        <p class="text-body-medium opacity-80">
-          {{ premium.playerError || $t('This channel could not be opened.') }}
-        </p>
-        <div class="flex flex-wrap justify-center gap-3">
-          <v-btn color="primary" variant="flat" :prepend-icon="mdiReload" @click="retry">
-            {{ $t('Retry') }}
-          </v-btn>
-          <v-btn v-if="hasNext" variant="tonal" @click="zap(1)">
-            {{ $t('Next channel') }}
-          </v-btn>
-          <v-btn variant="tonal" :prepend-icon="mdiArrowLeft" @click="goBack">
-            {{ $t('Back') }}
-          </v-btn>
-        </div>
       </div>
     </div>
 

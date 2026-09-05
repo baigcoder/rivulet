@@ -21,6 +21,7 @@
 //! read, 3 retries with exponential backoff). Credentials are
 //! never logged.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -61,6 +62,17 @@ impl XtreamAdapter {
         Client::builder()
             .connect_timeout(CONNECT_TIMEOUT)
             .read_timeout(READ_TIMEOUT)
+            .user_agent("Rivulet/0.5 (Xtream)")
+            .build()
+            .map_err(|e| PremiumError::Network(e.to_string()))
+    }
+
+    /// VOD catalogs are larger than live lists; 15s idle is enough to
+    /// abort a hung panel and not enough to finish a fat category.
+    fn vod_client(&self) -> Result<Client, PremiumError> {
+        Client::builder()
+            .connect_timeout(CONNECT_TIMEOUT)
+            .read_timeout(Duration::from_secs(60))
             .user_agent("Rivulet/0.5 (Xtream)")
             .build()
             .map_err(|e| PremiumError::Network(e.to_string()))
@@ -802,7 +814,7 @@ impl XtreamAdapter {
             return Ok(cats);
         }
         let creds = self.config().await?;
-        let bytes = get_with_retries(&self.client()?, &creds.api_url("get_vod_categories")).await?;
+        let bytes = get_with_retries(&self.vod_client()?, &creds.api_url("get_vod_categories")).await?;
         let raw: Vec<XtreamCategory> = serde_json::from_slice(&bytes)
             .map_err(|e| PremiumError::MalformedResponse(format!("vod categories: {e}")))?;
         let cats: Vec<super::models::VodCategory> = raw.into_iter().filter_map(|c| {
@@ -819,7 +831,7 @@ impl XtreamAdapter {
             return Ok(cats);
         }
         let creds = self.config().await?;
-        let bytes = get_with_retries(&self.client()?, &creds.api_url("get_series_categories")).await?;
+        let bytes = get_with_retries(&self.vod_client()?, &creds.api_url("get_series_categories")).await?;
         let raw: Vec<XtreamCategory> = serde_json::from_slice(&bytes)
             .map_err(|e| PremiumError::MalformedResponse(format!("series categories: {e}")))?;
         let cats: Vec<super::models::VodCategory> = raw.into_iter().filter_map(|c| {
@@ -833,12 +845,14 @@ impl XtreamAdapter {
 
     async fn fetch_vod_movies(&self, category_id: Option<&str>) -> Result<Vec<super::models::PremiumVodItem>, PremiumError> {
         let cat_key = category_id.unwrap_or("");
+        let lock = self.state.vod_cache.list_lock(&self.connection_id, "movies", cat_key);
+        let _guard = lock.lock().await;
         if let Some(items) = self.state.vod_cache.movies(&self.connection_id, cat_key) {
             return Ok(items);
         }
         let creds = self.config().await?;
         let url = self.vod_api_url(&creds, "get_vod_streams", category_id);
-        let bytes = get_with_retries(&self.client()?, &url).await?;
+        let bytes = get_with_retries(&self.vod_client()?, &url).await?;
         let raw: Vec<XtreamVodStream> = serde_json::from_slice(&bytes)
             .map_err(|e| PremiumError::MalformedResponse(format!("vod streams: {e}")))?;
         let all: Vec<super::models::PremiumVodItem> = raw.into_iter().filter_map(|s| {
@@ -862,12 +876,14 @@ impl XtreamAdapter {
 
     async fn fetch_vod_series(&self, category_id: Option<&str>) -> Result<Vec<super::models::PremiumSeriesItem>, PremiumError> {
         let cat_key = category_id.unwrap_or("");
+        let lock = self.state.vod_cache.list_lock(&self.connection_id, "series", cat_key);
+        let _guard = lock.lock().await;
         if let Some(items) = self.state.vod_cache.series(&self.connection_id, cat_key) {
             return Ok(items);
         }
         let creds = self.config().await?;
         let url = self.vod_api_url(&creds, "get_series", category_id);
-        let bytes = get_with_retries(&self.client()?, &url).await?;
+        let bytes = get_with_retries(&self.vod_client()?, &url).await?;
         let raw: Vec<XtreamSeriesRow> = serde_json::from_slice(&bytes)
             .map_err(|e| PremiumError::MalformedResponse(format!("series: {e}")))?;
         let all: Vec<super::models::PremiumSeriesItem> = raw.into_iter().filter_map(|s| {
@@ -887,6 +903,57 @@ impl XtreamAdapter {
         Ok(all)
     }
 
+    /// "All movies" used to hit `get_vod_streams` with no category — one
+    /// multi-megabyte JSON, one 15s timeout, three retries. Walk
+    /// categories instead and stop once this page is full.
+    async fn merge_vod_movies(&self, min_raw: usize) -> Result<(Vec<super::models::PremiumVodItem>, bool), PremiumError> {
+        if let Some(all) = self.state.vod_cache.movies(&self.connection_id, "") {
+            return Ok((all, true));
+        }
+        let cats = self.vod_movie_categories().await?;
+        if cats.is_empty() {
+            return Ok((self.fetch_vod_movies(None).await?, true));
+        }
+        let mut merged = Vec::new();
+        let mut seen = HashSet::new();
+        for (i, cat) in cats.iter().enumerate() {
+            for item in self.fetch_vod_movies(Some(&cat.id)).await? {
+                if seen.insert(item.id.clone()) {
+                    merged.push(item);
+                }
+            }
+            if merged.len() >= min_raw && i + 1 < cats.len() {
+                return Ok((merged, false));
+            }
+        }
+        self.state.vod_cache.set_movies(&self.connection_id, "", merged.clone());
+        Ok((merged, true))
+    }
+
+    async fn merge_vod_series(&self, min_raw: usize) -> Result<(Vec<super::models::PremiumSeriesItem>, bool), PremiumError> {
+        if let Some(all) = self.state.vod_cache.series(&self.connection_id, "") {
+            return Ok((all, true));
+        }
+        let cats = self.vod_series_categories().await?;
+        if cats.is_empty() {
+            return Ok((self.fetch_vod_series(None).await?, true));
+        }
+        let mut merged = Vec::new();
+        let mut seen = HashSet::new();
+        for (i, cat) in cats.iter().enumerate() {
+            for item in self.fetch_vod_series(Some(&cat.id)).await? {
+                if seen.insert(item.id.clone()) {
+                    merged.push(item);
+                }
+            }
+            if merged.len() >= min_raw && i + 1 < cats.len() {
+                return Ok((merged, false));
+            }
+        }
+        self.state.vod_cache.set_series(&self.connection_id, "", merged.clone());
+        Ok((merged, true))
+    }
+
     pub async fn vod_movies(
         &self,
         category_id: Option<&str>,
@@ -895,13 +962,43 @@ impl XtreamAdapter {
         cursor: usize,
         limit: usize,
     ) -> Result<super::models::VodPage<super::models::PremiumVodItem>, PremiumError> {
-        let mut all = self.fetch_vod_movies(category_id).await?;
-        if hide_adult {
-            all.retain(|i| !i.is_adult);
+        if category_id.filter(|c| !c.is_empty()).is_some() {
+            let mut all = self.fetch_vod_movies(category_id).await?;
+            if hide_adult {
+                all.retain(|i| !i.is_adult);
+            }
+            all = filter_search(all, search, |i| &i.name);
+            let (items, total, next_cursor) = paginate(all, cursor, limit);
+            return Ok(super::models::VodPage { items, total, next_cursor });
         }
-        all = filter_search(all, search, |i| &i.name);
-        let (items, total, next_cursor) = paginate(all, cursor, limit);
-        Ok(super::models::VodPage { items, total, next_cursor })
+        let want = cursor.saturating_add(limit);
+        let searching = search.filter(|s| !s.is_empty()).is_some();
+        let mut min_raw = if searching { usize::MAX } else { want };
+        loop {
+            let (raw, complete) = self.merge_vod_movies(min_raw).await?;
+            let raw_len = raw.len();
+            let mut all = raw;
+            if hide_adult {
+                all.retain(|i| !i.is_adult);
+            }
+            all = filter_search(all, search, |i| &i.name);
+            if all.len() >= want || complete {
+                let (items, mut total, mut next_cursor) = paginate(all, cursor, limit);
+                if !complete {
+                    total = total.max(want + 1);
+                    if next_cursor.is_none() {
+                        next_cursor = Some(want.to_string());
+                    }
+                }
+                return Ok(super::models::VodPage { items, total, next_cursor });
+            }
+            if raw_len >= min_raw {
+                min_raw = raw_len.saturating_add(want);
+            } else {
+                let (items, total, next_cursor) = paginate(all, cursor, limit);
+                return Ok(super::models::VodPage { items, total, next_cursor });
+            }
+        }
     }
 
     pub async fn vod_series_list(
@@ -912,13 +1009,43 @@ impl XtreamAdapter {
         cursor: usize,
         limit: usize,
     ) -> Result<super::models::VodPage<super::models::PremiumSeriesItem>, PremiumError> {
-        let mut all = self.fetch_vod_series(category_id).await?;
-        if hide_adult {
-            all.retain(|i| !i.is_adult);
+        if category_id.filter(|c| !c.is_empty()).is_some() {
+            let mut all = self.fetch_vod_series(category_id).await?;
+            if hide_adult {
+                all.retain(|i| !i.is_adult);
+            }
+            all = filter_search(all, search, |i| &i.name);
+            let (items, total, next_cursor) = paginate(all, cursor, limit);
+            return Ok(super::models::VodPage { items, total, next_cursor });
         }
-        all = filter_search(all, search, |i| &i.name);
-        let (items, total, next_cursor) = paginate(all, cursor, limit);
-        Ok(super::models::VodPage { items, total, next_cursor })
+        let want = cursor.saturating_add(limit);
+        let searching = search.filter(|s| !s.is_empty()).is_some();
+        let mut min_raw = if searching { usize::MAX } else { want };
+        loop {
+            let (raw, complete) = self.merge_vod_series(min_raw).await?;
+            let raw_len = raw.len();
+            let mut all = raw;
+            if hide_adult {
+                all.retain(|i| !i.is_adult);
+            }
+            all = filter_search(all, search, |i| &i.name);
+            if all.len() >= want || complete {
+                let (items, mut total, mut next_cursor) = paginate(all, cursor, limit);
+                if !complete {
+                    total = total.max(want + 1);
+                    if next_cursor.is_none() {
+                        next_cursor = Some(want.to_string());
+                    }
+                }
+                return Ok(super::models::VodPage { items, total, next_cursor });
+            }
+            if raw_len >= min_raw {
+                min_raw = raw_len.saturating_add(want);
+            } else {
+                let (items, total, next_cursor) = paginate(all, cursor, limit);
+                return Ok(super::models::VodPage { items, total, next_cursor });
+            }
+        }
     }
 
     pub async fn vod_series_detail(&self, series_id: &str) -> Result<super::models::PremiumSeriesDetail, PremiumError> {

@@ -1272,11 +1272,11 @@ const isDolbyContent = computed(() => DOLBY_RE.test(props.quality ?? ''))
 
 // Auto-apply HDR passthrough when HDR content is detected and preset is still Auto.
 watch(isHdrContent, hdr => {
-  if (hdr && toneMapping.value === 'auto' && native && started.value)
+  if (hdr && toneMapping.value === 'auto' && native && started.value && !isLive.value)
     applyToneMapping('hdr-passthrough')
 }, { immediate: true })
 
-function applyToneMapping(preset: ToneMapping) {
+function applyToneMapping(preset: ToneMapping, silent = false) {
   toneMapping.value = preset
   if (!native || !started.value)
     return
@@ -1303,7 +1303,8 @@ function applyToneMapping(preset: ToneMapping) {
       ipc(['set_property', 'target-colorspace-hint', true])
       break
   }
-  osd($t('HDR: {preset}', { preset: TONE_MAPPING_PRESETS.find(p => p.value === preset)?.label() ?? preset }))
+  if (!silent)
+    osd($t('HDR: {preset}', { preset: TONE_MAPPING_PRESETS.find(p => p.value === preset)?.label() ?? preset }))
 }
 
 // ---------------------------------------------------------------------------
@@ -1708,10 +1709,9 @@ function frame(now: number) {
     || busy.value
     || !!props.resolving
     || (!!props.src && !started.value)
-    || (started.value && !paused.value && (
+    || (started.value && (
       buffering.value
-      || (!position.value && !duration.value)
-      || (!fromEngine.value && videoWidth.value === 0 && position.value === 0)
+      || (!fromEngine.value && videoWidth.value === 0)
     ))
   const needsGeometry = started.value || (native && overlay && hasCentre)
 
@@ -1747,12 +1747,11 @@ function frame(now: number) {
   const dpr = pxRatio
   // Hide the native surface when the box is off-screen or not laid out —
   // otherwise it keeps painting over whatever the page scrolls under it.
-  // Direct HTTP also hides it until a frame exists: otherwise mpv's black
-  // child window covers the Buffering overlay. `position` is the wrong
-  // signal — the seek-bar deadband ignores time-pos under 0.4s, so the
-  // picture would stay hidden (and Buffering stuck) after playback started.
-  const opening = !fromEngine.value && !localLive.value && !!props.src && (
-    !started.value || (!ended.value && !paused.value && videoWidth.value === 0 && position.value === 0)
+  // Hide until a frame exists: otherwise mpv's black child window covers
+  // the Buffering overlay. Live used to skip this and the overlay never
+  // showed — a token was enough to call the stream "playing".
+  const opening = !fromEngine.value && !!props.src && (
+    !started.value || (!ended.value && videoWidth.value === 0)
   )
   const visible = !opening && r.width >= 16 && r.height >= 16
     && r.bottom > 0 && r.top < window.innerHeight
@@ -2007,6 +2006,7 @@ async function startPlayer() {
         y: Math.round(b.top * dpr),
         width: Math.max(1, Math.round(b.width * dpr)),
         height: Math.max(1, Math.round(b.height * dpr)),
+        live: isLive.value,
         ...iptvHeaders,
       })
     }
@@ -2041,10 +2041,14 @@ async function startPlayer() {
     syncNote.value = ''
     guess.value = null
     lastKey = '' // force a geometry + shape push on the next frame
-    if (!fromEngine.value && !localLive.value) {
+    if (!fromEngine.value) {
       window.setTimeout(() => {
-        if (!started.value || duration.value || errorMsg.value)
+        if (!started.value || errorMsg.value || videoWidth.value > 0 || duration.value)
           return
+        if (localLive.value) {
+          streamDied('dead')
+          return
+        }
         if (!streamDied())
           errorMsg.value = $t('This stream did not start. Try another quality, or change How Play works in Settings → Sources.')
       }, 12_000)
@@ -2074,8 +2078,9 @@ async function startPlayer() {
       ipc(['keybind', 'WHEEL_DOWN', 'add volume -5'])
     }
 
-    // Apply HDR tone mapping and read audio device info.
-    applyToneMapping(toneMapping.value)
+    // Live 4K is often PQ/HLG. Passthrough into an SDR X11 window is a
+    // black picture with the audio still running.
+    applyToneMapping(isLive.value ? 'sdr' : toneMapping.value, isLive.value)
     void readAudioInfo()
 
     // Tracks as soon as the file is open — a dual-audio server stream should
@@ -2924,11 +2929,11 @@ const centre = computed(() => {
   // spinner instead of the pause overlay in that case.
   if (fromEngine.value && started.value && !duration.value && !ended.value)
     return 'stalled'
-  // Direct HTTP / libVLC: `started` flips true as soon as start() returns,
-  // which is before the first frame. libVLC also reports pause while it
-  // opens, so requiring !paused hid this overlay and showed the pause card
-  // on a black screen instead — "no loading" on the phone.
-  if (!isLive.value && !fromEngine.value && started.value && !ended.value && videoWidth.value === 0 && position.value === 0)
+  // `started` flips true as soon as start() returns, before the first
+  // frame. Live used to skip this so the watch page could draw its own
+  // notice — that notice unmounts the moment the URL exists, so a live
+  // channel sat on a black screen with a Pause button and no spinner.
+  if (!fromEngine.value && started.value && !ended.value && videoWidth.value === 0)
     return 'loading'
   if (started.value && (buffering.value || stalled.value))
     return 'stalled'

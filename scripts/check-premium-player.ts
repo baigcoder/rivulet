@@ -27,6 +27,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { MAX_RECONNECT_ATTEMPTS, reconnectDelayMs } from '../app/stores/premiumTv'
 import { categoryLabel, isBundleCategory, parseCategoryName } from '../app/utils/categoryLabel'
+import { hasProviderPrefix, stripProviderPrefix, vodDisplayName } from '../app/utils/providerTitle'
 import './i18n-stub'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
@@ -40,6 +41,9 @@ const GRID = `${ROOT}app/components/premium-tv/PremiumChannelGrid.vue`
 const VOD_GRID = `${ROOT}app/components/premium-tv/PremiumVodGrid.vue`
 const VOD_SIDEBAR = `${ROOT}app/components/premium-tv/PremiumVodSidebar.vue`
 const MOVIE_PAGE = `${ROOT}app/pages/live-tv/premium/movie/[id].vue`
+const SERIES_PAGE = `${ROOT}app/pages/live-tv/premium/series/[id].vue`
+const DETAIL = `${ROOT}app/components/MediaDetailView.vue`
+const IMAGES = `${ROOT}app/components/MediaImages.vue`
 const CARD = `${ROOT}app/components/premium-tv/PremiumChannelCard.vue`
 const EPG = `${ROOT}app/components/premium-tv/PremiumEpgPanel.vue`
 const BROWSER = `${ROOT}app/components/premium-tv/PremiumBrowser.vue`
@@ -49,10 +53,10 @@ const ACCOUNT = `${ROOT}app/components/premium-tv/PremiumAccountCard.vue`
 const CONNECT = `${ROOT}app/components/premium-tv/PremiumConnectForm.vue`
 
 /** Everything the Premium TV front end is made of, for the sweeps below. */
-const FRONTEND = [STORE, COMPOSABLE, UTILS, WATCH, GRID, VOD_GRID, VOD_SIDEBAR, MOVIE_PAGE, CARD, EPG, BROWSER, HEADER, SIDEBAR, ACCOUNT, CONNECT]
+const FRONTEND = [STORE, COMPOSABLE, UTILS, WATCH, GRID, VOD_GRID, VOD_SIDEBAR, MOVIE_PAGE, SERIES_PAGE, DETAIL, CARD, EPG, BROWSER, HEADER, SIDEBAR, ACCOUNT, CONNECT]
 
 /** The markup files, where the TV rules apply. */
-const TEMPLATES = [WATCH, GRID, VOD_GRID, VOD_SIDEBAR, MOVIE_PAGE, CARD, EPG, BROWSER, HEADER, SIDEBAR, ACCOUNT, CONNECT]
+const TEMPLATES = [WATCH, GRID, VOD_GRID, VOD_SIDEBAR, MOVIE_PAGE, SERIES_PAGE, DETAIL, IMAGES, CARD, EPG, BROWSER, HEADER, SIDEBAR, ACCOUNT, CONNECT]
 
 interface CheckResult {
   name: string
@@ -189,8 +193,23 @@ check('vod playback does not use the live reconnect loop', () => {
   const fn = watchSrc.slice(watchSrc.indexOf('function onPlaybackFailed'), watchSrc.indexOf('// ── Transport'))
   assert.ok(fn.includes('isVod'), 'playback failure must branch for movies and shows')
   assert.ok(
-    watchSrc.includes('if (isVod.value)\n    return \'\''),
-    'the live overlay must not duplicate vod error UI',
+    watchSrc.includes('if (isVod.value && premium.player !== \'error\')'),
+    'the live overlay must not duplicate vod error UI while the file is up',
+  )
+})
+
+check('one error modal, one player start', () => {
+  assert.ok(!/v-else-if="fatal"/.test(watchSrc), 'a page fatal card under the overlay is the ghosted Playback Error')
+  assert.ok(watchSrc.includes('{ immediate: true }'), 'the first mint is the zap watcher, not a second onMounted load')
+  const mounted = watchSrc.slice(watchSrc.indexOf('onMounted('), watchSrc.indexOf('watch([channelId'))
+  assert.ok(!mounted.includes('load('), 'onMounted must not mint a second source beside the watcher')
+  const loadFn = read(COMPOSABLE).slice(
+    read(COMPOSABLE).indexOf('async function load'),
+    read(COMPOSABLE).indexOf('function prefetch'),
+  )
+  assert.ok(
+    !loadFn.includes('source.value = null'),
+    'nulling the source unmounts mpv and starts a second one on the same slot',
   )
 })
 
@@ -278,7 +297,21 @@ check('the grid is virtualized', () => {
 check('vod browse opens a movie detail page before play', () => {
   const browser = read(BROWSER)
   assert.ok(/premium\/movie\//.test(browser) || browser.includes('openMovie'), 'movies must open a detail page')
-  assert.ok(read(MOVIE_PAGE).includes('@click="play"'), 'the detail page must offer Play')
+  assert.ok(read(MOVIE_PAGE).includes('@play="play"'), 'the detail page must offer Play')
+  assert.ok(read(MOVIE_PAGE).includes('media-detail-view'), 'movie detail is the library title page')
+  assert.ok(read(MOVIE_PAGE).includes('provider-play'), 'Play must stay on the provider stream')
+  assert.ok(read(MOVIE_PAGE).includes('vodDisplayName'), 'EN: prefixes must not be the title TMDB is asked for')
+  assert.ok(read(SERIES_PAGE).includes('media-detail-view'), 'series detail is the library title page')
+  assert.ok(read(SERIES_PAGE).includes('provider-play'), 'series Play must stay on the provider stream')
+  assert.ok(read(SERIES_PAGE).includes('vodDisplayName'), 'series titles carry the same prefix')
+  assert.ok(read(`${ROOT}app/utils/tmdb.ts`).includes('stripProviderPrefix'), 'a failed EN: search must retry without the prefix')
+  assert.ok(read(DETAIL).includes('sourceLabel'), 'premium detail names the IPTV provider at the top')
+  assert.ok(read(DETAIL).includes('providerPlay'), 'that label is only on a provider-play title')
+  assert.ok(read(DETAIL).includes('$t(\'Trailer\')'), 'the title page offers a Trailer button')
+  assert.ok(read(DETAIL).includes('cast-row'), 'the title page reuses the library Cast row')
+  assert.ok(read(DETAIL).includes('media-images'), 'the title page shows TMDB stills')
+  assert.ok(read(DETAIL).includes('media-reviews'), 'the title page reuses library reviews')
+  assert.ok(!read(DETAIL).includes('download-button') || read(DETAIL).includes('!providerPlay'), 'Download is hidden when Play is a provider stream')
 })
 
 check('vod category filter uses search-field', () => {
@@ -402,6 +435,32 @@ check('no premium string bypasses $t()', () => {
       assert.fail(`${f.replace(ROOT, '')}:${line} assigns a bare string to error.value`)
     }
   }
+})
+
+check('provider VOD titles drop the language prefix', () => {
+  assert.equal(hasProviderPrefix('EN: The Mandalorian and Grogu (2026)'), true)
+  assert.equal(hasProviderPrefix('The Mandalorian and Grogu'), false)
+  assert.equal(stripProviderPrefix('EN: The Mandalorian and Grogu (2026)'), 'The Mandalorian and Grogu (2026)')
+  assert.equal(stripProviderPrefix('PK | Film [4K]'), 'Film [4K]')
+  const labelled = vodDisplayName('EN: The Mandalorian and Grogu (2026)')
+  assert.equal(labelled.name, 'The Mandalorian and Grogu')
+  assert.equal(labelled.year, '2026')
+})
+
+check('a live channel shows a loader until the first frame', () => {
+  const player = readFileSync(`${ROOT}app/components/MpvPlayer.vue`, 'utf8')
+  assert.ok(
+    /!fromEngine\.value && started\.value && !ended\.value && videoWidth\.value === 0/.test(player),
+    'centre loading must not be gated on !isLive — that left premium live on a black screen',
+  )
+  assert.ok(
+    watchSrc.includes('premium.player === \'buffering\''),
+    'the watch page must treat buffering as busy',
+  )
+  assert.ok(
+    /videoWidth === 'number' && p\.videoWidth > 0/.test(watchSrc),
+    'playing must wait for a decoded frame, not just mpv having started',
+  )
 })
 
 // ── Report ───────────────────────────────────────────────────────

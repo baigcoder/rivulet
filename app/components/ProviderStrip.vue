@@ -98,16 +98,6 @@ const providers = computed(() => {
       seen.set(at, p)
   }
 
-  // Lionsgate+ (provider_id 1790) may not appear for every region.  Inject
-  // a static stub when it is missing so the icon is always reachable.
-  if (!seen.has(ORDER.findIndex(a => a[0] === 'lionsgate plus'))) {
-    seen.set(ORDER.findIndex(a => a[0] === 'lionsgate plus'), {
-      provider_id: 1790,
-      provider_name: 'Lionsgate+',
-      logo_path: null,
-    })
-  }
-
   return [...seen.values()].sort((a, b) => rank(a) - rank(b))
 })
 

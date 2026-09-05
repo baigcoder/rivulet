@@ -39,14 +39,22 @@ function handleRemove() {
   setTimeout(() => props.onRemove?.(), 250)
 }
 
+function prime() {
+  ui.open(props.media)
+  prefetchMediaDetail(props.media)
+}
+
 function handleClick(e: MouseEvent) {
   if (removing.value) {
     e.preventDefault()
     e.stopPropagation()
+    return
   }
+  prime()
 }
 
 function play() {
+  prime()
   return navigateTo(props.resumeTo || props.to || mediaLink(props.media))
 }
 
@@ -87,6 +95,7 @@ const cardStyle = computed(() => {
     @mouseleave="hover = false"
     @focus="hover = true; ui.hover(media)"
     @blur="hover = false"
+    @pointerdown="prime"
     @click="handleClick"
   >
     <!-- Ring lives on the poster, not the title under it. An outside ring on

@@ -39,6 +39,8 @@ function onEnter() {
     @blur="hover = false"
     @mousedown="pressed = true"
     @mouseup="pressed = false"
+    @pointerdown="ui.open(media); prefetchMediaDetail(media)"
+    @click="ui.open(media); prefetchMediaDetail(media)"
   >
     <div class="relative aspect-2/3 w-14 shrink-0 overflow-hidden rounded-md">
       <media-poster :src="posterUrl(media.poster, 'w154')" :alt="media.title" />

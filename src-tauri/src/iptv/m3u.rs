@@ -34,9 +34,9 @@ const FREE_TV_PLAYLIST: &str = "https://raw.githubusercontent.com/Free-TV/IPTV/m
 /// Per-country playlists imported alongside the curated list, because the
 /// curated list simply has no channels for these countries — there is no
 /// Pakistan group in it at all, and no Pakistani broadcaster under any other
-/// group either. iptv-org's published per-country file is the free source
-/// that does carry them (ARY News, 92 News, Dunya, Bol, Lahore News, KTN,
-/// News One, Discover Pakistan …), with logos and real category names.
+/// group either. The rest of South Asia is the same gap. iptv-org's published
+/// per-country file is the free source that does carry them, with logos and
+/// real category names.
 ///
 /// The `countries/` file rather than `streams/`: same channels, but the
 /// published one adds `tvg-logo` and a `group-title`, and a card with no
@@ -45,8 +45,14 @@ const FREE_TV_PLAYLIST: &str = "https://raw.githubusercontent.com/Free-TV/IPTV/m
 /// What it does *not* carry is a country on each line — a per-country
 /// playlist knows its country and doesn't repeat it — hence the code here,
 /// which the importer applies as its last fallback.
-const COUNTRY_SUPPLEMENTS: &[(&str, &str)] =
-    &[("PK", "https://iptv-org.github.io/iptv/countries/pk.m3u")];
+const COUNTRY_SUPPLEMENTS: &[(&str, &str)] = &[
+    ("PK", "https://iptv-org.github.io/iptv/countries/pk.m3u"),
+    ("IN", "https://iptv-org.github.io/iptv/countries/in.m3u"),
+    ("BD", "https://iptv-org.github.io/iptv/countries/bd.m3u"),
+    ("LK", "https://iptv-org.github.io/iptv/countries/lk.m3u"),
+    ("NP", "https://iptv-org.github.io/iptv/countries/np.m3u"),
+    ("AF", "https://iptv-org.github.io/iptv/countries/af.m3u"),
+];
 
 /// Every playlist that makes up Free TV, as `(country code, url)`. The
 /// curated worldwide list comes first: it is the big one, and whichever

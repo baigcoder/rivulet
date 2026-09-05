@@ -33,6 +33,10 @@ async function loadInitialStatus(): Promise<void> {
   if (settings.isPremium)
     await premium.loadStatus()
   statusLoaded.value = true
+  // Movies / TV shows wait on the panel. Start that while the live
+  // grid is still painting, so the tab is warm when they open it.
+  if (premium.connected && premium.supportsVod)
+    void premium.prefetchVod()
 }
 
 onMounted(() => {

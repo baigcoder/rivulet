@@ -79,6 +79,12 @@ export const useUiStore = defineStore('ui', () => {
 
   /** What the cursor or focus is on — the home page's hero reads this. */
   const selected = ref<Media | null>(null)
+  /**
+   * The card that opened a title. `ambient` / `hover` / `release` must not
+   * touch it: KeepAlive browse pages rewrite `selected` as you leave, and the
+   * title page would go blank until TMDB returns.
+   */
+  const opening = ref<Media | null>(null)
   /** What the backdrop paints. The same thing only when hover is allowed to move it. */
   const art = ref<Media | null>(null)
   /**
@@ -116,6 +122,15 @@ export const useUiStore = defineStore('ui', () => {
   const isDetailed = computed(() => layout.value.endsWith('detail'))
 
   /**
+   * The card that was pressed. Snapshot only — no backdrop, no palette.
+   * `select` is what paints, and the title page does that after first paint.
+   */
+  function open(media: Media) {
+    selected.value = media
+    opening.value = media
+  }
+
+  /**
    * Opening a title: this is the art the backdrop is *about*, so it always
    * paints. Titles with no backdrop are ignored rather than blanking the window
    * — the previous art is a better background than a flat colour.
@@ -124,8 +139,10 @@ export const useUiStore = defineStore('ui', () => {
    */
   let turn = 0
   function select(media: Media | null) {
+    selected.value = media
+    if (media)
+      opening.value = media
     if (media?.backdrop || !media) {
-      selected.value = media
       art.value = media
       picked.value = true
     }
@@ -138,7 +155,9 @@ export const useUiStore = defineStore('ui', () => {
    * but never covers the user's own picture.
    */
   function ambient(media: Media | null) {
-    select(media)
+    selected.value = media
+    if (media?.backdrop || !media)
+      art.value = media
     ambientArt.value = media
     picked.value = false
   }
@@ -177,5 +196,5 @@ export const useUiStore = defineStore('ui', () => {
   // Sweeping the cursor across a grid would otherwise queue a crossfade per card.
   const preview = useDebounceFn(hover, 120)
 
-  return { layout, cardWidth, posterSize, rail, drawer, pendingSource, blur, tint, backdropMode, backdropImage, backdropFollowsHover, artOverCustom, shownArt, selected, art, backdrop, isGrid, isDetailed, select, ambient, release, hover, preview }
+  return { layout, cardWidth, posterSize, rail, drawer, pendingSource, blur, tint, backdropMode, backdropImage, backdropFollowsHover, artOverCustom, shownArt, selected, opening, art, backdrop, isGrid, isDetailed, open, select, ambient, release, hover, preview }
 })

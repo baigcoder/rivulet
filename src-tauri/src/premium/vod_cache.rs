@@ -1,11 +1,11 @@
 //! In-memory cache for Xtream VOD catalog responses.
 //!
-//! The panel returns the whole movie or series list in one JSON blob;
-//! pagination is local. Without a cache every page turn and every tab
-//! switch re-downloads thousands of rows from the provider.
+//! A category list is one JSON blob; "all movies" is many of those
+//! walked until the page is full. Without a cache every page turn
+//! re-downloads the same category from the provider.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::models::{PremiumSeriesItem, PremiumVodItem, VodCategory};
@@ -28,6 +28,9 @@ type ListKey = (String, String);
 
 pub struct VodCache {
     inner: Mutex<VodCacheInner>,
+    /// One lock per in-flight category download so a prefetch and a
+    /// tab click do not pull the same JSON twice.
+    inflight: Mutex<HashMap<ListKey, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 struct VodCacheInner {
@@ -46,7 +49,16 @@ impl VodCache {
                 movies: HashMap::new(),
                 series: HashMap::new(),
             }),
+            inflight: Mutex::new(HashMap::new()),
         }
+    }
+
+    pub fn list_lock(&self, connection_id: &str, kind: &str, category_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let key = (format!("{connection_id}\0{kind}"), category_id.to_string());
+        let mut map = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
+        map.entry(key)
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
     }
 
     pub fn movie_categories(&self, connection_id: &str) -> Option<Vec<VodCategory>> {
@@ -127,6 +139,10 @@ impl VodCache {
             inner.series_categories.remove(connection_id);
             inner.movies.retain(|(cid, _), _| cid != connection_id);
             inner.series.retain(|(cid, _), _| cid != connection_id);
+        }
+        if let Ok(mut map) = self.inflight.lock() {
+            let prefix = format!("{connection_id}\0");
+            map.retain(|(cid, _), _| !cid.starts_with(&prefix));
         }
     }
 }

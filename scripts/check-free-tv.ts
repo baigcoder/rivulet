@@ -83,10 +83,13 @@ for (const url of playlists) {
 // on no line, so without the pair every channel in it lands country-less.
 const supplements = [...m3u.matchAll(/\("([A-Z]{2})",\s*"(https:\/\/[^"]+)"\)/g)]
 assert.ok(supplements.length >= 1, 'at least one per-country supplement')
-assert.ok(
-  supplements.some(([, cc]) => cc === 'PK'),
-  'Pakistan is supplemented: the curated list has no Pakistan group at all',
-)
+const supplemented = new Set(supplements.map(([, cc]) => cc))
+for (const cc of ['PK', 'IN', 'BD', 'LK', 'NP', 'AF']) {
+  assert.ok(
+    supplemented.has(cc),
+    `${cc} is supplemented: the curated list has no South Asia group for it`,
+  )
+}
 assert.ok(m3u.includes('pub fn free_playlists'), 'one function hands the whole set out')
 assert.ok(
   m3u.includes('pub fn free_playlist_key'),
@@ -97,6 +100,11 @@ assert.ok(
 // upstreams through the proxy; that froze the page and made Back dead.
 const freePage = readFileSync(new URL('../app/pages/live-tv/free.vue', import.meta.url), 'utf8')
 assert.doesNotMatch(freePage, /probeIds/, 'the Free TV grid must not probe streams while browsing')
+
+const liveCard = readFileSync(new URL('../app/components/live-tv/LiveChannelCard.vue', import.meta.url), 'utf8')
+assert.match(liveCard, /\$t\('LIVE'\)/, 'each Free TV card shows a LIVE tag')
+assert.match(liveCard, /\$t\('Offline'\)/, 'and flips it to Offline when the stream is dead')
+assert.match(liveCard, /absolute start-1\.5 top-1\.5/, 'the health tag sits on the artwork, top start')
 assert.match(freePage, /goHub|liveTvBackPath/, 'Free TV needs an explicit way back to the hub')
 
 const watchPage = readFileSync(new URL('../app/pages/live-tv/watch.vue', import.meta.url), 'utf8')
@@ -115,8 +123,8 @@ assert.match(freePage, /saveLivePlay/, 'play must stage the stream before naviga
 assert.match(watchPage, /@retry="\(\) => void onRetry\(\)"/, 'Retry must restart the player, not only re-mint a cached proxy URL')
 assert.match(
   watchPage,
-  /:resolving="resolving \|\| autoSkipping"/,
-  'the player must not draw Buffering while the skip notice is on screen',
+  /:resolving="waiting"/,
+  'the player must not draw a second spinner while the page owns Connecting…',
 )
 assert.doesNotMatch(
   watchPage,
@@ -152,13 +160,23 @@ assert.match(
 )
 assert.match(
   playerSrc,
-  /!fromEngine\.value && started\.value && !ended\.value && videoWidth\.value === 0 && position\.value === 0/,
-  'Direct opening stays on Loading until a frame or clock exists — including while libVLC reports pause',
+  /!fromEngine\.value && started\.value && !ended\.value && videoWidth\.value === 0/,
+  'Loading stays up until a decoded frame — live HLS moves time-pos before the picture exists',
 )
 assert.match(
   playerSrc,
-  /opening = !fromEngine\.value && !localLive\.value/,
-  'Direct play hides the native surface so Buffering is not covered by a black mpv window',
+  /opening = !fromEngine\.value && !!props\.src && \(/,
+  'the native surface hides until a frame exists, including free and premium live',
+)
+assert.match(
+  watchPage,
+  /hasPicture/,
+  'the free HUD must not call a black screen "playing"',
+)
+assert.match(
+  watchPage,
+  /data-cut/,
+  'the connecting spinner must punch through the native mpv window',
 )
 assert.match(
   playerSrc,

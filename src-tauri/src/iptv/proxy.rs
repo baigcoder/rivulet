@@ -44,8 +44,13 @@ fn stream_http() -> &'static Client {
     STREAM.get_or_init(|| {
         Client::builder()
             .connect_timeout(Duration::from_secs(15))
-            .gzip(true)
-            .brotli(true)
+            // Video must stay identity: gzip/br advertise Accept-Encoding, then
+            // reqwest strips Content-Length and mpv sees a chunked file — it
+            // cannot seek and Direct play sits on Buffering until a huge probe.
+            .gzip(false)
+            .brotli(false)
+            .http1_only()
+            .tcp_nodelay(true)
             .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
             .build()
             .expect("failed to build stream HTTP client")
@@ -162,6 +167,7 @@ pub async fn run_proxy() -> anyhow::Result<()> {
     loop {
         let (mut stream, _addr) = listener.accept().await?;
         tokio::spawn(async move {
+            let _ = stream.set_nodelay(true);
             if let Err(e) = handle_connection(&mut stream).await {
                 eprintln!("[iptv-proxy] connection error: {e}");
             }
@@ -242,9 +248,12 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
 
     // Forward the range header if the client sent one — HLS segments and
     // mp4 files both support it, and the upstream's CDN may return a 206
-    // that we pass through verbatim.
-    let range = extract_header(&request, "Range");
-    eprintln!("[iptv-proxy] GET {target_url}");
+    // that we pass through verbatim. A HEAD from lavf must not become a
+    // full GET: that starts the movie twice and is the long Buffering wait.
+    let is_head = request.starts_with("HEAD ");
+    let range = extract_header(&request, "Range")
+        .or_else(|| is_head.then(|| "bytes=0-0".to_string()));
+    eprintln!("[iptv-proxy] {} {target_url}", if is_head { "HEAD" } else { "GET" });
 
     let ua = custom_ua.as_deref();
     let rf = custom_referer.as_deref();
@@ -434,6 +443,10 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
     }
     header.push_str("Connection: close\r\n\r\n");
     stream.write_all(header.as_bytes()).await?;
+    if is_head {
+        let _ = stream.shutdown().await;
+        return Ok(());
+    }
 
     // Read the response body in chunks. reqwest's `chunk()` reads up to a
     // chunk at a time and returns the decompressed bytes — perfect for
@@ -589,7 +602,9 @@ async fn serve_youtube_embed(
             return Ok(());
         }
     };
-    let mut params = String::from("rel=0&playsinline=1");
+    let mut params = String::from(
+        "rel=0&playsinline=1&enablejsapi=1&vq=hd720&origin=http%3A%2F%2F127.0.0.1%3A3031",
+    );
     if autoplay {
         params.push_str("&autoplay=1");
     }
@@ -601,10 +616,41 @@ async fn serve_youtube_embed(
         params.push_str("&loop=1&playlist=");
         params.push_str(&id);
     }
+    // Forwards mute/unMute/quality from the page, and player state back up, so
+    // the volume button does not reload the iframe and the hero can hide YouTube's
+    // spinner until 720p is actually playing.
     let html = format!(
         r#"<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>*{{margin:0;padding:0;box-sizing:border-box}}html,body{{width:100%;height:100%;overflow:hidden;background:#000}}iframe{{width:100%;height:100%;border:none}}</style></head>
-<body><iframe src="https://www.youtube.com/embed/{id}?{params}" allow="autoplay; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe></body></html>"#
+<body><iframe src="https://www.youtube.com/embed/{id}?{params}" allow="autoplay; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+<script>
+(function(){{
+  var f=document.querySelector("iframe");
+  var yt="https://www.youtube.com";
+  function send(func,args){{
+    if(f.contentWindow)f.contentWindow.postMessage(JSON.stringify({{event:"command",func:func,args:args||[]}}),yt);
+  }}
+  function lock(){{
+    send("setPlaybackQuality",["hd720"]);
+    send("setPlaybackQualityRange",["hd720","hd720"]);
+  }}
+  addEventListener("message",function(e){{
+    if(!f.contentWindow)return;
+    if(e.source===parent){{
+      f.contentWindow.postMessage(typeof e.data==="string"?e.data:JSON.stringify(e.data),yt);
+      return;
+    }}
+    if(e.source!==f.contentWindow)return;
+    parent.postMessage(typeof e.data==="string"?e.data:JSON.stringify(e.data),"*");
+    var d=e.data;if(typeof d==="string"){{try{{d=JSON.parse(d)}}catch(x){{return}}}}
+    if(d&&(d.event==="onReady"||(d.info&&d.info.playerState===1)))lock();
+  }});
+  f.addEventListener("load",function(){{
+    f.contentWindow.postMessage(JSON.stringify({{event:"listening"}}),yt);
+    lock();
+  }});
+}})();
+</script></body></html>"#
     );
     write_response(stream, 200, "OK", "text/html; charset=utf-8", html.as_bytes()).await
 }

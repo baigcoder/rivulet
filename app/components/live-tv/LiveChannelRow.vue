@@ -7,6 +7,7 @@ const props = defineProps<{
   channel: LiveChannel
   getEpg: (id: string) => Array<{ title: string, description?: string | null, start: string, stop?: string | null }>
   isFavorite: (ch: LiveChannel) => boolean
+  isOffline?: (ch: LiveChannel) => boolean
 }>()
 
 const emit = defineEmits<{
@@ -17,6 +18,12 @@ const emit = defineEmits<{
 const epg = computed(() => props.getEpg(props.channel.id))
 const nowProgram = computed(() => epg.value[0] ?? null)
 const fav = computed(() => props.isFavorite(props.channel))
+const dead = computed(() => {
+  const s = props.channel.streamUrl
+  if (!s || s === 'undefined' || s === 'null')
+    return true
+  return props.isOffline?.(props.channel) === true
+})
 const imgError = ref(false)
 const proxyLogoUrl = computed(() => proxyLogo(props.channel.logoUrl))
 
@@ -56,9 +63,17 @@ const epgProgress = computed(() => {
     </div>
 
     <div class="min-w-0 flex-1">
-      <h3 class="truncate text-body-medium font-medium">
-        {{ channel.name }}
-      </h3>
+      <div class="flex min-w-0 items-center gap-1.5">
+        <span
+          class="pointer-events-none shrink-0 rounded px-1 py-px text-[9px] font-semibold uppercase tracking-wide"
+          :class="dead ? 'bg-zinc-800 text-white/70' : 'bg-red-600 text-white'"
+        >
+          {{ dead ? $t('Offline') : $t('LIVE') }}
+        </span>
+        <h3 class="truncate text-body-medium font-medium">
+          {{ channel.name }}
+        </h3>
+      </div>
       <div class="flex items-center gap-1.5 text-body-small opacity-50">
         <span v-if="channel.country" class="truncate">{{ channel.country }}</span>
         <span v-if="channel.country && channel.categoryName">·</span>

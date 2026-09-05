@@ -35,6 +35,7 @@ const playerRef = ref<{
   zapTo: () => void | Promise<void>
   goLive: () => void | Promise<void>
   behindLive?: boolean
+  videoWidth: number
   ipc: (command: unknown[]) => Promise<unknown>
 } | null>(null)
 
@@ -59,6 +60,7 @@ const overlayRef = ref<{ show: () => void } | null>(null)
 
 /** Reactive mirror of the player's state, polled every 500ms while mounted. */
 const playerPlaying = ref(false)
+const hasPicture = ref(false)
 const playerBehindLive = ref(false)
 const playerVolume = ref(100)
 const playerMuted = ref(false)
@@ -84,7 +86,8 @@ function syncPlayerState() {
   if (!p)
     return
   const wasPlaying = playerPlaying.value
-  playerPlaying.value = asBool(p.started) && !asBool(p.paused)
+  hasPicture.value = typeof p.videoWidth === 'number' && p.videoWidth > 0
+  playerPlaying.value = asBool(p.started) && !asBool(p.paused) && hasPicture.value
   playerBehindLive.value = asBool(p.behindLive)
   playerVolume.value = typeof p.volume === 'number' ? p.volume : 100
   playerMuted.value = asBool(p.muted)
@@ -220,6 +223,10 @@ const autoSkipping = computed<boolean>(() =>
   && errorMsg.value === ''
   && resolveError.value === '')
 
+/** One notice. Passed as `resolving` so MpvPlayer does not draw a second spinner. */
+const waiting = computed(() =>
+  resolving.value || autoSkipping.value || (!!streamUrl.value && !hasPicture.value && !overlayError.value))
+
 /**
  * The player must get the loopback proxy URL, not the raw M3U link.
  * `liveResolveStream` wraps the channel through 127.0.0.1:3031 and
@@ -234,6 +241,8 @@ function playNow(url: string, ua?: string | null, ref?: string | null) {
   referer.value = ref ?? null
   streamUrl.value = url
   proxiedStreamUrl.value = url
+  hasPicture.value = false
+  playerPlaying.value = false
   resolving.value = false
 }
 
@@ -381,8 +390,12 @@ const attemptedFallback = ref(false)
  */
 
 watch(playerPlaying, playing => {
-  if (playing)
-    autoSkips.value = 0
+  if (!playing)
+    return
+  autoSkips.value = 0
+  const id = channelId.value
+  if (id)
+    liveTv.markLive(id)
 })
 
 function autoSkip(): boolean {
@@ -583,7 +596,7 @@ onUnmounted(() => {
         mode="live"
         :aspect="aspectRatio"
         :fullscreen="isFullscreen"
-        :resolving="resolving || autoSkipping"
+        :resolving="waiting"
         :user-agent="userAgent"
         :referer="referer"
         @failed="onPlaybackFailed"
@@ -600,7 +613,6 @@ onUnmounted(() => {
       :muted="playerMuted"
       :has-prev="hasPrev"
       :has-next="hasNext"
-      :busy="resolving"
       :channel-name="channelName"
       :now-playing="nowPlaying"
       :channel-logo="channelLogo"
@@ -638,7 +650,8 @@ onUnmounted(() => {
       leave-to-class="opacity-0 scale-95"
     >
       <div
-        v-if="resolving || autoSkipping"
+        v-if="waiting"
+        data-cut
         class="pointer-events-none absolute inset-0 !z-50 grid size-full place-items-center text-white"
       >
         <div class="flex flex-col items-center gap-3 max-w-md px-4 text-center">

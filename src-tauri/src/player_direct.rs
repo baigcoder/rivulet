@@ -55,14 +55,47 @@ pub fn cache_cli(engine: bool) -> &'static [&'static str] {
 			"--cache-pause=no",
 			"--cache-pause-wait=0.2",
 			"--cache-secs=1",
-			"--demuxer-readahead-secs=1",
+			"--demuxer-readahead-secs=0.4",
 			"--demuxer-lavf-analyzeduration=0.4",
 			"--demuxer-lavf-probesize=524288",
+			"--demuxer-lavf-o=fflags=+nobuffer",
 			// First byte can wait on a debrid unlock; ffmpeg's 30s default
 			// aborts that and the reconnect is the extra 10s people see.
 			"--network-timeout=90",
 		]
 	}
+}
+
+/// Live TV (MPEG-TS / HLS). The Direct flags above are for a debrid file:
+/// 512KiB and `nobuffer` start a movie in a beat. A 4K HEVC IDR is often
+/// bigger than that probe, and `nobuffer` then drops the rest of the
+/// picture while audio (tiny frames) keeps playing — sound, a black
+/// window, a 1080p badge on a channel named 4K. Last-wins against
+/// `cache_cli`, so VOD stays fast.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+pub fn live_cli() -> &'static [&'static str] {
+	&[
+		"--cache-pause=yes",
+		"--cache-secs=8",
+		"--demuxer-readahead-secs=4",
+		"--demuxer-lavf-analyzeduration=2",
+		"--demuxer-lavf-probesize=8388608",
+		"--demuxer-lavf-o=fflags=+genpts",
+		"--vd-lavc-dr=no",
+	]
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn live_kv() -> &'static [(&'static str, &'static str)] {
+	&[
+		("cache-pause", "yes"),
+		("cache-secs", "8"),
+		("demuxer-readahead-secs", "4"),
+		("demuxer-lavf-analyzeduration", "2"),
+		("demuxer-lavf-probesize", "8388608"),
+		("demuxer-lavf-o", "fflags=+genpts"),
+		("vd-lavc-dr", "no"),
+	]
 }
 
 pub fn stream_lavf_o(engine: bool) -> &'static str {
@@ -88,9 +121,10 @@ pub fn cache_kv(engine: bool) -> &'static [(&'static str, &'static str)] {
 			("cache-pause", "no"),
 			("cache-pause-wait", "0.2"),
 			("cache-secs", "1"),
-			("demuxer-readahead-secs", "1"),
+			("demuxer-readahead-secs", "0.4"),
 			("demuxer-lavf-analyzeduration", "0.4"),
 			("demuxer-lavf-probesize", "524288"),
+			("demuxer-lavf-o", "fflags=+nobuffer"),
 			("network-timeout", "90"),
 		]
 	}

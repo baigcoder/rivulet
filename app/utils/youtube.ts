@@ -19,7 +19,9 @@ export function youtubeEmbedSrc(key: string, opts: { mute?: boolean, loop?: bool
       q.set('loop', '1')
     return `${RELAY}?${q}`
   }
-  const q = new URLSearchParams({ autoplay: '1', rel: '0', playsinline: '1' })
+  const q = new URLSearchParams({ autoplay: '1', rel: '0', playsinline: '1', enablejsapi: '1', vq: 'hd720' })
+  if (typeof location !== 'undefined')
+    q.set('origin', location.origin)
   if (opts.mute)
     q.set('mute', '1')
   if (opts.loop) {
@@ -27,4 +29,40 @@ export function youtubeEmbedSrc(key: string, opts: { mute?: boolean, loop?: bool
     q.set('playlist', key)
   }
   return `https://www.youtube.com/embed/${key}?${q}`
+}
+
+/** YouTube IFrame command. Quality lock stops the player climbing to 1080/4K. */
+export function youtubeCommand(func: string, args: unknown[] = []) {
+  return JSON.stringify({ event: 'command', func, args })
+}
+
+export function youtubePlaying(data: unknown): boolean {
+  let payload = data
+  if (typeof payload === 'string') {
+    try {
+      payload = JSON.parse(payload)
+    }
+    catch {
+      return false
+    }
+  }
+  if (!payload || typeof payload !== 'object')
+    return false
+  return (payload as { info?: { playerState?: number } }).info?.playerState === 1
+}
+
+/** Embed blocked, missing, or geo-restricted — try the next TMDB key. */
+export function youtubeError(data: unknown): boolean {
+  let payload = data
+  if (typeof payload === 'string') {
+    try {
+      payload = JSON.parse(payload)
+    }
+    catch {
+      return false
+    }
+  }
+  if (!payload || typeof payload !== 'object')
+    return false
+  return (payload as { event?: string }).event === 'onError'
 }

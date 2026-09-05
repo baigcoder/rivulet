@@ -160,6 +160,17 @@ check('XMLTV bulk parser handles gzipped body', () => {
   )
 })
 
+check('all-movies does not download the whole VOD catalog first', () => {
+  assert.ok(
+    xtream.includes('fn merge_vod_movies'),
+    'All movies must walk categories until the first page is full',
+  )
+  assert.ok(
+    xtream.includes('fn merge_vod_series'),
+    'All series must walk categories the same way',
+  )
+})
+
 // ── Route surface ──────────────────────────────────
 
 check('all premium routes go through require_auth', () => {

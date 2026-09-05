@@ -8,7 +8,7 @@ const library = useLibraryStore()
 const { data: trending } = useAsyncData(
   'home-trending',
   () => tmdb<TmdbPage>('/trending/all/day'),
-  { lazy: true, transform: page => page.results.flatMap(item => toMedia(item) ?? []) },
+  { lazy: true, transform: page => (page?.results ?? []).flatMap(item => toMedia(item) ?? []) },
 )
 
 /**
@@ -17,7 +17,10 @@ const { data: trending } = useAsyncData(
 const spotlight = computed(() => (trending.value ?? []).filter(m => m.backdrop).slice(0, 10))
 
 const at = ref(0)
-const featured = computed(() => spotlight.value[Math.min(at.value, spotlight.value.length - 1)])
+const featured = computed(() =>
+  spotlight.value.length
+    ? spotlight.value[Math.min(at.value, spotlight.value.length - 1)]
+    : undefined)
 
 // Update ambient background when featured title changes
 watch(featured, media => media && ui.ambient(media), { immediate: true })
@@ -112,7 +115,6 @@ onUnmounted(() => {
 
 // ── TMDB content rows ─────────────────────────────────────────────────────────
 const rows = computed(() => {
-  const day = (offset = 0) => new Date(Date.now() + offset * 864e5).toISOString().slice(0, 10)
   return [
     { title: $t('Trending this week'), request: { path: '/trending/all/week' }, to: `/movies?cat=trending&label=${encodeURIComponent($t('Trending this week'))}` },
     { title: $t('Popular movies'), request: { path: '/movie/popular', type: 'movie' as const }, to: `/movies?label=${encodeURIComponent($t('Popular movies'))}` },
@@ -124,15 +126,6 @@ const rows = computed(() => {
     },
     { title: $t('Top rated'), request: { path: '/movie/top_rated', type: 'movie' as const }, to: `/movies?cat=top&label=${encodeURIComponent($t('Top rated'))}` },
     { title: $t('Now playing'), request: { path: '/movie/now_playing', type: 'movie' as const }, to: `/movies?cat=now&label=${encodeURIComponent($t('Now playing'))}` },
-    {
-      title: $t('Upcoming movies'),
-      request: {
-        path: '/discover/movie',
-        type: 'movie' as const,
-        params: { 'include_adult': false, 'sort_by': 'popularity.desc', 'primary_release_date.gte': day(), 'primary_release_date.lte': day(180) },
-      },
-      to: `/movies?cat=upcoming&label=${encodeURIComponent($t('Upcoming movies'))}`,
-    },
     { title: $t('Airing today'), request: { path: '/tv/airing_today', type: 'tv' as const }, to: `/tv?cat=airing&label=${encodeURIComponent($t('Airing today'))}` },
     {
       title: $t('Action & Adventure'),
@@ -145,6 +138,11 @@ const rows = computed(() => {
       to: `/movies?genre=35&label=${encodeURIComponent($t('Comedy'))}`,
     },
     {
+      title: $t('Horror'),
+      request: { path: '/discover/movie', type: 'movie' as const, params: { with_genres: '27', sort_by: 'popularity.desc' } },
+      to: `/movies?genre=27&label=${encodeURIComponent($t('Horror'))}`,
+    },
+    {
       title: $t('Sci-Fi & Fantasy'),
       request: { path: '/discover/movie', type: 'movie' as const, params: { with_genres: '878,14', sort_by: 'popularity.desc' } },
       to: `/movies?genre=878&label=${encodeURIComponent($t('Sci-Fi & Fantasy'))}`,
@@ -152,10 +150,23 @@ const rows = computed(() => {
   ]
 })
 
+const upcoming = computed(() => {
+  const day = (offset = 0) => new Date(Date.now() + offset * 864e5).toISOString().slice(0, 10)
+  return {
+    title: $t('Upcoming movies'),
+    request: {
+      path: '/discover/movie',
+      type: 'movie' as const,
+      params: { 'include_adult': false, 'sort_by': 'popularity.desc', 'primary_release_date.gte': day(), 'primary_release_date.lte': day(180) },
+    },
+    to: `/movies?cat=upcoming&label=${encodeURIComponent($t('Upcoming movies'))}`,
+  }
+})
+
 // ── Recommendations row based on the first favourite or recently watched title ──
 const recommendationSource = computed(() => library.favouriteList[0] ?? library.history[0])
 const { data: recommendations } = useAsyncData(
-  () => recommendationSource.value ? `recs-${recommendationSource.value.id}` : '',
+  () => recommendationSource.value ? `recs-${recommendationSource.value.id}` : 'home-recs',
   async () => {
     const m = recommendationSource.value
     if (!m)
@@ -190,6 +201,7 @@ const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
   <div ref="scroller" class="h-full overflow-y-auto pb-10">
     <!-- Cover Banner Hero Section -->
     <section
+      v-if="featured"
       class="group/hero relative mx-4 mt-2 h-[62vh] min-h-[480px] overflow-hidden rounded-2xl md:mx-6 md:h-[68vh]"
       @mouseenter="isHovered = true"
       @mouseleave="isHovered = false"
@@ -240,6 +252,7 @@ const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
           <nuxt-link
             :to="mediaLink(featured)"
             class="group/poster relative hidden sm:block w-32 shrink-0 overflow-hidden rounded-xl border border-white/20 bg-surface-container shadow-[0_16px_40px_rgba(0,0,0,0.8)] transition-[transform,border-color] duration-300 md:w-44 lg:w-48 aspect-2/3 hover:scale-105 hover:border-primary hover:shadow-[0_20px_50px_rgba(111,227,255,0.3)] focus-visible:scale-105 focus-visible:ring-2 focus-visible:ring-primary"
+            @pointerdown="ui.open(featured); prefetchMediaDetail(featured)"
           >
             <media-poster :src="posterUrl(featured.poster, 'w342')" :alt="featured.title" />
             <div class="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-0 transition-opacity group-hover/poster:opacity-100 flex items-end justify-center pb-3">
@@ -301,7 +314,7 @@ const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
               <v-btn :prepend-icon="mdiPlay" size="large" color="primary" class="font-semibold px-6 shadow-lg shadow-primary/25" :to="library.resumeLink(featured)">
                 {{ $t('Play') }}
               </v-btn>
-              <v-btn :prepend-icon="mdiInformationOutline" size="large" variant="tonal" class="bg-white/10 hover:bg-white/20" :to="mediaLink(featured)">
+              <v-btn :prepend-icon="mdiInformationOutline" size="large" variant="tonal" class="bg-white/10 hover:bg-white/20" :to="mediaLink(featured)" @click="ui.open(featured); prefetchMediaDetail(featured)">
                 {{ $t('Details') }}
               </v-btn>
               <v-btn v-if="trailerKey" size="large" variant="tonal" class="bg-white/10 hover:bg-white/20" @click="trailerDialog = true">
@@ -355,11 +368,6 @@ const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
           </div>
         </div>
       </div>
-
-      <div v-else class="relative h-full flex flex-col justify-end gap-3 p-4 md:p-8">
-        <div class="animate-pulse h-10 max-w-md w-2/3 rounded-lg bg-surface-container/60" />
-        <div class="animate-pulse h-12 max-w-2xl w-full rounded-lg bg-surface-container/60" />
-      </div>
     </section>
 
     <!-- Trailer dialog -->
@@ -394,30 +402,6 @@ const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
           :detail="ui.isDetailed"
           :resume-to="watchLink(entry.media.type, entry.media.id, entry.season, entry.episode)"
           :on-remove="() => library.removeFromContinueWatching(entry.key)"
-          class="shrink-0"
-          :style="{ width: `${ui.cardWidth}px` }"
-        />
-      </scroll-row>
-
-      <!-- Your Favourites (local data) -->
-      <scroll-row v-if="library.favouriteList.length" class="motion-reveal" :title="$t('Your favourites')">
-        <media-card
-          v-for="m in library.favouriteList.slice(0, 20)"
-          :key="`fav-${m.type}-${m.id}`"
-          :media="m"
-          :detail="ui.isDetailed"
-          class="shrink-0"
-          :style="{ width: `${ui.cardWidth}px` }"
-        />
-      </scroll-row>
-
-      <!-- Your Watchlist (local data) -->
-      <scroll-row v-if="library.watchlistItems.length" class="motion-reveal" :title="$t('Your watchlist')">
-        <media-card
-          v-for="m in library.watchlistItems.slice(0, 20)"
-          :key="`wl-${m.type}-${m.id}`"
-          :media="m"
-          :detail="ui.isDetailed"
           class="shrink-0"
           :style="{ width: `${ui.cardWidth}px` }"
         />
@@ -467,6 +451,10 @@ const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
           <v-icon :icon="mdiArrowRight" size="20" class="shrink-0 opacity-40 transition-[transform,opacity] group-hover:translate-x-1 group-hover:opacity-100" />
         </nuxt-link>
       </div>
+
+      <v-lazy :min-height="rowHeight" transition="fade-transition">
+        <media-slider class="motion-reveal" :title="upcoming.title" :request="upcoming.request" :to="upcoming.to" />
+      </v-lazy>
     </div>
 
     <!-- Back to top button -->

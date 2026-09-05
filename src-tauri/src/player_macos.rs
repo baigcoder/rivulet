@@ -154,6 +154,7 @@ pub fn player_start(
 	view_h: u32,
 	user_agent: Option<String>,
 	referer: Option<String>,
+	live: Option<bool>,
 ) -> Result<(), String> {
 	// A degenerate box means the webview hadn't laid out yet; the caller retries.
 	if width < 16 || height < 16 {
@@ -219,6 +220,11 @@ pub fn player_start(
 		set("cache-pause-initial", "no");
 		for (k, v) in player_direct::cache_kv(engine_stream) {
 			set(k, v);
+		}
+		if live.unwrap_or(false) {
+			for (k, v) in player_direct::live_kv() {
+				set(k, v);
+			}
 		}
 		set("stream-lavf-o", player_direct::stream_lavf_o(engine_stream));
 		set("keep-open", "no");

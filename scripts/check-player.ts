@@ -316,6 +316,8 @@ assert.match(tooltipCss, /\.v-tooltip\n\s+> \.v-overlay__content/, 'vuetify stil
 const mpv = await Bun.file('app/components/MpvPlayer.vue').text()
 assert.match(mpv, /const CUT = '\[data-cut\], \.v-tooltip > \.v-overlay__content'/, 'and the tracker still looks for it')
 assert.ok(!mpv.includes('rootEl.value?.querySelectorAll'), 'scoped to the player, a teleported tooltip is never found')
+assert.match(mpv, /live: isLive\.value/, 'mpv must know live from VOD so 4K HEVC gets a real probe')
+assert.match(mpv, /isLive\.value \? 'sdr'/, 'live HDR passthrough on SDR is a black picture with sound')
 
 // --- HLS: the one thing a live channel needs and a torrent stream never does ---
 // Chromium hands `<video>` an `.m3u8` and reports a corrupt file, so every live
@@ -363,6 +365,14 @@ assert.match(mpvMac, /player_direct::play_url/, 'macOS Direct path uses the same
 const mpvDirect = readFileSync(new URL('../src-tauri/src/player_direct.rs', import.meta.url), 'utf8')
 assert.match(mpvDirect, /cache-secs=1/, 'Direct HTTP must not wait on a 20s mpv cache')
 assert.match(mpvDirect, /probesize=524288/, 'Direct MKV needs a real lavf probe, not 64KiB')
+assert.match(mpvDirect, /fflags=\+nobuffer/, 'Direct HTTP must not sit in lavf readahead before the first frame')
+assert.match(mpvDirect, /fn live_cli/, '4K live probe/cache is not the Direct 512KiB nobuffer path')
+assert.match(mpvDirect, /probesize=8388608/, 'a 4K HEVC IDR does not fit in 512KiB')
+assert.match(mpvDirect, /fflags=\+genpts/, 'live must replace Direct nobuffer or the picture is the frames that got dropped')
+assert.match(mpvLinux, /player_direct::live_cli/, 'Linux live uses the live flags')
+assert.match(mpvLinux, /--hwdec=no/, 'X11 --wid + HEVC 10-bit hwdec paints black with sound')
+assert.match(mpvWin, /player_direct::live_cli/, 'Windows live uses the same probe/cache')
+assert.match(mpvMac, /player_direct::live_kv/, 'macOS live uses the same probe/cache')
 assert.match(mpvDirect, /network-timeout=90/, 'ffmpeg 30s first-byte abort is the 40s Direct wait')
 assert.match(mpvDirect, /proxy_free_stream_url/, 'wrap is the existing IPTV proxy, not a second GET')
 const libSrc = readFileSync(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8')
@@ -381,6 +391,8 @@ assert.doesNotMatch(htmlSrc, /invoke<string>\('proxy_free_stream_url'/, 'the wra
 const proxySrc = readFileSync(new URL('../src-tauri/src/iptv/proxy.rs', import.meta.url), 'utf8')
 assert.match(proxySrc, /fn stream_http/, 'stream proxy must not inherit the 300s IPTV JSON timeout')
 assert.match(proxySrc, /connect_timeout\(Duration::from_secs\(15\)\)/, 'dead hosts fail the connect, not a body deadline')
+assert.match(proxySrc, /\.gzip\(false\)/, 'gzip on a movie strips Content-Length and Direct play buffers as chunked')
+assert.match(proxySrc, /is_head/, 'lavf HEAD must not become a full GET of the file')
 assert.match(proxySrc, /cached_redirect/, 'mpv re-probes must hit the cached CDN URL, not the resolver again')
 
 // eslint-disable-next-line no-console

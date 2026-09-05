@@ -698,6 +698,9 @@ export const useLiveTvStore = defineStore('liveTv', () => {
   const probedIds = new Set<string>()
 
   function isOffline(ch: LiveChannel): boolean {
+    const s = ch.streamUrl
+    if (!s || s === 'undefined' || s === 'null')
+      return true
     return offlineIds.value.has(ch.id)
   }
 
@@ -708,6 +711,14 @@ export const useLiveTvStore = defineStore('liveTv', () => {
     // computed and a Set is not deeply reactive.
     offlineIds.value = new Set(offlineIds.value).add(channelId)
     probedIds.add(channelId)
+  }
+
+  function markLive(channelId: string): void {
+    if (!offlineIds.value.has(channelId))
+      return
+    const next = new Set(offlineIds.value)
+    next.delete(channelId)
+    offlineIds.value = next
   }
 
   /**
@@ -881,6 +892,7 @@ export const useLiveTvStore = defineStore('liveTv', () => {
     offlineIds,
     isOffline,
     markOffline,
+    markLive,
     probeIds,
 
     // Computed

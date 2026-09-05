@@ -1,6 +1,8 @@
 // TMDB v3 — https://developer.themoviedb.org/reference/intro/getting-started
 // The token in TMDB_API is the v4 "API Read Access Token" (sent as a Bearer).
 
+import { stripProviderPrefix } from './providerTitle'
+
 export type MediaType = 'movie' | 'tv'
 
 export interface TmdbItem {
@@ -273,6 +275,65 @@ export function useGenres(type: MediaType) {
  * carries external ones. It runs at most once per playback, on a path that
  * would otherwise have nothing to search a source or subtitles with.
  */
+/** Strip year/quality tokens a provider puts on a VOD filename. */
+function titleQuery(title: string): { query: string, year: string } {
+  const year = title.match(/\(((?:19|20)\d{2})\)/)?.[1] ?? ''
+  const query = title
+    .replace(/\((?:19|20)\d{2}\)/g, '')
+    .replace(/\[[^\]]*\]/g, '')
+    .replace(/\b(?:4K|UHD|FHD|HD|SD|CAM|TS|1080p|720p|2160p|BluRay|WEB-?DL)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return { query, year }
+}
+
+function yearOf(m: TmdbItem): string {
+  return (m.release_date ?? m.first_air_date ?? '').slice(0, 4)
+}
+
+function pickSearchHit(results: TmdbItem[], query: string, year: string): TmdbItem | undefined {
+  if (year) {
+    const y = results.find(m => yearOf(m) === year)
+    if (y)
+      return y
+  }
+  const want = query.toLowerCase()
+  return results.find(m => (m.title ?? m.name ?? '').toLowerCase() === want) ?? results[0]
+}
+
+/** First TMDB hit for a provider title — used to fill trailer/cast/reviews. */
+export async function tmdbMatchByTitle(title: string, type: MediaType): Promise<number | null> {
+  const { query, year } = titleQuery(title)
+  if (!query)
+    return null
+  // `EN: Dune` is unknown to TMDB. `IT: Chapter Two` is the film — try
+  // the raw string first, then the prefix-stripped one.
+  const stripped = stripProviderPrefix(query)
+  const queries = stripped && stripped !== query ? [query, stripped] : [query]
+  try {
+    for (const q of queries) {
+      const { results } = await tmdb<TmdbPage>(`/search/${type}`, { query: q })
+      if (!results.length)
+        continue
+      const hit = pickSearchHit(results, q, year)
+      if (!hit)
+        continue
+      // A prefixed query that only matched some other film's first hit
+      // is noise — wait for the stripped search.
+      if (q !== stripped) {
+        const name = (hit.title ?? hit.name ?? '').toLowerCase()
+        if (name !== q.toLowerCase() && !(year && yearOf(hit) === year))
+          continue
+      }
+      return hit.id
+    }
+    return null
+  }
+  catch {
+    return null
+  }
+}
+
 export async function imdbIdByTitle(title: string, series = false, year = ''): Promise<string> {
   if (!title.trim())
     return ''
@@ -358,6 +419,8 @@ export interface MediaDetail extends Media {
   logo: string | null
   /** YouTube key for the best available trailer. */
   trailer: string | null
+  /** Official trailers first, then the rest — the hero walks this on a geo-block. */
+  trailers: string[]
   cast: Person[]
   directors: string[]
   writers: string[]
@@ -373,7 +436,10 @@ export interface MediaDetail extends Media {
 // release_dates on a show), so one string covers both types in one request.
 // external_ids is how a show gets its IMDb id — only movies carry imdb_id
 // inline, and the source protocol is keyed by that id.
-const DETAIL_APPEND = 'credits,videos,images,release_dates,content_ratings,external_ids,belongs_to_collection'
+//
+// Credits and images stay off this request: they are the bulk of the JSON and
+// the title page can paint Play / hero / seasons without them.
+const DETAIL_CORE = 'videos,release_dates,content_ratings,external_ids,belongs_to_collection'
 
 interface RawCredit { id: number, name: string, character?: string, job?: string, profile_path?: string | null }
 interface RawImage { file_path: string, iso_639_1: string | null }
@@ -411,12 +477,22 @@ function certificationOf(raw: RawDetail) {
   return raw.content_ratings?.results.find(r => r.iso_3166_1 === 'US')?.rating ?? ''
 }
 
+function trailersOf(raw: { videos?: { results?: RawVideo[] } }) {
+  const videos = (raw.videos?.results ?? []).filter(v => v.site === 'YouTube' && v.key)
+  const rank = (v: RawVideo) => {
+    if (v.type === 'Trailer' && v.official)
+      return 0
+    if (v.type === 'Trailer')
+      return 1
+    if (v.type === 'Teaser')
+      return 2
+    return 3
+  }
+  return [...new Set(videos.toSorted((a, b) => rank(a) - rank(b)).map(v => v.key))]
+}
+
 function trailerOf(raw: RawDetail) {
-  const videos = (raw.videos?.results ?? []).filter(v => v.site === 'YouTube')
-  const pick = videos.find(v => v.type === 'Trailer' && v.official)
-    ?? videos.find(v => v.type === 'Trailer')
-    ?? videos.find(v => v.type === 'Teaser')
-  return pick?.key ?? null
+  return trailersOf(raw)[0] ?? null
 }
 
 function toPerson(c: RawCredit): Person {
@@ -445,6 +521,7 @@ function toDetail(raw: RawDetail, type: MediaType): MediaDetail {
     released: raw.release_date ?? raw.first_air_date ?? '',
     logo: raw.images?.logos.find(l => l.iso_639_1 === 'en')?.file_path ?? raw.images?.logos[0]?.file_path ?? null,
     trailer: trailerOf(raw),
+    trailers: trailersOf(raw),
     cast: (raw.credits?.cast ?? []).slice(0, 20).map(toPerson),
     directors: jobs(crew, ['Director']),
     writers: jobs(crew, ['Writer', 'Screenplay', 'Story']),
@@ -475,13 +552,193 @@ function toDetail(raw: RawDetail, type: MediaType): MediaDetail {
   }
 }
 
+export interface Review {
+  id: string
+  author: string
+  avatar: string | null
+  rating: number | null
+  content: string
+  created: string
+}
+
+interface RawReview {
+  id: string
+  author: string
+  content: string
+  created_at: string
+  author_details?: {
+    name?: string
+    username?: string
+    avatar_path?: string | null
+    rating?: number | null
+  }
+}
+
+function reviewAvatar(path?: string | null) {
+  if (!path)
+    return null
+  // Gravatar arrives as `/https://…` rather than a TMDB file.
+  if (path.startsWith('/http'))
+    return path.slice(1)
+  return profileUrl(path, 'w45')
+}
+
+/** Fetched when the rating menu opens, not with the title — reviews are not first paint. */
+export function useReviews(type: MaybeRefOrGetter<MediaType>, id: MaybeRefOrGetter<string | number>) {
+  return useAsyncData(
+    () => `reviews-${toValue(type)}-${toValue(id)}`,
+    () => tmdb<{ results: RawReview[] }>(`/${toValue(type)}/${toValue(id)}/reviews`),
+    {
+      lazy: true,
+      immediate: false,
+      watch: [() => toValue(type), () => toValue(id)],
+      transform: (page): Review[] => (page.results ?? []).map(r => ({
+        id: r.id,
+        author: r.author_details?.name || r.author_details?.username || r.author,
+        avatar: reviewAvatar(r.author_details?.avatar_path),
+        rating: r.author_details?.rating ?? null,
+        content: r.content.replace(/<[^>]+>/g, ''),
+        created: r.created_at,
+      })),
+    },
+  )
+}
+
+const coreCache = new Map<string, Promise<MediaDetail>>()
+const coreSync = new Map<string, MediaDetail>()
+
+function peekCore(type: MediaType, id: string | number) {
+  const key = `detail-${type}-${id}`
+  const fresh = coreSync.get(key)
+  if (fresh)
+    return fresh
+  if (import.meta.server)
+    return undefined
+  try {
+    const stored = sessionStorage.getItem(`rivulet.${key}`)
+    if (!stored)
+      return undefined
+    const parsed = JSON.parse(stored) as MediaDetail
+    coreSync.set(key, parsed)
+    return parsed
+  }
+  catch {
+    return undefined
+  }
+}
+
+function loadCore(type: MediaType, id: string | number) {
+  const key = `detail-${type}-${id}`
+  const hit = coreCache.get(key)
+  if (hit)
+    return hit
+  const peeked = peekCore(type, id)
+  if (peeked) {
+    const cached = Promise.resolve(peeked)
+    coreCache.set(key, cached)
+    return cached
+  }
+  const pending = tmdb<RawDetail>(`/${type}/${id}`, { append_to_response: DETAIL_CORE })
+    .then(raw => {
+      const detail = toDetail(raw, type)
+      coreSync.set(key, detail)
+      if (!import.meta.server) {
+        try {
+          sessionStorage.setItem(`rivulet.${key}`, JSON.stringify(detail))
+        }
+        catch {
+          // quota — the memory cache still holds it
+        }
+      }
+      return detail
+    })
+    .catch(err => {
+      coreCache.delete(key)
+      throw err
+    })
+  coreCache.set(key, pending)
+  return pending
+}
+
+/** Starts the small detail request on card press, before the title page mounts. */
+export function prefetchMediaDetail(media: Pick<Media, 'id' | 'type'>) {
+  void loadCore(media.type, media.id)
+}
+
+function creditsOf(credits: { cast?: RawCredit[], crew?: RawCredit[] }) {
+  const crew = credits.crew ?? []
+  return {
+    cast: (credits.cast ?? []).slice(0, 20).map(toPerson),
+    directors: jobs(crew, ['Director']),
+    writers: jobs(crew, ['Writer', 'Screenplay', 'Story']),
+  }
+}
+
 /** Never blocks navigation — the page renders its skeleton while this resolves. */
 export function useMediaDetail(type: MaybeRefOrGetter<MediaType>, id: MaybeRefOrGetter<string | number>) {
-  return useAsyncData(
+  const core = useAsyncData(
     () => `detail-${toValue(type)}-${toValue(id)}`,
-    () => tmdb<RawDetail>(`/${toValue(type)}/${toValue(id)}`, { append_to_response: DETAIL_APPEND, include_image_language: 'en,null' }),
-    { lazy: true, watch: [() => toValue(type), () => toValue(id)], transform: raw => toDetail(raw, toValue(type)) },
+    () => {
+      const tid = String(toValue(id) ?? '')
+      if (!tid)
+        return Promise.resolve(null as unknown as MediaDetail)
+      return loadCore(toValue(type), tid)
+    },
+    {
+      lazy: true,
+      server: false,
+      watch: [() => toValue(type), () => toValue(id)],
+      getCachedData: () => {
+        const tid = String(toValue(id) ?? '')
+        if (!tid)
+          return undefined
+        return peekCore(toValue(type), tid)
+      },
+    },
   )
+  // After the title is on screen — never in parallel with it. /images is
+  // skipped: that payload is every poster and backdrop, and the hero already
+  // has the title as text.
+  const extra = useAsyncData(
+    () => `detail-credits-${toValue(type)}-${toValue(id)}`,
+    () => tmdb<{ cast?: RawCredit[], crew?: RawCredit[] }>(`/${toValue(type)}/${toValue(id)}/credits`)
+      .then(creditsOf),
+    { lazy: true, immediate: false },
+  )
+  // The first request asks for videos in the UI language. A Spanish film
+  // often has none of those, so the hero never got a trailer. This pass
+  // only runs when that list was empty.
+  const videos = useAsyncData(
+    () => `detail-videos-${toValue(type)}-${toValue(id)}`,
+    () => tmdb<{ results: RawVideo[] }>(`/${toValue(type)}/${toValue(id)}/videos`, {
+      include_video_language: 'en,null,es,pt,fr,de,it,ja,ko,zh,hi,ar',
+    }).then(page => trailersOf({ videos: page })),
+    { lazy: true, immediate: false },
+  )
+  watch(() => core.data.value, value => {
+    if (!value)
+      return
+    if (typeof requestIdleCallback === 'function')
+      requestIdleCallback(() => extra.execute(), { timeout: 2500 })
+    else
+      extra.execute()
+    if (!value.trailer)
+      videos.execute()
+  }, { immediate: true })
+  const data = computed(() => {
+    const a = core.data.value
+    if (!a)
+      return a
+    const b = extra.data.value
+    const keys = videos.data.value
+    const merged = b ? { ...a, ...b } : { ...a }
+    if (keys?.length && !merged.trailer) {
+      merged.trailer = keys[0] ?? null
+      merged.trailers = keys
+    }
+    return merged
+  })
+  return { data, status: core.status, error: core.error, refresh: core.refresh }
 }
 
 interface RawEpisode {

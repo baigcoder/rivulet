@@ -59,7 +59,10 @@ export function usePlaybackSource() {
       loading.value = false
       return
     }
-    source.value = null
+    // Keep the current URL until the next token arrives. Clearing it
+    // unmounts `<mpv-player v-if="source">`, whose `player_stop` is not
+    // awaited, while the replacement is already calling `player_start` —
+    // two mpv processes on a 1-slot account, and a ghosted Playback Error.
     try {
       const next = kind === 'movie'
         ? await premiumApi.vodPlayMovie(id, opts.ext, own.signal)

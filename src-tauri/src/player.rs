@@ -320,6 +320,7 @@ pub fn player_start(
 	height: u32,
 	user_agent: Option<String>,
 	referer: Option<String>,
+	live: Option<bool>,
 ) -> Result<(), String> {
 	// A degenerate box means the webview hadn't laid out yet. Embedding mpv into
 	// a 1x1 window makes it fail to bring up its video output and exit silently
@@ -387,6 +388,17 @@ pub fn player_start(
 		.arg("--cache-pause-initial=no");
 	for flag in player_direct::cache_cli(engine) {
 		command.arg(*flag);
+	}
+	if live.unwrap_or(false) {
+		for flag in player_direct::live_cli() {
+			command.arg(*flag);
+		}
+		// auto-safe still hands HEVC 10-bit to VAAPI-copy, which paints
+		// black into the 8-bit X11 --wid window. Software decode is the
+		// picture; 1080p H264 live is cheap enough without the GPU.
+		command.arg("--hwdec=no");
+		command.arg("--target-trc=bt.1886");
+		command.arg("--target-colorspace-hint=no");
 	}
 	command
 		.arg(format!("--stream-lavf-o={}", player_direct::stream_lavf_o(engine)))
