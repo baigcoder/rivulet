@@ -10,6 +10,8 @@ defineProps<{
   alt?: string
   /** Fills its parent, which owns the aspect ratio and rounding. */
   icon?: string
+  /** Title hero / side poster — already on screen from the card. */
+  eager?: boolean
 }>()
 </script>
 
@@ -19,7 +21,8 @@ defineProps<{
       v-if="src"
       :src="src"
       :alt="alt"
-      loading="lazy"
+      :loading="eager ? 'eager' : 'lazy'"
+      :fetchpriority="eager ? 'high' : undefined"
       decoding="async"
       draggable="false"
       class="size-full object-cover"

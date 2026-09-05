@@ -167,7 +167,9 @@ export default defineNuxtConfig({
 
   router: {
     options: {
-      scrollBehaviorType: 'smooth',
+      // Smooth here delays every route change — the browse grid feels stuck
+      // after a poster click until the scroll animation finishes.
+      scrollBehaviorType: 'auto',
     },
   },
 
@@ -179,6 +181,13 @@ export default defineNuxtConfig({
 
   experimental: {
     typedPages: true,
+    defaults: {
+      nuxtLink: {
+        // Hundreds of posters in the viewport each trigger preloadRouteComponents
+        // — Vite locks the WebView and the click that opened one title waits.
+        prefetch: false,
+      },
+    },
   },
 
   vite: {

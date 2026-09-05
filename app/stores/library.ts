@@ -49,8 +49,10 @@ export const useLibraryStore = defineStore('library', () => {
     const key = titleKey(m.type, m.id)
     const known = media.value[key]
     // The language clause backfills snapshots stored before it was kept — it is
-    // what tells an anime apart from any other cartoon (see `kindOf`).
-    if (known?.title !== m.title || known?.poster !== m.poster || (!known?.lang && m.lang))
+    // what tells an anime apart from any other cartoon (see `kindOf`). The IMDb
+    // one does the same for a title watched before it was stored, and it is what
+    // lets Resume ask a source without waiting on TMDB.
+    if (known?.title !== m.title || known?.poster !== m.poster || (!known?.lang && m.lang) || (!known?.imdbId && m.imdbId))
       media.value[key] = slim(m)
   }
 

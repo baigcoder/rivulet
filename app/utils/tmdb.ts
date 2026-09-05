@@ -53,6 +53,13 @@ export interface Media {
    * it was kept has none — see `kindOf` for what stands in there.
    */
   lang?: string
+  /**
+   * What a source is keyed by, and the one field playback cannot start without.
+   * Optional because only a detail response carries it — a card out of a TMDB
+   * list has never seen one. Kept in the stored snapshot so that resuming a
+   * title asks its sources straight away instead of waiting on TMDB first.
+   */
+  imdbId?: string | null
 }
 
 export function tmdb<T>(path: string, params?: Record<string, unknown>) {
@@ -301,11 +308,16 @@ function pickSearchHit(results: TmdbItem[], query: string, year: string): TmdbIt
   return results.find(m => (m.title ?? m.name ?? '').toLowerCase() === want) ?? results[0]
 }
 
+const titleMatchCache = new Map<string, number | null>()
+
 /** First TMDB hit for a provider title — used to fill trailer/cast/reviews. */
 export async function tmdbMatchByTitle(title: string, type: MediaType): Promise<number | null> {
   const { query, year } = titleQuery(title)
   if (!query)
     return null
+  const cacheKey = `${type}:${query}:${year ?? ''}`
+  if (titleMatchCache.has(cacheKey))
+    return titleMatchCache.get(cacheKey)!
   // `EN: Dune` is unknown to TMDB. `IT: Chapter Two` is the film — try
   // the raw string first, then the prefix-stripped one.
   const stripped = stripProviderPrefix(query)
@@ -325,8 +337,10 @@ export async function tmdbMatchByTitle(title: string, type: MediaType): Promise<
         if (name !== q.toLowerCase() && !(year && yearOf(hit) === year))
           continue
       }
+      titleMatchCache.set(cacheKey, hit.id)
       return hit.id
     }
+    titleMatchCache.set(cacheKey, null)
     return null
   }
   catch {
@@ -437,9 +451,10 @@ export interface MediaDetail extends Media {
 // external_ids is how a show gets its IMDb id — only movies carry imdb_id
 // inline, and the source protocol is keyed by that id.
 //
-// Credits and images stay off this request: they are the bulk of the JSON and
-// the title page can paint Play / hero / seasons without them.
-const DETAIL_CORE = 'videos,release_dates,content_ratings,external_ids,belongs_to_collection'
+// Images stay off the first request — that payload is every still. Credits
+// ride with it so cast is on the page with the title. Videos have a
+// language-wide fallback fetch when the UI-language list is empty.
+const DETAIL_CORE = 'release_dates,content_ratings,external_ids,belongs_to_collection,credits'
 
 interface RawCredit { id: number, name: string, character?: string, job?: string, profile_path?: string | null }
 interface RawImage { file_path: string, iso_639_1: string | null }
@@ -607,6 +622,11 @@ export function useReviews(type: MaybeRefOrGetter<MediaType>, id: MaybeRefOrGett
 const coreCache = new Map<string, Promise<MediaDetail>>()
 const coreSync = new Map<string, MediaDetail>()
 
+/** Sync read of a title already prefetched or visited — first paint, no await. */
+export function peekMediaDetail(type: MediaType, id: string | number) {
+  return peekCore(type, id)
+}
+
 function peekCore(type: MediaType, id: string | number) {
   const key = `detail-${type}-${id}`
   const fresh = coreSync.get(key)
@@ -660,17 +680,61 @@ function loadCore(type: MediaType, id: string | number) {
   return pending
 }
 
-/** Starts the small detail request on card press, before the title page mounts. */
+/** Title (with credits) on press — the page should have the record before it mounts. */
 export function prefetchMediaDetail(media: Pick<Media, 'id' | 'type'>) {
   void loadCore(media.type, media.id)
 }
 
-function creditsOf(credits: { cast?: RawCredit[], crew?: RawCredit[] }) {
-  const crew = credits.crew ?? []
-  return {
-    cast: (credits.cast ?? []).slice(0, 20).map(toPerson),
-    directors: jobs(crew, ['Director']),
-    writers: jobs(crew, ['Writer', 'Screenplay', 'Story']),
+/** Same cache as the title page — the home hero should not fire a second /id. */
+export function loadMediaDetail(type: MediaType, id: string | number) {
+  return loadCore(type, id)
+}
+
+/** Card art survives a KeepAlive browse page rewriting `selected` on the way out. */
+export function snapMedia(media: Media) {
+  if (import.meta.server)
+    return
+  try {
+    sessionStorage.setItem(`rivulet.snap.${media.type}.${media.id}`, JSON.stringify(media))
+  }
+  catch {
+    // quota — the in-memory opening snapshot still helps on the same tick
+  }
+}
+
+export function peekSnapMedia(type: MediaType, id: string | number): Media | null {
+  if (!id)
+    return null
+  if (import.meta.server)
+    return null
+  try {
+    const raw = sessionStorage.getItem(`rivulet.snap.${type}.${id}`)
+    return raw ? JSON.parse(raw) as Media : null
+  }
+  catch {
+    return null
+  }
+}
+
+export function snapPremiumTmdb(kind: 'movie' | 'tv', providerId: string, tmdbId: number) {
+  if (import.meta.server)
+    return
+  try {
+    sessionStorage.setItem(`rivulet.premium.tmdb.${kind}.${providerId}`, String(tmdbId))
+  }
+  catch {
+    // best-effort — the detail page still searches
+  }
+}
+
+export function peekPremiumTmdb(kind: 'movie' | 'tv', providerId: string): string {
+  if (import.meta.server || !providerId)
+    return ''
+  try {
+    return sessionStorage.getItem(`rivulet.premium.tmdb.${kind}.${providerId}`) ?? ''
+  }
+  catch {
+    return ''
   }
 }
 
@@ -687,6 +751,7 @@ export function useMediaDetail(type: MaybeRefOrGetter<MediaType>, id: MaybeRefOr
     {
       lazy: true,
       server: false,
+      immediate: true,
       watch: [() => toValue(type), () => toValue(id)],
       getCachedData: () => {
         const tid = String(toValue(id) ?? '')
@@ -695,15 +760,6 @@ export function useMediaDetail(type: MaybeRefOrGetter<MediaType>, id: MaybeRefOr
         return peekCore(toValue(type), tid)
       },
     },
-  )
-  // After the title is on screen — never in parallel with it. /images is
-  // skipped: that payload is every poster and backdrop, and the hero already
-  // has the title as text.
-  const extra = useAsyncData(
-    () => `detail-credits-${toValue(type)}-${toValue(id)}`,
-    () => tmdb<{ cast?: RawCredit[], crew?: RawCredit[] }>(`/${toValue(type)}/${toValue(id)}/credits`)
-      .then(creditsOf),
-    { lazy: true, immediate: false },
   )
   // The first request asks for videos in the UI language. A Spanish film
   // often has none of those, so the hero never got a trailer. This pass
@@ -718,10 +774,6 @@ export function useMediaDetail(type: MaybeRefOrGetter<MediaType>, id: MaybeRefOr
   watch(() => core.data.value, value => {
     if (!value)
       return
-    if (typeof requestIdleCallback === 'function')
-      requestIdleCallback(() => extra.execute(), { timeout: 2500 })
-    else
-      extra.execute()
     if (!value.trailer)
       videos.execute()
   }, { immediate: true })
@@ -729,14 +781,11 @@ export function useMediaDetail(type: MaybeRefOrGetter<MediaType>, id: MaybeRefOr
     const a = core.data.value
     if (!a)
       return a
-    const b = extra.data.value
     const keys = videos.data.value
-    const merged = b ? { ...a, ...b } : { ...a }
-    if (keys?.length && !merged.trailer) {
-      merged.trailer = keys[0] ?? null
-      merged.trailers = keys
+    if (keys?.length && !a.trailer) {
+      return { ...a, trailer: keys[0] ?? null, trailers: keys }
     }
-    return merged
+    return a
   })
   return { data, status: core.status, error: core.error, refresh: core.refresh }
 }
@@ -772,21 +821,106 @@ interface RawSeasonDetail extends Omit<RawSeason, 'episode_count'> {
   episodes?: RawEpisode[]
 }
 
+function toSeasonDetail(raw: RawSeasonDetail): SeasonDetail {
+  return {
+    number: raw.season_number,
+    name: raw.name,
+    overview: raw.overview ?? '',
+    air: raw.air_date ?? '',
+    poster: raw.poster_path ?? null,
+    episodes: (raw.episodes ?? []).map(toEpisode),
+  }
+}
+
+const seasonCache = new Map<string, Promise<SeasonDetail>>()
+const seasonSync = new Map<string, SeasonDetail>()
+
+function peekSeason(id: string | number, season: number) {
+  return seasonSync.get(`season-${id}-${season}`)
+}
+
+function loadSeason(id: string | number, season: number) {
+  const key = `season-${id}-${season}`
+  const hit = seasonCache.get(key)
+  if (hit)
+    return hit
+  const peeked = peekSeason(id, season)
+  if (peeked) {
+    const cached = Promise.resolve(peeked)
+    seasonCache.set(key, cached)
+    return cached
+  }
+  const pending = tmdb<RawSeasonDetail>(`/tv/${id}/season/${season}`)
+    .then(raw => {
+      const detail = toSeasonDetail(raw)
+      seasonSync.set(key, detail)
+      return detail
+    })
+    .catch(err => {
+      seasonCache.delete(key)
+      throw err
+    })
+  seasonCache.set(key, pending)
+  return pending
+}
+
+/** Card focus on the show page — episodes should be ready when the season opens. */
+export function prefetchSeason(id: string | number, season: number) {
+  void loadSeason(id, season)
+}
+
+const episodeCache = new Map<string, Promise<EpisodeDetail>>()
+const episodeSync = new Map<string, EpisodeDetail>()
+
+function peekEpisode(id: string | number, season: string | number, episode: string | number) {
+  return episodeSync.get(`episode-${id}-${season}-${episode}`)
+}
+
+function loadEpisode(id: string | number, season: string | number, episode: string | number) {
+  const key = `episode-${id}-${season}-${episode}`
+  const hit = episodeCache.get(key)
+  if (hit)
+    return hit
+  const peeked = peekEpisode(id, season, episode)
+  if (peeked) {
+    const cached = Promise.resolve(peeked)
+    episodeCache.set(key, cached)
+    return cached
+  }
+  const pending = tmdb<RawEpisode>(`/tv/${id}/season/${season}/episode/${episode}`)
+    .then(raw => {
+      const detail: EpisodeDetail = {
+        ...toEpisode(raw),
+        season: raw.season_number ?? Number(season),
+        votes: raw.vote_count ?? 0,
+        guests: (raw.guest_stars ?? []).slice(0, 20).map(toPerson),
+        directors: jobs(raw.crew ?? [], ['Director']),
+        writers: jobs(raw.crew ?? [], ['Writer', 'Teleplay', 'Screenplay', 'Story']),
+      }
+      episodeSync.set(key, detail)
+      return detail
+    })
+    .catch(err => {
+      episodeCache.delete(key)
+      throw err
+    })
+  episodeCache.set(key, pending)
+  return pending
+}
+
+/** Press on a season row — the episode page should not wait on mount. */
+export function prefetchEpisode(id: string | number, season: string | number, episode: string | number) {
+  void loadEpisode(id, season, episode)
+}
+
 export function useSeason(id: MaybeRefOrGetter<string | number>, season: MaybeRefOrGetter<number>) {
   return useAsyncData(
     () => `season-${toValue(id)}-${toValue(season)}`,
-    () => tmdb<RawSeasonDetail>(`/tv/${toValue(id)}/season/${toValue(season)}`),
+    () => loadSeason(toValue(id), toValue(season)),
     {
       lazy: true,
       watch: [() => toValue(id), () => toValue(season)],
-      transform: (raw): SeasonDetail => ({
-        number: raw.season_number,
-        name: raw.name,
-        overview: raw.overview ?? '',
-        air: raw.air_date ?? '',
-        poster: raw.poster_path ?? null,
-        episodes: (raw.episodes ?? []).map(toEpisode),
-      }),
+      getCachedData: () => peekSeason(toValue(id), toValue(season)),
     },
   )
 }
@@ -798,19 +932,11 @@ export function useEpisode(
 ) {
   return useAsyncData(
     () => `episode-${toValue(id)}-${toValue(season)}-${toValue(episode)}`,
-    // guest_stars and crew come back on this endpoint without an append.
-    () => tmdb<RawEpisode>(`/tv/${toValue(id)}/season/${toValue(season)}/episode/${toValue(episode)}`),
+    () => loadEpisode(toValue(id), toValue(season), toValue(episode)),
     {
       lazy: true,
       watch: [() => toValue(id), () => toValue(season), () => toValue(episode)],
-      transform: (raw): EpisodeDetail => ({
-        ...toEpisode(raw),
-        season: raw.season_number ?? Number(toValue(season)),
-        votes: raw.vote_count ?? 0,
-        guests: (raw.guest_stars ?? []).slice(0, 20).map(toPerson),
-        directors: jobs(raw.crew ?? [], ['Director']),
-        writers: jobs(raw.crew ?? [], ['Writer', 'Teleplay', 'Screenplay', 'Story']),
-      }),
+      getCachedData: () => peekEpisode(toValue(id), toValue(season), toValue(episode)),
     },
   )
 }
@@ -934,6 +1060,12 @@ export function usePersonCredits(id: MaybeRefOrGetter<string | number>) {
       },
     },
   )
+}
+
+/** Cast press on a title page — person should not wait on mount. */
+export function prefetchPerson(id: string | number) {
+  void tmdb<RawPerson>(`/person/${id}`)
+  void tmdb<RawPersonCredits>(`/person/${id}/combined_credits`)
 }
 
 // --- Collection --------------------------------------------------------------

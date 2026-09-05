@@ -6,11 +6,12 @@
 import type { MediaType } from '~/utils/tmdb'
 import { useTitleImages } from '~/utils/titleImages'
 
-const props = defineProps<{ type: MediaType, id: string }>()
+const props = defineProps<{ type: MediaType, id: string, stills?: string[] }>()
 
-const { data: stills, execute } = useTitleImages(() => props.type, () => props.id)
+const { data: art, status, execute } = useTitleImages(() => props.type, () => props.id)
+const stills = computed(() => props.stills?.length ? props.stills : art.value.stills)
 onMounted(() => {
-  if (props.id)
+  if (props.id && !props.stills?.length)
     void execute()
 })
 
@@ -18,7 +19,11 @@ const current = ref<string | null>(null)
 </script>
 
 <template>
-  <scroll-row v-if="stills?.length" :title="$t('Images')" :count="stills.length">
+  <scroll-row
+    v-if="stills.length || status === 'pending'"
+    :title="$t('Images')"
+    :count="stills.length || undefined"
+  >
     <button
       v-for="(path, i) in stills"
       :key="path"
@@ -32,6 +37,11 @@ const current = ref<string | null>(null)
       </div>
       <div class="pointer-events-none absolute inset-0 rounded-xl opacity-0 ring-2 ring-inset ring-primary transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100" />
     </button>
+    <div
+      v-for="n in status === 'pending' && !stills.length ? 6 : 0"
+      :key="`image-skeleton-${n}`"
+      class="aspect-video w-52 shrink-0 animate-pulse rounded-xl bg-surface-container sm:w-64"
+    />
   </scroll-row>
 
   <v-dialog v-if="current" :model-value="true" max-width="1100" @update:model-value="v => !v && (current = null)">

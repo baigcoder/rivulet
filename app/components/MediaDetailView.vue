@@ -31,6 +31,27 @@ const premium = usePremiumTvStore()
 const { mobile } = useDisplay()
 const settings = useSettingsStore()
 
+/**
+ * One size for the whole action row. Spelled out at each of the eight buttons it
+ * only looked consistent — Releases was quietly rendering 8px shorter than the
+ * rest for want of a prop, and nothing said the row was meant to match. `large`
+ * is 44px, which is also what a d-pad needs; a TV asks for a 1280 viewport, so
+ * it is never the `mobile` branch.
+ */
+const btnSize = computed(() => mobile.value ? 'default' : 'large')
+
+/**
+ * Vuetify pads an `icon` button a further 12px past its `size` (`$button-icon-
+ * density`), so at `large` the three toggles came out 56px against the 44px pills
+ * beside them and the row centred them in 6px of dead space. `comfortable` is the
+ * density whose multiplier is 0, which lands them on 44px exactly.
+ *
+ * A phone keeps the padding. There Play is `:block` and a spacer splits the row,
+ * so there is no common height to match — and 48px is the touch target Material
+ * asks for, which 36px is not.
+ */
+const iconDensity = computed(() => mobile.value ? 'default' : 'comfortable')
+
 /** Who is serving this title. Library pages have no provider. */
 const sourceLabel = computed(() => {
   if (!props.providerPlay)
@@ -38,7 +59,9 @@ const sourceLabel = computed(() => {
   return premium.account?.accountName?.trim() || premium.account?.username || $t('Premium TV')
 })
 
-const { data: media, status, error } = useMediaDetail(() => props.type, () => props.id)
+const { data: fetched, status, error } = useMediaDetail(() => props.type, () => props.id)
+/** Prefetch often finished on press — don't wait a tick for useAsyncData. */
+const media = computed(() => fetched.value ?? peekMediaDetail(props.type, props.id) ?? null)
 
 const fallback = computed<Media | null>(() => {
   if (!props.fallbackTitle)
@@ -61,30 +84,82 @@ const cover = computed(() => {
   if (media.value)
     return media.value
   const from = ui.opening ?? ui.selected
-  if (from && from.type === props.type && String(from.id) === props.id) {
-    if (settings.parentalEnabled)
-      return null
+  if (from && from.type === props.type && String(from.id) === props.id)
     return from
-  }
+  const snap = peekSnapMedia(props.type, props.id)
+  if (snap)
+    return snap
   return fallback.value
 })
 
-const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
-const { data: stills, execute: loadStills } = useTitleImages(() => props.type, () => props.id)
-watch(() => [props.id, media.value?.id, media.value?.backdrop] as const, () => {
-  if (!props.id || !media.value || media.value.backdrop)
+/** No snapshot and no TMDB yet — skeleton, never an empty page. */
+const heroPending = computed(() => !cover.value && !error.value)
+
+const { data: titleArt, execute: loadTitleArt } = useTitleImages(() => props.type, () => props.id)
+const sectionStage = ref(0)
+let artFrame = 0
+let sectionFrame = 0
+let artScheduled = false
+let sectionsScheduled = false
+
+watch(() => `${props.type}-${props.id}`, () => {
+  sectionStage.value = 0
+  artScheduled = false
+  sectionsScheduled = false
+  if (import.meta.server)
     return
-  void loadStills()
-}, { immediate: true })
-const heroPoster = computed(() =>
-  posterUrl(cover.value?.poster, ui.posterSize) || props.fallbackPoster || '')
-const heroBackdrop = computed(() =>
-  backdropUrl(cover.value?.backdrop, 'w780')
-  ?? (stills.value?.[0] ? backdropUrl(stills.value[0], 'w780') : null)
-  ?? '')
+  cancelAnimationFrame(artFrame)
+  cancelAnimationFrame(sectionFrame)
+}, { immediate: true, flush: 'post' })
+
+watch(media, value => {
+  if (!value || import.meta.server)
+    return
+  if (!artScheduled) {
+    artScheduled = true
+    // Core data wins the network. Logos and stills start after its first paint.
+    artFrame = requestAnimationFrame(() => {
+      artFrame = requestAnimationFrame(() => void loadTitleArt())
+    })
+  }
+  if (sectionsScheduled)
+    return
+  sectionsScheduled = true
+  const next = () => {
+    sectionStage.value++
+    if (sectionStage.value < 4)
+      sectionFrame = requestAnimationFrame(next)
+  }
+  // Split the heavy rows across frames instead of one navigation-blocking patch.
+  sectionFrame = requestAnimationFrame(() => {
+    sectionFrame = requestAnimationFrame(next)
+  })
+}, { immediate: true, flush: 'post' })
+
+const stills = computed(() => titleArt.value?.stills ?? [])
+const coverLogo = computed(() => media.value?.logo || titleArt.value?.logo || null)
+
+/** Pinned on first paint so TMDB replacing the snapshot does not swap hero URLs. */
+const pinnedPoster = ref('')
+const pinnedBackdrop = ref('')
 const heroArtReady = ref(false)
-watch(heroBackdrop, () => {
+watch(() => `${props.type}-${props.id}`, () => {
+  pinnedPoster.value = ''
+  pinnedBackdrop.value = ''
   heroArtReady.value = false
+}, { flush: 'sync' })
+watch([cover, () => props.fallbackPoster], ([c, fb]) => {
+  if (!c && !fb)
+    return
+  if (!pinnedPoster.value)
+    pinnedPoster.value = posterUrl(c?.poster, ui.posterSize) || fb || ''
+  if (!pinnedBackdrop.value && c?.backdrop)
+    pinnedBackdrop.value = backdropUrl(c.backdrop, 'w780') ?? ''
+}, { immediate: true })
+watch(pinnedBackdrop, (url, prev) => {
+  if (url === prev)
+    return
+  heroArtReady.value = !url
 })
 
 const videoHidden = ref(false)
@@ -226,19 +301,20 @@ function checkPin() {
 }
 
 let mine = 0
-let paint = 0
+let selectFrame = 0
 watch(cover, value => {
-  if (typeof cancelAnimationFrame === 'function')
-    cancelAnimationFrame(paint)
-  if (!value || import.meta.server)
+  if (import.meta.server)
     return
-  paint = requestAnimationFrame(() => {
-    mine = ui.select(value)
-  })
+  cancelAnimationFrame(selectFrame)
+  if (value)
+    selectFrame = requestAnimationFrame(() => (mine = ui.select(value)))
 }, { immediate: true, flush: 'post' })
 onUnmounted(() => {
-  if (typeof cancelAnimationFrame === 'function')
-    cancelAnimationFrame(paint)
+  if (!import.meta.server) {
+    cancelAnimationFrame(artFrame)
+    cancelAnimationFrame(sectionFrame)
+    cancelAnimationFrame(selectFrame)
+  }
   ui.release(mine)
 })
 
@@ -321,10 +397,26 @@ const playLabel = computed(() => [
 ].filter(Boolean).join(' '))
 
 const showPlay = computed(() => props.providerPlay || props.type === 'movie' || !!target.value)
+
+const scroller = ref<HTMLElement>()
+provide('detailScroller', scroller)
+
+watch(() => props.id, () => {
+  nextTick(() => {
+    scroller.value?.scrollTo(0, 0)
+    const shell = document.querySelector('[data-dpad-start]')
+    if (shell instanceof HTMLElement)
+      shell.scrollTop = 0
+  })
+}, { immediate: true })
 </script>
 
 <template>
-  <div class="h-full overflow-y-auto pb-12 [scrollbar-gutter:stable]">
+  <div
+    ref="scroller"
+    class="h-full min-h-0 overflow-y-auto pb-12 [scrollbar-gutter:stable]"
+    style="background-color: rgb(var(--v-theme-background))"
+  >
     <div v-if="error && !fallbackTitle" class="flex h-full flex-col items-center justify-center gap-2">
       <v-icon :icon="mdiAlertCircleOutline" color="error" size="40" />
       <span class="text-body-medium opacity-70">{{ $t('Couldn\'t load this title.') }}</span>
@@ -338,7 +430,9 @@ const showPlay = computed(() => props.providerPlay || props.type === 'movie' || 
       <p class="max-w-md text-body-medium opacity-70">
         {{ $t('This content is rated {rating} and exceeds your parental control settings.', { rating: media?.certification }) }}
       </p>
-      <v-btn v-if="settings.parentalPin" variant="tonal" @click="pinDialog = true">
+      <!-- The only thing on this screen a remote can reach, so it gets the same
+           44px the action row's buttons do rather than the 36px default. -->
+      <v-btn v-if="settings.parentalPin" size="large" variant="tonal" @click="pinDialog = true">
         {{ $t('Enter PIN to unlock') }}
       </v-btn>
 
@@ -377,100 +471,106 @@ const showPlay = computed(() => props.providerPlay || props.type === 'movie' || 
 
     <template v-else>
       <section
-        v-if="cover"
+        v-if="cover || heroPending"
         ref="heroBox"
         class="relative mb-6 h-[50vh] min-h-[380px] overflow-hidden rounded-b-3xl md:h-[60vh] md:min-h-[460px]"
       >
-        <img
-          v-if="heroPoster"
-          :src="heroBackdrop ? heroPoster : (posterUrl(cover.poster, 'w780') || heroPoster)"
-          :alt="cover.title"
-          fetchpriority="high"
-          decoding="async"
-          class="absolute inset-0 h-full w-full object-cover"
-          :class="heroBackdrop || settings.reduceEffects
-            ? ''
-            : 'scale-125 opacity-40 blur-2xl'"
-        >
-        <img
-          v-if="heroBackdrop"
-          :src="heroBackdrop"
-          :alt="cover.title"
-          decoding="async"
-          class="absolute inset-0 h-full w-full object-cover transition-opacity duration-500"
-          :class="heroArtReady || !heroPoster ? 'opacity-100' : 'opacity-0'"
-          @load="heroArtReady = true"
-        >
-        <div
-          v-if="heroSrc"
-          class="absolute inset-0 overflow-hidden"
-        >
-          <iframe
-            ref="heroFrame"
-            :src="heroSrc"
-            class="absolute left-1/2 top-1/2 h-full w-full -translate-x-1/2 -translate-y-1/2 scale-[1.45] transition-opacity duration-300"
-            :class="heroPlaying ? 'opacity-100' : 'opacity-0'"
-            frameborder="0"
-            allow="autoplay; encrypted-media; gyroscope; picture-in-picture; web-share"
-            referrerpolicy="strict-origin-when-cross-origin"
-            allowfullscreen
-            tabindex="-1"
-            aria-hidden="true"
-            @load="onHeroReady"
-          />
-        </div>
-        <div class="absolute inset-0 bg-gradient-to-t from-black/95 via-black/40 to-black/20" />
-        <div class="absolute inset-0 bg-gradient-to-r from-black/80 via-transparent to-transparent" />
-
-        <p
-          v-if="sourceLabel"
-          class="absolute start-4 top-4 z-10 max-w-[min(70%,18rem)] truncate rounded-full border border-white/20 bg-black/70 px-3 py-1 text-label-small font-semibold tracking-wide text-white"
-        >
-          {{ sourceLabel }}
-        </p>
-
-        <div v-if="trailerKey" class="absolute right-4 top-4 z-10 flex items-center gap-2">
-          <button
-            v-tooltip:bottom="heroMuted ? $t('Sound on') : $t('Sound off')"
-            class="grid size-10 place-items-center rounded-full border border-white/20 bg-black/60 text-white opacity-95 transition-[transform,background-color] hover:scale-110 hover:bg-black/80 focus-visible:scale-110 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary"
-            :aria-label="heroMuted ? $t('Sound on') : $t('Sound off')"
-            @click="toggleHeroSound"
-          >
-            <v-icon :icon="heroMuted ? mdiVolumeOff : mdiVolumeHigh" size="18" />
-          </button>
-          <button
-            v-tooltip:bottom="$t('Hide video')"
-            class="grid size-10 place-items-center rounded-full border border-white/20 bg-black/60 text-white opacity-95 transition-[transform,background-color] hover:scale-110 hover:bg-black/80 focus-visible:scale-110 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary"
-            :aria-label="$t('Hide video')"
-            @click="videoHidden = true"
-          >
-            <v-icon :icon="mdiClose" size="18" />
-          </button>
-        </div>
-
-        <div class="absolute inset-x-0 bottom-0 p-4 md:p-8">
+        <template v-if="heroPending">
+          <div class="absolute inset-0 animate-pulse bg-surface-container/35" />
+          <div class="absolute inset-0 bg-gradient-to-t from-black/95 via-black/40 to-black/20" />
+          <div class="absolute inset-x-0 bottom-0 p-4 md:p-8">
+            <div class="h-10 w-2/3 max-w-md animate-pulse rounded-lg bg-white/10 md:h-12" />
+          </div>
+        </template>
+        <template v-else>
           <img
-            v-if="media?.logo"
-            :src="logoUrl(media.logo)!"
-            :alt="cover.title"
-            class="max-h-14 max-w-full object-contain drop-shadow-[0_2px_24px_rgba(0,0,0,0.7)] md:max-h-20 md:max-w-lg"
+            v-if="pinnedPoster"
+            :src="pinnedPoster"
+            :alt="cover!.title"
+            fetchpriority="high"
+            decoding="async"
+            class="absolute inset-0 h-full w-full object-cover"
           >
-          <h1 v-else class="text-headline-large font-bold text-white drop-shadow-[0_2px_24px_rgba(0,0,0,0.7)]">
-            {{ cover.title }}
-          </h1>
-          <p v-if="media?.tagline" class="mt-1 max-w-3xl text-body-medium italic text-white/70">
-            {{ media.tagline }}
+          <img
+            v-if="pinnedBackdrop"
+            :src="pinnedBackdrop"
+            :alt="cover!.title"
+            decoding="async"
+            class="absolute inset-0 h-full w-full object-cover transition-opacity duration-300"
+            :class="heroArtReady ? 'opacity-100' : 'opacity-0'"
+            @load="heroArtReady = true"
+          >
+          <div
+            v-if="heroSrc"
+            class="absolute inset-0 overflow-hidden"
+          >
+            <iframe
+              ref="heroFrame"
+              :src="heroSrc"
+              class="absolute left-1/2 top-1/2 h-full w-full -translate-x-1/2 -translate-y-1/2 scale-[1.45] transition-opacity duration-300"
+              :class="heroPlaying ? 'opacity-100' : 'opacity-0'"
+              frameborder="0"
+              allow="autoplay; encrypted-media; gyroscope; picture-in-picture; web-share"
+              referrerpolicy="strict-origin-when-cross-origin"
+              allowfullscreen
+              tabindex="-1"
+              aria-hidden="true"
+              @load="onHeroReady"
+            />
+          </div>
+          <div class="absolute inset-0 bg-gradient-to-t from-black/95 via-black/40 to-black/20" />
+          <div class="absolute inset-0 bg-gradient-to-r from-black/80 via-transparent to-transparent" />
+
+          <p
+            v-if="sourceLabel"
+            class="absolute start-4 top-4 z-10 max-w-[min(70%,18rem)] truncate rounded-full border border-white/20 bg-black/70 px-3 py-1 text-label-small font-semibold tracking-wide text-white"
+          >
+            {{ sourceLabel }}
           </p>
-        </div>
+
+          <div v-if="trailerKey" class="absolute right-4 top-4 z-10 flex items-center gap-2">
+            <button
+              v-tooltip:bottom="heroMuted ? $t('Sound on') : $t('Sound off')"
+              class="grid size-10 place-items-center rounded-full border border-white/20 bg-black/60 text-white opacity-95 transition-[transform,background-color] hover:scale-110 hover:bg-black/80 focus-visible:scale-110 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary"
+              :aria-label="heroMuted ? $t('Sound on') : $t('Sound off')"
+              @click="toggleHeroSound"
+            >
+              <v-icon :icon="heroMuted ? mdiVolumeOff : mdiVolumeHigh" size="18" />
+            </button>
+            <button
+              v-tooltip:bottom="$t('Hide video')"
+              class="grid size-10 place-items-center rounded-full border border-white/20 bg-black/60 text-white opacity-95 transition-[transform,background-color] hover:scale-110 hover:bg-black/80 focus-visible:scale-110 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary"
+              :aria-label="$t('Hide video')"
+              @click="videoHidden = true"
+            >
+              <v-icon :icon="mdiClose" size="18" />
+            </button>
+          </div>
+
+          <div class="absolute inset-x-0 bottom-0 p-4 md:p-8">
+            <img
+              v-if="coverLogo"
+              :src="logoUrl(coverLogo)!"
+              :alt="cover!.title"
+              class="h-16 w-auto max-w-md object-contain drop-shadow-[0_2px_24px_rgba(0,0,0,0.8)] md:h-24 md:max-w-lg"
+            >
+            <h1 v-else class="text-headline-large font-bold text-white drop-shadow-[0_2px_24px_rgba(0,0,0,0.7)]">
+              {{ cover!.title }}
+            </h1>
+            <p v-if="media?.tagline" class="mt-1 max-w-3xl text-body-medium italic text-white/70">
+              {{ media.tagline }}
+            </p>
+          </div>
+        </template>
       </section>
 
       <section class="px-4 pb-8 pt-4 md:px-6">
         <div class="flex flex-col gap-6 sm:flex-row sm:items-end">
           <div class="aspect-2/3 w-32 shrink-0 overflow-hidden rounded-2xl shadow-2xl sm:w-44 lg:w-52">
-            <media-poster :src="posterUrl(cover?.poster, 'w500') || fallbackPoster" :alt="cover?.title" />
+            <media-poster eager :src="posterUrl(cover?.poster, ui.posterSize) || fallbackPoster" :alt="cover?.title" />
           </div>
 
-          <div v-if="cover" class="flex min-w-0 flex-1 flex-col gap-3">
+          <div v-if="cover && !heroPending" class="flex min-w-0 flex-1 flex-col gap-3">
             <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-body-small opacity-75">
               <media-reviews
                 v-if="id"
@@ -500,6 +600,9 @@ const showPlay = computed(() => props.providerPlay || props.type === 'movie' || 
                 :to="collectionLink(media.collection.id)"
               />
             </div>
+            <div v-else-if="status === 'pending'" class="flex flex-wrap gap-1.5">
+              <div v-for="n in 3" :key="n" class="h-7 w-16 animate-pulse rounded-full bg-surface-container/60" />
+            </div>
 
             <p class="max-w-3xl text-body-medium opacity-85">
               {{ cover.overview || $t('No overview.') }}
@@ -520,7 +623,7 @@ const showPlay = computed(() => props.providerPlay || props.type === 'movie' || 
               <v-btn
                 v-if="showPlay && providerPlay"
                 :prepend-icon="mdiPlay"
-                :size="mobile ? 'default' : 'large'"
+                :size="btnSize"
                 :block="mobile"
                 @click="emit('play')"
               >
@@ -529,7 +632,7 @@ const showPlay = computed(() => props.providerPlay || props.type === 'movie' || 
               <v-btn
                 v-else-if="showPlay"
                 :prepend-icon="mdiPlay"
-                :size="mobile ? 'default' : 'large'"
+                :size="btnSize"
                 :block="mobile"
                 :to="playLink"
               >
@@ -542,9 +645,16 @@ const showPlay = computed(() => props.providerPlay || props.type === 'movie' || 
                 :imdb-id="media.imdbId"
                 :season="target?.season"
                 :episode="target?.episode"
-                :size="mobile ? 'default' : 'large'"
+                :size="btnSize"
                 @pick="torrentPickerRef?.open()"
               />
+              <template v-else-if="!providerPlay && status === 'pending' && (type === 'movie' || target)">
+                <!-- The buttons these stand in for are `btnSize` tall (44px, or
+                     36px on a phone). A placeholder of any other height moves the
+                     whole row the moment the request lands. -->
+                <div class="animate-pulse rounded-lg bg-surface-container/60" :class="mobile ? 'h-9 w-full' : 'h-11 w-28'" />
+                <div class="animate-pulse rounded-lg bg-surface-container/60" :class="mobile ? 'h-9 w-full' : 'h-11 w-28'" />
+              </template>
               <torrent-picker
                 v-if="!providerPlay && media && (type === 'movie' || target)"
                 :id="id"
@@ -553,46 +663,51 @@ const showPlay = computed(() => props.providerPlay || props.type === 'movie' || 
                 :imdb-id="media.imdbId"
                 :season="target?.season"
                 :episode="target?.episode"
-                :size="mobile ? 'default' : 'large'"
+                :size="btnSize"
               />
               <v-btn
                 v-if="trailerKey"
                 :prepend-icon="mdiYoutube"
-                :size="mobile ? 'default' : 'large'"
+                :size="btnSize"
                 variant="tonal"
                 @click="trailer = true"
               >
                 {{ $t('Trailer') }}
               </v-btn>
               <v-spacer v-if="mobile" />
+              <!-- `iconDensity` is what keeps these level with the pills above,
+                   rather than 12px taller — see the computed. -->
               <v-btn
-                v-if="media"
+                v-if="cover"
                 icon
                 variant="text"
                 color="on-surface"
-                :size="mobile ? 'default' : 'large'"
+                :density="iconDensity"
+                :size="btnSize"
                 @click="library.toggleWatched(cover)"
               >
                 <v-icon :icon="library.isWatched(cover) ? mdiEye : mdiEyeOutline" :color="library.isWatched(cover) ? 'primary' : undefined" />
                 <v-tooltip activator="parent" :text="library.isWatched(cover) ? $t('Mark unwatched') : $t('Mark watched')" />
               </v-btn>
               <v-btn
-                v-if="media"
+                v-if="cover"
                 icon
                 variant="text"
                 color="on-surface"
-                :size="mobile ? 'default' : 'large'"
+                :density="iconDensity"
+                :size="btnSize"
                 @click="library.toggleWatchlist(cover)"
               >
                 <v-icon :icon="library.inWatchlist(cover) ? mdiBookmark : mdiBookmarkOutline" :color="library.inWatchlist(cover) ? 'primary' : undefined" />
                 <v-tooltip activator="parent" :text="library.inWatchlist(cover) ? $t('Remove from watchlist') : $t('Add to watchlist')" />
               </v-btn>
               <v-btn
-                v-if="media"
+                v-if="cover"
                 icon
                 variant="text"
                 color="on-surface"
-                :size="mobile ? 'default' : 'large'"
+                :density="iconDensity"
+                :size="btnSize"
                 @click="library.toggleFavourite(cover)"
               >
                 <v-icon :icon="library.isFavourite(cover) ? mdiHeart : mdiHeartOutline" :color="library.isFavourite(cover) ? 'primary' : undefined" />
@@ -613,31 +728,34 @@ const showPlay = computed(() => props.providerPlay || props.type === 'movie' || 
       <div class="flex flex-col gap-8">
         <slot name="below" />
 
-        <v-lazy
-          v-if="!hideSeasons && type === 'tv' && media?.seasons?.length"
-          :min-height="rowHeight"
-        >
-          <media-seasons
-            :key="id"
-            :show-id="id"
-            :seasons="media.seasons"
-            :poster="media.poster"
-            :show="media"
-          />
-        </v-lazy>
+        <media-seasons
+          v-if="sectionStage >= 1 && !hideSeasons && type === 'tv' && media?.seasons?.length"
+          :key="id"
+          :show-id="id"
+          :seasons="media.seasons"
+          :poster="media.poster"
+          :show="media"
+        />
 
-        <v-lazy v-if="media?.cast?.length" :min-height="240">
-          <cast-row :title="$t('Cast')" :people="media.cast" />
-        </v-lazy>
+        <cast-row
+          v-if="sectionStage >= 2 && media?.cast?.length"
+          :title="$t('Cast')"
+          :people="media.cast"
+        />
 
-        <media-images v-if="id" :id="id" :key="`${type}-${id}`" :type="type" />
+        <media-images
+          v-if="sectionStage >= 3 && id"
+          :id="id"
+          :key="`${type}-${id}`"
+          :type="type"
+          :stills="stills"
+        />
 
-        <v-lazy v-if="id && status !== 'pending'" :min-height="rowHeight">
-          <media-slider
-            :title="$t('More like this')"
-            :request="{ path: `/${type}/${id}/recommendations`, type }"
-          />
-        </v-lazy>
+        <media-slider
+          v-if="sectionStage >= 4 && id"
+          :title="$t('More like this')"
+          :request="{ path: `/${type}/${id}/recommendations`, type }"
+        />
       </div>
 
       <v-dialog v-model="trailer" max-width="1100">

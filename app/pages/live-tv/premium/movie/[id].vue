@@ -17,7 +17,7 @@ const movieId = computed(() => String(route.params.id ?? ''))
 const ext = computed(() => String(route.query.ext ?? 'mkv'))
 
 const movie = ref<PremiumVodItem | null>(null)
-const tmdbId = ref('')
+const tmdbId = ref(peekPremiumTmdb('movie', String(route.params.id ?? '')))
 
 const rawTitle = computed(() =>
   movie.value?.name || String(route.query.title ?? '') || '',
@@ -34,17 +34,26 @@ const fallbackRating = computed(() => {
   return Number.isFinite(n) && n > 0 ? n : 0
 })
 
-onMounted(async () => {
-  await premium.ensureLoaded()
-  movie.value = premium.vodMovies.find(m => m.id === movieId.value) ?? null
+onMounted(() => {
+  void premium.ensureLoaded().then(() => {
+    movie.value = premium.vodMovies.find(m => m.id === movieId.value) ?? null
+  })
 })
+
+watch(movieId, id => {
+  const hit = peekPremiumTmdb('movie', id)
+  if (hit)
+    tmdbId.value = hit
+}, { immediate: true })
 
 watch(rawTitle, async name => {
   if (!name)
     return
   const hit = await tmdbMatchByTitle(name, 'movie')
-  if (hit)
+  if (hit) {
     tmdbId.value = String(hit)
+    snapPremiumTmdb('movie', movieId.value, hit)
+  }
 }, { immediate: true })
 
 function play(): void {

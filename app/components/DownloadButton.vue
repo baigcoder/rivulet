@@ -17,6 +17,9 @@ const props = defineProps<{
   imdbId?: string | null
   season?: number
   episode?: number
+  // Declared rather than left to fall through, so it reads the same way as the
+  // Releases button it always stands next to and `check:types` sees the caller.
+  size?: string
 }>()
 
 const emit = defineEmits<{ pick: [] }>()
@@ -69,6 +72,7 @@ async function download() {
     :color="error ? 'error' : undefined"
     :to="done ? localePath('/downloads') : undefined"
     :disabled="!imdbId"
+    :size="size"
     variant="tonal"
     @click="!done && download()"
   >

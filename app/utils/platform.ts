@@ -174,7 +174,7 @@ function bridge() {
       clearBrightness?: () => void
       downloadUpdate?: (url: string) => number
       getUpdateProgress?: () => string
-      installUpdate?: () => boolean
+      installUpdate?: () => string
       notifyUpdateAvailable?: (version: string) => void
       dismissUpdateNotification?: () => void
     }
@@ -245,9 +245,19 @@ export function androidGetUpdateProgress(): { bytes: number, total: number, done
   }
 }
 
+export interface AndroidInstallResult { started: boolean, reason?: string }
+
 /** Open the downloaded APK so the user can install it. */
-export function androidInstallUpdate(): boolean {
-  return bridge()?.installUpdate?.() ?? false
+export function androidInstallUpdate(): AndroidInstallResult {
+  const json = bridge()?.installUpdate?.()
+  if (!json)
+    return { started: false, reason: 'missing_file' }
+  try {
+    return JSON.parse(json) as AndroidInstallResult
+  }
+  catch {
+    return { started: false, reason: 'missing_file' }
+  }
 }
 
 /** Show a system notification that a new version is available. */

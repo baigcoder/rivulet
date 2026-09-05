@@ -10,6 +10,7 @@ node_modules
 .cargo
 dist
 src-tauri/target
+src-tauri/target-android
 # Downloaded by scripts/build/mpv.ts and bundled into Windows builds.
 src-tauri/mpv
 # Created by build.rs, filled by scripts/build/macos/bundle-dylib.ts, bundled into the macOS .app.

@@ -25,22 +25,24 @@ function onEnter() {
     return
   hover.value = true
   ui.preview(props.media)
+  prefetchMediaDetail(props.media)
 }
 </script>
 
 <template>
   <nuxt-link
     :to="mediaLink(media)"
+    no-prefetch
     class="group flex select-none items-center gap-3 rounded-xl px-3 py-2 outline-none transition-colors duration-200 odd:bg-surface-container/30 hover:bg-surface-container-high/70 focus-visible:ring-2 focus-visible:ring-primary"
     :style="{ transform: pressed ? 'scale(0.98)' : 'scale(1)' }"
     @mouseenter="onEnter"
     @mouseleave="hover = false; pressed = false"
-    @focus="hover = true; ui.hover(media)"
+    @focus="hover = true; ui.hover(media); prefetchMediaDetail(media)"
     @blur="hover = false"
     @mousedown="pressed = true"
     @mouseup="pressed = false"
-    @pointerdown="ui.open(media); prefetchMediaDetail(media)"
-    @click="ui.open(media); prefetchMediaDetail(media)"
+    @pointerdown="armDetailPress($event, media)"
+    @click="openDetail($event, media)"
   >
     <div class="relative aspect-2/3 w-14 shrink-0 overflow-hidden rounded-md">
       <media-poster :src="posterUrl(media.poster, 'w154')" :alt="media.title" />

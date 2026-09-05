@@ -11,7 +11,6 @@ const { items, pending, error } = useMediaFeed(() => props.request)
 /** Cap at 20 items — roughly 3 viewport widths of posters. */
 const MAX_SLIDER_ITEMS = 20
 const visible = computed(() => items.value.slice(0, MAX_SLIDER_ITEMS))
-const hasMore = computed(() => items.value.length > MAX_SLIDER_ITEMS || !pending.value)
 </script>
 
 <template>

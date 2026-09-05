@@ -13,6 +13,11 @@ const played = computed(() => fraction(progress.value))
 function play() {
   navigateTo(watchLink('tv', props.showId, props.season, props.episode.number))
 }
+
+function armEpisode(event: PointerEvent) {
+  if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey)
+    prefetchEpisode(props.showId, props.season, props.episode.number)
+}
 </script>
 
 <template>
@@ -21,7 +26,9 @@ function play() {
        side they left it about two characters wide. -->
   <nuxt-link
     :to="episodeLink(showId, season, episode.number)"
+    no-prefetch
     class="group flex flex-wrap items-start gap-x-3 gap-y-1 rounded-xl bg-surface-container/30 p-2 outline-none transition-colors hover:bg-surface-container-high/70 focus-visible:ring-2 focus-visible:ring-primary"
+    @pointerdown="armEpisode"
   >
     <div class="relative aspect-video w-28 shrink-0 overflow-hidden rounded-lg sm:w-44">
       <media-poster :src="stillUrl(episode.still)" :alt="episode.name" />

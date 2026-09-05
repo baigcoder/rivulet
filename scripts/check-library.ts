@@ -178,7 +178,9 @@ assert.deepEqual(playedTitles({}), [])
 // --- Snapshots ---------------------------------------------------------------
 
 // Detail responses carry cast, crew and images; every one of those would
-// otherwise be copied into localStorage and kept there forever.
+// otherwise be copied into localStorage and kept there forever. `imdbId` is the
+// one detail field that is kept: Resume asks a source with it, and without it
+// stored every resume waits on TMDB before it can ask anything at all.
 const detail = {
   id: 1396,
   type: 'tv' as const,
@@ -190,6 +192,7 @@ const detail = {
   rating: 8.9,
   genreIds: [18],
   lang: 'en',
+  imdbId: 'tt0903747',
   cast: Array.from({ length: 20 }, (_, i) => ({ id: i })),
   seasons: [{ number: 1 }],
 }
@@ -197,6 +200,7 @@ assert.deepEqual(Object.keys(slim(detail as never)).sort(), [
   'backdrop',
   'genreIds',
   'id',
+  'imdbId',
   'lang',
   'overview',
   'poster',
@@ -205,6 +209,7 @@ assert.deepEqual(Object.keys(slim(detail as never)).sort(), [
   'type',
   'year',
 ])
+assert.equal(slim(detail as never).imdbId, 'tt0903747', 'the id a source is keyed by survives the snapshot')
 
 // --- Backup ------------------------------------------------------------------
 // The file is the only copy of a library that ever leaves the device, so it has

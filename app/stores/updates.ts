@@ -202,9 +202,28 @@ export const useUpdatesStore = defineStore('updates', () => {
     }
   }
 
+  function installErrorFor(reason?: string) {
+    switch (reason) {
+      case 'signing_mismatch':
+        return $t('This copy was built or sideloaded with a different signing key than the release APK. Uninstall Rivulet from Android Settings, then tap Install now again. Export a backup first from Settings → Account if you want to keep your library.')
+      case 'not_newer':
+        return $t('The downloaded APK is not newer than what is already installed.')
+      case 'unreadable':
+        return $t('The downloaded file does not look like a valid APK. Try downloading again.')
+      case 'no_permission':
+        return $t('Android needs permission to install updates. Turn on Install unknown apps for Rivulet, then try again.')
+      default:
+        return $t('No update file was found on disk. Download the APK again.')
+    }
+  }
+
   /** On Android, open the downloaded APK so the system installer takes over. */
   function openInstaller() {
-    androidInstallUpdate()
+    const result = androidInstallUpdate()
+    if (!result.started) {
+      status.value = 'failed'
+      error.value = installErrorFor(result.reason)
+    }
   }
 
   const restart = () => useTauriProcessRelaunch()

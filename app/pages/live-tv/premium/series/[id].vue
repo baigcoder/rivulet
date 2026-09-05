@@ -4,8 +4,6 @@
  * provider stream, not a torrent season.
  */
 import type { PremiumEpisode, PremiumSeriesDetail } from '~/types/premium'
-import { mdiPlay } from '@mdi/js'
-import { computed, onMounted, ref, watch } from 'vue'
 import { premiumApi, proxyLogo } from '~/utils/premiumTv'
 
 definePageMeta({ layout: 'default' })
@@ -17,7 +15,7 @@ const premium = usePremiumTvStore()
 const seriesId = computed(() => String(route.params.id ?? ''))
 const detail = ref<PremiumSeriesDetail | null>(null)
 const selectedSeason = ref<number | null>(null)
-const tmdbId = ref('')
+const tmdbId = ref(peekPremiumTmdb('tv', String(route.params.id ?? '')))
 
 const rawTitle = computed(() =>
   detail.value?.name || String(route.query.title ?? '') || '',
@@ -58,26 +56,36 @@ const visibleEpisodes = computed(() => {
   return seasons.value.find(([n]) => n === activeSeason.value)?.[1] ?? []
 })
 
+watch(seriesId, id => {
+  const hit = peekPremiumTmdb('tv', id)
+  if (hit)
+    tmdbId.value = hit
+}, { immediate: true })
+
 watch(rawTitle, async name => {
   if (!name)
     return
   const hit = await tmdbMatchByTitle(name, 'tv')
-  if (hit)
+  if (hit) {
     tmdbId.value = String(hit)
+    snapPremiumTmdb('tv', seriesId.value, hit)
+  }
 }, { immediate: true })
 
-onMounted(async () => {
-  await premium.ensureLoaded()
-  try {
-    const cached = premium.seriesDetailCache.get(seriesId.value)
-    detail.value = cached ?? await premiumApi.vodSeriesDetail(seriesId.value)
-    if (!cached && detail.value)
-      premium.cacheSeriesDetail(seriesId.value, detail.value)
-    selectedSeason.value = seasonNumbers.value[0] ?? null
-  }
-  catch {
-    // Title + TMDB extras still render; episodes stay empty.
-  }
+onMounted(() => {
+  void (async () => {
+    await premium.ensureLoaded()
+    try {
+      const cached = premium.seriesDetailCache.get(seriesId.value)
+      detail.value = cached ?? await premiumApi.vodSeriesDetail(seriesId.value)
+      if (!cached && detail.value)
+        premium.cacheSeriesDetail(seriesId.value, detail.value)
+      selectedSeason.value = seasonNumbers.value[0] ?? null
+    }
+    catch {
+      // Title + TMDB extras still render; episodes stay empty.
+    }
+  })()
 })
 
 function playEpisode(ep: PremiumEpisode): void {
@@ -139,30 +147,7 @@ function pickSeason(n: number): void {
           {{ activeSeason != null ? $t('Season {n}', { n: activeSeason }) : $t('Seasons') }}
         </h2>
 
-        <div class="flex flex-col gap-1">
-          <button
-            v-for="ep in visibleEpisodes"
-            :key="ep.id"
-            type="button"
-            class="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-start transition-colors hover:bg-surface-container-high focus-visible:bg-surface-container-high focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-            @click="playEpisode(ep)"
-          >
-            <span class="grid size-11 shrink-0 place-items-center rounded-full bg-primary/15 text-primary">
-              <v-icon :icon="mdiPlay" size="20" />
-            </span>
-            <span class="min-w-0 flex-1">
-              <span class="block text-body-medium font-semibold">
-                {{ $t('Episode {n}', { n: ep.episode }) }}
-                <template v-if="ep.title">
-                  — {{ ep.title }}
-                </template>
-              </span>
-              <span v-if="ep.plot" class="line-clamp-2 text-body-small opacity-55">
-                {{ ep.plot }}
-              </span>
-            </span>
-          </button>
-        </div>
+        <premium-episode-list :episodes="visibleEpisodes" @play="playEpisode" />
       </section>
     </template>
   </media-detail-view>

@@ -211,6 +211,9 @@ export function remainingText(p?: Progress | null) {
 /**
  * Only the fields a card needs. Detail responses carry cast, crew and images,
  * and every one of them would be copied into localStorage forever.
+ *
+ * `imdbId` is the exception that isn't for a card: it is what Resume needs to
+ * ask a source anything, and without it here every resume waits on TMDB first.
  */
 export function slim(m: Media): Media {
   return {
@@ -224,6 +227,7 @@ export function slim(m: Media): Media {
     rating: m.rating,
     genreIds: m.genreIds,
     lang: m.lang,
+    imdbId: m.imdbId,
   }
 }
 

@@ -14,9 +14,22 @@ const sort = ref<'popular' | 'new'>('popular')
 
 const { data: reviews, status, execute } = useReviews(() => props.type, () => props.id)
 
+/** Idle reads as empty — wait until the fetch finishes before saying there are none. */
+const waiting = computed(() => open.value && status.value !== 'success' && status.value !== 'error')
+
 watch(open, value => {
   if (value)
     void execute()
+})
+
+onMounted(() => {
+  if (import.meta.server)
+    return
+  const warm = () => void execute()
+  if ('requestIdleCallback' in globalThis)
+    requestIdleCallback(warm)
+  else
+    setTimeout(warm, 0)
 })
 
 const shown = computed(() => {
@@ -75,7 +88,7 @@ function dated(iso: string) {
       </div>
 
       <div class="max-h-[min(70vh,28rem)] overflow-y-auto px-3 py-2">
-        <div v-if="status === 'pending'" class="flex flex-col gap-3 py-2">
+        <div v-if="waiting" class="flex flex-col gap-3 py-2">
           <div v-for="n in 3" :key="n" class="animate-pulse h-16 rounded-lg bg-surface-container/60" />
         </div>
         <p v-else-if="status === 'error'" class="py-8 text-center text-body-small opacity-70">

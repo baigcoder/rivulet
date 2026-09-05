@@ -148,15 +148,15 @@ export const useDownloadsStore = defineStore('downloads', () => {
     // The add can land paused (session restore, a metered poll). Download is
     // the ask to pull bytes, so start it and refresh so the list is not a lie.
     if (started.id >= 0 && started.hash) {
+      // Before the start, so the very first eviction poll already sees this as
+      // something the user just asked for rather than the coldest thing here.
       touched.value[started.hash] = Date.now()
       await torrentAction(started.id, 'start').catch(() => {})
-      await waitForEngineHash(started.hash)
-      for (let attempt = 0; attempt < 4; attempt++) {
-        await refresh()
-        if (torrents.value.some(t => t.info_hash.toLowerCase() === started.hash.toLowerCase()))
-          break
-        await new Promise(r => setTimeout(r, 500))
-      }
+      // `waitForEngineHash` polls the engine list itself, so once it says yes one
+      // refresh is enough — the retry loop that used to follow it only ever cost
+      // the button another two seconds of spinning.
+      await waitForEngineHash(started.hash, 8000)
+      await refresh()
     }
     return started
   }

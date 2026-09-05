@@ -24,12 +24,20 @@ import {
  * The dialog is a sibling of the Releases button, not a child: a `<button>`
  * wrapping Play/Download is invalid HTML, and those clicks never reach the player.
  */
+
+// Two roots, so nothing from the caller falls through — Vue has no single root
+// to put it on and drops it. `size` was the one that mattered: every caller asks
+// for a `large` button, none of them got one, and Releases sat 8px shorter than
+// Play and Download beside it. Same treatment as `WatchedButton`.
+defineOptions({ inheritAttrs: false })
+
 const props = defineProps<{
   type: MediaType
   id: string | number
   imdbId?: string | null
   season?: number
   episode?: number
+  size?: string
 }>()
 
 const downloads = useDownloadsStore()
@@ -195,7 +203,7 @@ defineExpose({
 </script>
 
 <template>
-  <v-btn :prepend-icon="mdiFormatListBulletedType" variant="tonal" :disabled="!imdbId" @click="open = true">
+  <v-btn v-bind="$attrs" :prepend-icon="mdiFormatListBulletedType" variant="tonal" :size="size" :disabled="!imdbId" @click="open = true">
     {{ $t('Releases') }}
   </v-btn>
 

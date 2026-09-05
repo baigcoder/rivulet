@@ -218,8 +218,23 @@ assert.match(
 )
 assert.match(
   detail,
-  /<v-lazy/,
-  'cast, seasons and recommendations on the title page must lazy-mount',
+  /<media-seasons[\s\S]{0,200}?sectionStage >= 1/,
+  'seasons mount after the hero frame instead of blocking navigation',
+)
+assert.match(
+  detail,
+  /<cast-row[\s\S]{0,200}?sectionStage >= 2/,
+  'cast mounts in the frame after seasons instead of one long patch',
+)
+assert.match(
+  detail,
+  /<media-slider[\s\S]{0,200}?sectionStage >= 4/,
+  'recommendations start after the visible title content',
+)
+assert.match(
+  detail,
+  /<media-images[\s\S]{0,200}?sectionStage >= 3/,
+  'stills start after the visible title content, not on first paint',
 )
 assert.doesNotMatch(
   detail.replace(/<!--[\s\S]*?-->|\/\/[^\n]*/g, ''),
@@ -238,18 +253,100 @@ assert.match(
 )
 assert.match(
   detail,
-  /heroPoster/,
+  /pinnedPoster/,
   'the hero must paint the cached card poster before the backdrop decodes',
 )
 assert.match(
   detail,
-  /requestAnimationFrame/,
-  'select() must wait for the first paint: it decodes the window backdrop and may retheme',
+  /coverLogo/,
+  'the cover must use the TMDB logo image, not a second title',
+)
+assert.match(
+  detail,
+  /requestAnimationFrame\(next\)/,
+  'heavy title rows must be split across frames',
+)
+const selectFn = read('app/stores/ui.ts')
+assert.match(
+  selectFn.slice(selectFn.indexOf('function select'), selectFn.indexOf('function ambient')),
+  /art\.value = null/,
+  'opening a title must not paint its poster on the window — the selected theme stays',
+)
+assert.match(
+  selectFn,
+  /isTitlePath\(route\.path\)/,
+  'a title route must not show poster art, even if Home keepalive calls ambient()',
 )
 assert.match(
   read('app/components/MediaCard.vue'),
-  /ui\.open\(/,
-  'a card press snapshots the title only — select() on pointerdown hitchs the click',
+  /armDetail\(/,
+  'a card press arms the title so the first frame has a snapshot',
+)
+assert.match(
+  read('app/plugins/warm-detail.client.ts'),
+  /pages\/\[type\]\/\[id\]/,
+  'the title route must ship with the app — importing it on click is a blank page',
+)
+assert.match(
+  read('app/plugins/detail-nav.client.ts'),
+  /scrollTop = 0/,
+  'opening a title must reset the shell scroll or the cover sits above the fold',
+)
+assert.match(
+  read('app/plugins/detail-nav.client.ts'),
+  /ui\.open/,
+  'the opening splash must publish when navigation starts, not on pointerdown',
+)
+assert.match(
+  read('app/plugins/detail-nav.client.ts'),
+  /!isTitlePath\(to\.path\)/,
+  'leaving a title must clear the opening splash or cast links show a stuck overlay',
+)
+assert.match(
+  read('app/plugins/warm-detail.client.ts'),
+  /pages\/people\/\[id\]/,
+  'the person route must ship with the app — cast clicks must not wait on a chunk',
+)
+assert.match(
+  read('app/components/CastRow.vue'),
+  /prefetchPerson/,
+  'cast press must warm the person page before the link navigates',
+)
+assert.match(
+  read('app/components/EpisodeRow.vue'),
+  /prefetchEpisode/,
+  'episode press must warm the episode record before the link navigates',
+)
+assert.match(
+  read('app/components/MediaReviews.vue'),
+  /waiting/,
+  'reviews must not read idle as empty — show a loader until the fetch finishes',
+)
+assert.match(
+  read('app/layouts/default.vue'),
+  /titleRoute \? 'overflow-hidden' : 'overflow-y-auto'/,
+  'a title owns its scroller; the layout must not wrap it in another one',
+)
+assert.match(
+  read('app/components/MediaCard.vue'),
+  /no-prefetch/,
+  'NuxtLink must not preloadRouteComponents for every poster in the grid',
+)
+assert.doesNotMatch(
+  read('app/components/MediaSlider.vue'),
+  /\beager\b|:contain="false"/,
+  'a slider must not eagerly decode every poster or disable content-visibility',
+)
+assert.match(
+  read('app/layouts/default.vue'),
+  /v-if="opening"/,
+  'poster press must paint immediate feedback while Home moves out',
+)
+const nuxtConfig = read('nuxt.config.ts')
+assert.match(
+  nuxtConfig,
+  /prefetch:\s*false/,
+  'route prefetch must be off globally on link-dense browse pages',
 )
 assert.match(
   detail,
@@ -263,16 +360,65 @@ assert.doesNotMatch(
   'prefetch must not decode a backdrop on the click that opens the title',
 )
 assert.match(tmdb, /DETAIL_CORE/, 'the first title request must stay small')
+assert.match(
+  tmdb,
+  /tmdb<RawDetail>\(`\/\$\{type\}\/\$\{id\}`, \{ append_to_response: DETAIL_CORE \}\)/,
+  'certification and IMDb ride with the first title request — a second /id fetch is a wasted round trip',
+)
+assert.match(tmdb, /belongs_to_collection,credits/, 'cast rides with the first title request')
 assert.doesNotMatch(tmdb, /DETAIL_APPEND/, 'the fat credits\+images append must not ride with first paint')
-assert.match(tmdb, /prefetchMediaDetail/, 'a card press must start the title request before the page mounts')
+assert.match(
+  read('app/utils/detailNav.ts'),
+  /prefetchMediaDetail/,
+  'TMDB must start on poster press, not after the detail page mounts',
+)
+assert.match(
+  read('app/utils/detailNav.ts'),
+  /warmUrl|warmArt/,
+  'the hero backdrop must start decoding on press, not after the title mounts',
+)
+assert.match(
+  read('app/utils/detailNav.ts'),
+  /armDetailPress/,
+  'poster press must paint feedback before NuxtLink navigates',
+)
+assert.doesNotMatch(
+  read('app/utils/detailNav.ts'),
+  /preventDefault/,
+  'openDetail must not block NuxtLink — deferred navigateTo never ran',
+)
+assert.match(
+  read('app/components/MediaDetailView.vue'),
+  /peekMediaDetail/,
+  'staged title rows must reuse the prefetched record',
+)
 assert.match(tmdb, /getCachedData/, 'a prefetched title must be on the page on the first frame')
 assert.doesNotMatch(
   read('app/components/MediaCard.vue'),
   /preloadRouteComponents/,
   'do not preload the title route from a card: Vite locks the WebView',
 )
-assert.match(tmdb, /immediate: false/, 'credits must not start until the title request has landed')
-assert.match(tmdb, /extra\.execute/, 'credits start only after the title record is in hand')
+assert.match(
+  read('app/pages/index.vue'),
+  /keepalive:\s*true/,
+  'Home must stay mounted: tearing the grid down is the poster-click hitch',
+)
+assert.doesNotMatch(
+  read('app/pages/index.vue'),
+  /contentVisibility[\s\S]{0,100}?ui\.opening/,
+  'hiding Home on pointerdown cancels the link click that follows',
+)
+assert.doesNotMatch(
+  read('app/pages/index.vue'),
+  /backdrop-blur-md/,
+  'Home controls must not read back and blur the full hero behind them',
+)
+assert.doesNotMatch(
+  tmdb,
+  /requestIdleCallback/,
+  'enrich and credits must start when core lands, not after an idle wait',
+)
+assert.match(tmdb, /immediate: false/, 'videos must not start until the title request has landed')
 assert.doesNotMatch(
   tmdb.replace(/\/\*[\s\S]*?\*\//g, ''),
   /\$\{[^}]+\}\/images/,
@@ -287,6 +433,11 @@ assert.match(
   read('app/utils/titleImages.ts'),
   /include_image_language/,
   'the stills request must not ask for every language poster',
+)
+assert.match(
+  read('app/utils/titleImages.ts'),
+  /titleImagesOf/,
+  'stills must accept the old array cache and the logo payload',
 )
 assert.match(
   detail,

@@ -64,9 +64,8 @@ export const useUiStore = defineStore('ui', () => {
   const backdropFollowsHover = useLocalStorage(key('backdropHover'), false)
   /**
    * With a picture of your own set, whether artwork still takes over while
-   * you're on a title. The picture is then what the app rests on — and, with
-   * "take the colour from what's on screen", what the palette comes from
-   * everywhere the artwork isn't.
+   * browsing (hover-follow). A title you open keeps the theme either way —
+   * the hero holds the poster.
    */
   const artOverCustom = useLocalStorage(key('backdropArtOverCustom'), true)
   /**
@@ -100,12 +99,21 @@ export const useUiStore = defineStore('ui', () => {
    */
   const picked = ref(false)
 
-  const backdrop = computed(() => backdropFor(
-    backdropMode.value,
-    art.value?.backdrop,
-    backdropImage.value,
-    artOverCustom.value && picked.value,
-  ))
+  const route = useRoute()
+  const backdrop = computed(() => {
+    // Keepalive browse pages keep calling ambient(); a title must not show that art.
+    if (isTitlePath(route.path)) {
+      if (backdropMode.value === 'custom' && backdropImage.value)
+        return backdropImage.value
+      return undefined
+    }
+    return backdropFor(
+      backdropMode.value,
+      art.value?.backdrop,
+      backdropImage.value,
+      artOverCustom.value && picked.value,
+    )
+  })
 
   // Every card is cardWidth wide, so one bucket serves the whole grid — a 110px
   // card has no use for the 342px art. Ratio is reactive: the window can move
@@ -122,18 +130,17 @@ export const useUiStore = defineStore('ui', () => {
   const isDetailed = computed(() => layout.value.endsWith('detail'))
 
   /**
-   * The card that was pressed. Snapshot only — no backdrop, no palette.
-   * `select` is what paints, and the title page does that after first paint.
+   * The card that opened a title. `opening` only — writing `selected` here
+   * re-renders the keepalive home grid on the way out.
    */
   function open(media: Media) {
-    selected.value = media
     opening.value = media
   }
 
   /**
-   * Opening a title: this is the art the backdrop is *about*, so it always
-   * paints. Titles with no backdrop are ignored rather than blanking the window
-   * — the previous art is a better background than a flat colour.
+   * Opening a title: remember it for the snapshot, but leave the window on the
+   * selected theme. The hero is where the poster belongs — painting it behind
+   * the app is a second decode and covers the palette they picked.
    *
    * Returns a token to hand back to `release` on the way out.
    */
@@ -142,10 +149,8 @@ export const useUiStore = defineStore('ui', () => {
     selected.value = media
     if (media)
       opening.value = media
-    if (media?.backdrop || !media) {
-      art.value = media
-      picked.value = true
-    }
+    art.value = null
+    picked.value = false
     return ++turn
   }
 
@@ -156,10 +161,12 @@ export const useUiStore = defineStore('ui', () => {
    */
   function ambient(media: Media | null) {
     selected.value = media
-    if (media?.backdrop || !media)
-      art.value = media
     ambientArt.value = media
     picked.value = false
+    if (isTitlePath(route.path))
+      return
+    if (media?.backdrop || !media)
+      art.value = media
   }
 
   /**
@@ -173,6 +180,7 @@ export const useUiStore = defineStore('ui', () => {
   function release(token: number) {
     if (token !== turn)
       return
+    opening.value = null
     selected.value = ambientArt.value
     art.value = ambientArt.value
     picked.value = false
@@ -184,6 +192,8 @@ export const useUiStore = defineStore('ui', () => {
    * the window when the user asked for that.
    */
   function hover(media: Media | null) {
+    if (isTitlePath(route.path))
+      return
     if (media?.backdrop || !media) {
       selected.value = media
       if (backdropFollowsHover.value) {

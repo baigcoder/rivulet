@@ -128,6 +128,7 @@ const playHandoff = computed(() => ({
                 :episode="episodeNumber"
                 :show="show"
                 size="large"
+                density="comfortable"
               />
             </div>
           </div>

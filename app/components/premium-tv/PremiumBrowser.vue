@@ -21,6 +21,7 @@ import type { PremiumView } from '~/stores/premiumTv'
 import type { IPTVChannel, PremiumSeriesItem, PremiumVodItem } from '~/types/premium'
 import { mdiAccountCircle, mdiClose, mdiDeleteSweepOutline, mdiTelevisionOff } from '@mdi/js'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { vodDisplayName } from '~/utils/providerTitle'
 
 /**
  * `showBack` is set by the deep-linked category route, which used to draw
@@ -190,7 +191,26 @@ function play(channel: IPTVChannel): void {
   })
 }
 
+function primeMovie(item: PremiumVodItem): void {
+  warmUrl(proxyLogo(item.posterUrl))
+  const name = vodDisplayName(item.name).name
+  void tmdbMatchByTitle(name, 'movie').then(hit => {
+    if (hit)
+      snapPremiumTmdb('movie', item.id, hit)
+  })
+}
+
+function primeSeries(item: PremiumSeriesItem): void {
+  warmUrl(proxyLogo(item.posterUrl))
+  const name = vodDisplayName(item.name).name
+  void tmdbMatchByTitle(name, 'tv').then(hit => {
+    if (hit)
+      snapPremiumTmdb('tv', item.id, hit)
+  })
+}
+
 function openMovie(item: PremiumVodItem): void {
+  primeMovie(item)
   void router.push({
     path: localePath(`/live-tv/premium/movie/${item.id}`),
     query: {
@@ -203,6 +223,7 @@ function openMovie(item: PremiumVodItem): void {
 }
 
 function openSeries(item: PremiumSeriesItem): void {
+  primeSeries(item)
   void router.push({
     path: localePath(`/live-tv/premium/series/${item.id}`),
     query: { from: route.fullPath, title: item.name, poster: item.posterUrl || undefined },
@@ -476,6 +497,8 @@ async function disconnect(): Promise<void> {
             :has-more="premium.vodHasMore"
             :density="density"
             @load-more="premium.loadMoreVod()"
+            @prime-movie="primeMovie"
+            @prime-series="primeSeries"
             @open-movie="openMovie"
             @open-series="openSeries"
           />

@@ -24,6 +24,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   open: []
+  prime: []
 }>()
 
 const imgError = ref(false)
@@ -36,6 +37,7 @@ const poster = computed(() => proxyLogo(props.posterUrl))
     type="button"
     class="group flex w-full flex-col text-start outline-none"
     :class="showCaption !== false ? 'gap-2' : 'gap-0'"
+    @pointerdown="emit('prime')"
     @click="emit('open')"
   >
     <div

@@ -571,7 +571,7 @@ function searchPath(imdbId: string, season: number, episode: number) {
 
 async function runSources(
   path: string,
-  wait: { mode: 'all' } | { mode: 'first', graceMs: number },
+  wait: { mode: 'all' } | { mode: 'first', graceMs: number, onBatch?: (releases: Release[]) => void },
 ): Promise<{ releases: Release[], rest: Promise<Release[]> }> {
   if (!sources.length)
     throw new Error(NO_SOURCES())
@@ -589,6 +589,38 @@ async function runSources(
     firstUseful = resolve
   })
 
+  // Merge whatever landed, in the order sources were added — that order is the
+  // preference order, and it also decides whose copy a duplicate belongs to.
+  const seen = new Map<string, Release>()
+  const merge = (i: number) => {
+    const batch = batches[i]
+    if (!batch)
+      return []
+    batches[i] = null
+    const added: Release[] = []
+    for (const t of batch) {
+      if (!seen.has(releaseKey(t))) {
+        seen.set(releaseKey(t), t)
+        t.via = sources[i]
+        added.push(t)
+      }
+    }
+    return added
+  }
+  const takeLanded = () => {
+    for (let i = 0; i < sources.length; i++)
+      merge(i)
+  }
+
+  /**
+   * Only set once the first wave has been merged, so nothing can jump the
+   * preference order. After that a straggler is reported the moment it lands
+   * rather than at the end of the batch — the caller waiting for a stream URL
+   * has no reason to sit through the slowest source to hear about it.
+   */
+  let closed = false
+  const onBatch = wait.mode === 'first' ? wait.onBatch : undefined
+
   const settled = tasks.map(async (task, i) => {
     try {
       batches[i] = await task
@@ -597,6 +629,11 @@ async function runSources(
       // reason to start playback — wait for a source that actually has streams.
       if (batches[i]!.length)
         firstUseful()
+      if (closed && onBatch) {
+        const added = merge(i)
+        if (added.length)
+          onBatch(added)
+      }
     }
     catch {
       anyFailed = true
@@ -613,24 +650,8 @@ async function runSources(
     Promise.all(tasks.map(t => t.catch(() => []))),
   ])
 
-  // Merge whatever landed, in the order sources were added — that order is the
-  // preference order, and it also decides whose copy a duplicate belongs to.
-  const seen = new Map<string, Release>()
-  const takeLanded = () => {
-    for (let i = 0; i < sources.length; i++) {
-      const batch = batches[i]
-      if (!batch)
-        continue
-      batches[i] = null
-      for (const t of batch) {
-        if (!seen.has(releaseKey(t))) {
-          seen.set(releaseKey(t), t)
-          t.via = sources[i]
-        }
-      }
-    }
-  }
   takeLanded()
+  closed = true
 
   if (!seen.size && !anyAnswered && anyFailed)
     throw new Error($t('No source answered.'))
@@ -660,14 +681,36 @@ export async function findReleasesFast(
   episode: number,
   options: { graceMs?: number, onLate?: (releases: Release[]) => void, needUrl?: boolean } = {},
 ): Promise<Release[]> {
+  // Resolves with everything landed so far the moment a straggler brings a
+  // stream URL. Built before the search so it can be handed in as `onBatch`.
+  const landed: Release[] = []
+  let urlLanded!: (releases: Release[]) => void
+  const gotUrl = new Promise<Release[]>(resolve => {
+    urlLanded = resolve
+  })
+
   const { releases, rest } = await runSources(
     searchPath(imdbId, season, episode),
-    { mode: 'first', graceMs: options.graceMs ?? 600 },
+    {
+      mode: 'first',
+      graceMs: options.graceMs ?? 600,
+      onBatch: options.needUrl
+        ? (added: Release[]) => {
+            landed.push(...added)
+            if (added.some(r => r.url))
+              urlLanded([...landed])
+          }
+        : undefined,
+    },
   )
   let out = releases
   // Magnet-only first wave is common: the debrid host resolves a beat later.
+  // Waiting on `rest` alone means waiting for the slowest source of the lot,
+  // so the first URL to land ends the wait; the timer is only the give-up
+  // bound for when no source has one at all.
   if (options.needUrl && !out.some(r => r.url)) {
     const late = await Promise.race([
+      gotUrl,
       rest,
       new Promise<Release[]>(resolve => setTimeout(resolve, 2000, [])),
     ])
@@ -1299,6 +1342,20 @@ export async function startTorrent(options: {
   let picked: Release | null = null
   let hint: number | null = null
 
+  /**
+   * A budget of nothing is not a small budget — it means the disk has no room
+   * for new bytes at all, and saying so beats the two things that used to happen
+   * instead. `ranked` reads a `maxBytes` of 0 as a size limit every *sized*
+   * release fails, so the honest ones reported "cams, dead, or too big" while an
+   * unsized one was added, downloaded, and then deleted by the next eviction
+   * poll. Called only where new bytes are really about to be pulled: a copy
+   * already on the disk plays with no room at all, and must keep doing so.
+   */
+  const needRoom = () => {
+    if (options.maxBytes != null && options.maxBytes <= 0)
+      throw new Error($t('Not enough free space to download. Free some room, or pick another folder under Settings → Storage.'))
+  }
+
   // Nothing to add, nothing to fetch, nothing to keep — the link is the stream.
   if (options.url)
     return { id: -1, index: -1, hash: '', url: options.url, torrent: null }
@@ -1342,6 +1399,13 @@ export async function startTorrent(options: {
     else {
       if (!imdbId)
         throw new Error($t('TMDB has no IMDb id for this title, so there is nothing to look it up with.'))
+
+      // Nothing held, nothing adopted: whatever this finds has to be fetched.
+      // Unless the engine is off, in which case whatever this finds is a link
+      // that streams — a full disk is no reason to refuse to play it. The real
+      // add further down carries the same check for the paths that reach it.
+      if (allowTorrents)
+        needRoom()
 
       // Fast mode races the sources: playback starts on the first healthy
       // answer and slower servers flow into the candidate list as they land.
@@ -1454,6 +1518,9 @@ export async function startTorrent(options: {
   }
 
   step($t('Fetching metadata from peers…'))
+  // The backstop: every "we already hold this" path has returned by now, so a
+  // magnet handed in by hand reaches the disk check here rather than never.
+  needRoom()
   let added
   try {
     added = await addTorrent(magnet)
@@ -1479,6 +1546,32 @@ export async function startTorrent(options: {
   // each, and the engine only serves a file it was told to download.
   const wanted = [index, ...pickSubtitleFiles(files, index)]
   const only = narrowed ? [...new Set([...included, ...wanted])] : wanted
+
+  // Metadata is the first honest answer about size, and for a lot of releases it
+  // is the *only* one: `ranked` lets a release through when its source reported
+  // no size at all (`!t.bytes`), so the budget filter never saw these. One that
+  // turns out to be twice the budget used to download anyway and then be deleted
+  // mid-flight by an eviction poll — the same "starts and then vanishes" this
+  // whole path exists to stop, just ten minutes later. Refuse it now, while
+  // nothing is on the disk and there is still something useful to say.
+  //
+  // Only the files we asked for count: `limitToFiles` below is what keeps a
+  // season pack from pulling all sixty episodes, so the pack's own total is not
+  // the number the budget is about.
+  if (options.maxBytes != null && !narrowed) {
+    const bytes = only.reduce((n, i) => n + (files[i]?.length ?? 0), 0)
+    if (bytes > options.maxBytes) {
+      // Nothing has been downloaded yet, so this reclaims the metadata and the
+      // engine entry rather than any real bytes — and leaving it listed would put
+      // a torrent on the Downloads page that we just told the user was too big.
+      await torrentAction(added.id, 'delete').catch(() => {})
+      throw new Error($t('That release needs {size} but only {free} is free. Free some room, or pick another folder under Settings → Storage.', {
+        size: bytesText(bytes),
+        free: bytesText(options.maxBytes),
+      }))
+    }
+  }
+
   await limitToFiles(added.id, only)
   return { id: added.id, index, hash: added.details.info_hash, url: '', torrent: picked }
 }
@@ -1513,9 +1606,18 @@ export interface DiskSpace {
 export function diskBudget(disk: DiskSpace | null, used: number, cap = 0) {
   if (!disk?.total)
     return Number.POSITIVE_INFINITY
-  const reserve = Math.min(Math.max(disk.total * 0.1, RESERVE_MIN), RESERVE_MAX)
-  const room = Math.max(0, disk.free + used - reserve)
-  return cap > 0 ? Math.min(cap, room) : room
+  // Ours to spend: what is free, plus what the cache already holds and may reuse.
+  const room = disk.free + used
+  const sized = Math.min(Math.max(disk.total * 0.1, RESERVE_MIN), RESERVE_MAX)
+  // A share of the *device* is the wrong reserve once a big disk is nearly full.
+  // 10% of a 235 GB drive is the 20 GiB cap, so a drive with 16 GB free — several
+  // films' worth — produced a budget of exactly 0, and a budget of 0 meant every
+  // torrent holding a single byte was deleted on the next two-second poll. Hence
+  // the second clamp: the reserve never takes more than half of what we actually
+  // have to spend, and never drops below the floor, so a genuinely full disk
+  // still yields nothing while a roomy one stops pretending it has no room.
+  const reserve = Math.min(sized, Math.max(RESERVE_MIN, room * 0.5))
+  return cap > 0 ? Math.min(cap, Math.max(0, room - reserve)) : Math.max(0, room - reserve)
 }
 
 /** All eviction needs of a torrent: what it is, and what it costs on disk. */
@@ -1524,6 +1626,18 @@ type Cached = Pick<EngineTorrent, 'id' | 'info_hash'> & { stats?: { progress_byt
 export function usedBytes(torrents: Cached[]) {
   return torrents.reduce((n, t) => n + (t.stats?.progress_bytes ?? 0), 0)
 }
+
+/**
+ * How long a torrent is safe from eviction after it was last asked for.
+ *
+ * `keep` below is the torrent being *watched*, which is the only thing playback
+ * ever marks. A press of Download marks nothing, so on a disk with a tight
+ * budget the poll answered it by deleting the very torrent it had just added,
+ * two seconds later — the download that "starts and then vanishes". A cache is
+ * what nobody is waiting for, and someone who pressed a button ten seconds ago
+ * is waiting.
+ */
+const EVICT_GRACE = 10 * 60_000
 
 /**
  * Which torrents to delete to get back under budget. Oldest `touched` first
@@ -1539,6 +1653,7 @@ export function planEviction(
   budget: number,
   keep: number | null,
   touched: Record<string, number>,
+  now = Date.now(),
 ) {
   let used = usedBytes(torrents)
   if (used <= budget)
@@ -1551,8 +1666,16 @@ export function planEviction(
       break
     if (t.id === keep)
       continue
+    // Just asked for — see EVICT_GRACE.
+    if (now - (touched[t.info_hash] ?? 0) < EVICT_GRACE)
+      continue
+    const have = t.stats?.progress_bytes ?? 0
+    // Metadata fetch — nothing on disk yet, so deleting frees no room and a
+    // release someone just sent to Download vanishes while older copies stay.
+    if (!have)
+      continue
     drop.push(t.id)
-    used -= t.stats?.progress_bytes ?? 0
+    used -= have
   }
   return drop
 }

@@ -72,9 +72,7 @@ watch([loaded, () => settings.themeFromArt], ([art, on]) => {
   <div class="fixed inset-0 z-0 overflow-hidden bg-background" aria-hidden="true">
     <transition
       enter-active-class="transition-opacity duration-900 ease-out"
-      leave-active-class="transition-opacity duration-900 ease-out"
       enter-from-class="opacity-0"
-      leave-to-class="opacity-0"
     >
       <!-- Oversized so the blur doesn't fade out at the window edges.
            brightness() is what keeps a white poster art (there are plenty) from

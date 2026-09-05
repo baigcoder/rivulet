@@ -19,13 +19,36 @@ const props = defineProps<{ showId: string, seasons: Season[], poster?: string |
 
 const library = useLibraryStore()
 const ui = useUiStore()
+const { progress } = storeToRefs(library)
 
-/** Watched episodes per season — TMDB's count is the denominator. */
+/** One pass over progress — seen()/done() in the template used to scan the whole map per call. */
+const seasonStats = computed(() => {
+  const counts = new Map<number, number>()
+  const prefix = `tv:${props.showId}:`
+  for (const [key, p] of Object.entries(progress.value)) {
+    if (!p.watched || !key.startsWith(prefix))
+      continue
+    const rest = key.slice(prefix.length)
+    const colon = rest.indexOf(':')
+    if (colon <= 0)
+      continue
+    const n = Number(rest.slice(0, colon))
+    if (Number.isFinite(n))
+      counts.set(n, (counts.get(n) ?? 0) + 1)
+  }
+  const out = new Map<number, { seen: number, done: boolean }>()
+  for (const season of props.seasons) {
+    const seen = Math.min(counts.get(season.number) ?? 0, season.episodes)
+    out.set(season.number, { seen, done: seen >= season.episodes })
+  }
+  return out
+})
+
 function seen(season: Season) {
-  return Math.min(library.seasonWatched(props.showId, season.number), season.episodes)
+  return seasonStats.value.get(season.number)?.seen ?? 0
 }
 
-const done = (season: Season) => seen(season) >= season.episodes
+const done = (season: Season) => seasonStats.value.get(season.number)?.done ?? false
 
 const target = () => props.show ?? { id: Number(props.showId), type: 'tv' as const }
 
@@ -49,6 +72,11 @@ function markEarlier() {
     library.markSeason(target(), season.number, season.episodes, true)
   asked.value = null
 }
+
+function armSeason(event: PointerEvent, season: number) {
+  if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey)
+    prefetchSeason(props.showId, season)
+}
 </script>
 
 <template>
@@ -57,8 +85,11 @@ function markEarlier() {
       v-for="season in seasons"
       :key="season.number"
       :to="seasonLink(showId, season.number)"
+      no-prefetch
       class="group block shrink-0 select-none outline-none"
       :style="{ width: `${ui.cardWidth}px` }"
+      @pointerdown="armSeason($event, season.number)"
+      @focus="prefetchSeason(showId, season.number)"
     >
       <div class="relative aspect-2/3 overflow-hidden rounded-xl bg-surface-container">
         <media-poster :src="posterUrl(season.poster ?? poster, ui.posterSize)" :alt="season.name" />
@@ -77,7 +108,7 @@ function markEarlier() {
         <div class="pointer-events-none absolute inset-0 rounded-xl opacity-0 ring-2 ring-inset ring-primary transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100" />
       </div>
 
-      <div class="truncate pt-2 text-title-small">
+      <div class="truncate pt-2 text-title-small text-on-surface">
         {{ season.name }}
       </div>
 
@@ -85,7 +116,7 @@ function markEarlier() {
            thing on the row a remote has to be able to reach, and it sits below
            the posters so walking sideways still steps card to card. -->
       <div class="flex items-center gap-1">
-        <span class="min-w-0 flex-1 truncate text-body-small opacity-55">
+        <span class="min-w-0 flex-1 truncate text-body-small text-on-surface opacity-80">
           {{ seen(season)
             ? $t('{seen}/{total} watched', { seen: seen(season), total: season.episodes })
             : $t('{count} episodes', { count: season.episodes }) }}

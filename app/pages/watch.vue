@@ -9,6 +9,7 @@ import {
   mdiPowerPlugOutline,
   mdiReload,
 } from '@mdi/js'
+import { useTitleImages } from '~/utils/titleImages'
 import { findReleasesFast, NoServerStream, releaseKey, releaseLangs, releaseQuality, serverCandidates } from '~/utils/torrents'
 
 // The player owns the whole window: no app bar, no drawer, no page scroll.
@@ -51,12 +52,39 @@ const { data: media, error: mediaError } = useMediaDetail(type, id)
 const known = computed(() => library.media[titleKey(type.value, id.value)] ?? null)
 const title = computed(() => media.value ?? known.value)
 
+/**
+ * The transparent title treatment the pause overlay draws instead of plain text.
+ *
+ * It cannot come from `media.logo`: `DETAIL_CORE` appends credits and ratings and
+ * never `images`, so that field is null for every title and the overlay fell back
+ * to the text branch every time. Logos live in the separate `/images` request the
+ * detail page already makes — and `useTitleImages` keys its `useAsyncData` by
+ * title, so arriving from a title's own page costs nothing at all.
+ */
+const { data: titleArt, execute: loadTitleArt } = useTitleImages(type, id)
+const logo = computed(() => media.value?.logo || titleArt.value.logo || null)
+
 const step = ref($t('Loading title…'))
 const errorMsg = ref('')
 const torrent = ref<Release | null>(null)
 const torrentId = ref<number | null>(null)
 const src = ref('')
 const resolving = ref(false)
+
+/**
+ * The logo is fetched only once the stream is up. The overlay is not on screen
+ * until someone pauses, so this has no business competing with the first buffer —
+ * and by the time a pause happens it has long since landed.
+ */
+const artFor = ref('')
+watch([src, id], ([url, tid]) => {
+  if (!url || !tid || artFor.value === tid)
+    return
+  artFor.value = tid
+  // Arriving from the title's own page, the request is already in the cache.
+  if (!titleArt.value.logo && !titleArt.value.stills.length)
+    void loadTitleArt()
+})
 
 /**
  * The server streams the sources answered with, best first, and which one is
@@ -136,6 +164,14 @@ async function start() {
       imdbId: async () => {
         if (route.query.imdb)
           return String(route.query.imdb)
+        // Nothing coming out of the library carries the param — Continue
+        // watching, Resume, the next episode and an episode row all build a
+        // plain link — and the wait below is the whole of the delay before a
+        // direct link is even asked for. The stored snapshot of anything played
+        // or favourited before answers it for nothing, offline included.
+        const local = known.value?.imdbId
+        if (local)
+          return local
         step.value = $t('Loading title…')
         await until(() => !!media.value || !!mediaError.value).toBe(true, { timeout: 20_000 })
         return media.value?.imdbId
@@ -455,7 +491,7 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
         :imdb-id="media?.imdbId"
         :title="title?.title ?? String(route.query.title ?? '')"
         :year="title?.year"
-        :logo="media?.logo ?? null"
+        :logo="logo"
         :season="season"
         :episode="episode"
         :quality="torrent?.quality"

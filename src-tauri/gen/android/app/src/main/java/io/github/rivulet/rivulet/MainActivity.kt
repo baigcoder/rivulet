@@ -157,6 +157,66 @@ class MainActivity : TauriActivity() {
       .apply()
   }
 
+  @Suppress("DEPRECATION")
+  private fun packageSigners(info: android.content.pm.PackageInfo): Array<android.content.pm.Signature>? =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) info.signingInfo?.apkContentsSigners
+    else info.signatures
+
+  @Suppress("DEPRECATION")
+  private fun readApkInfo(file: File): android.content.pm.PackageInfo? {
+    val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+      PackageManager.GET_SIGNING_CERTIFICATES
+    } else {
+      PackageManager.GET_SIGNATURES
+    }
+    val info = packageManager.getPackageArchiveInfo(file.absolutePath, flags) ?: return null
+    info.applicationInfo?.let {
+      it.sourceDir = file.absolutePath
+      it.publicSourceDir = file.absolutePath
+    }
+    return info
+  }
+
+  private fun signaturesMatch(
+    a: Array<android.content.pm.Signature>?,
+    b: Array<android.content.pm.Signature>?,
+  ): Boolean {
+    if (a == null || b == null || a.size != b.size) return false
+    val left = a.map { it.toCharsString() }.toSet()
+    return b.all { left.contains(it.toCharsString()) }
+  }
+
+  /**
+   * Android's installer only says "App not installed" when the signing key or
+   * version code disagrees — check here so the About page can say why.
+   */
+  @Suppress("DEPRECATION")
+  private fun validateUpdateApk(file: File): String? {
+    val archive = readApkInfo(file) ?: return "unreadable"
+    if (archive.packageName != packageName) return "unreadable"
+
+    val archiveVersion = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+      archive.longVersionCode
+    } else {
+      archive.versionCode.toLong()
+    }
+    val installedFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+      PackageManager.GET_SIGNING_CERTIFICATES
+    } else {
+      PackageManager.GET_SIGNATURES
+    }
+    val installed = packageManager.getPackageInfo(packageName, installedFlags)
+    val installedVersion = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+      installed.longVersionCode
+    } else {
+      installed.versionCode.toLong()
+    }
+
+    if (archiveVersion <= installedVersion) return "not_newer"
+    if (!signaturesMatch(packageSigners(archive), packageSigners(installed))) return "signing_mismatch"
+    return null
+  }
+
   /**
    * `__tvNavigate` is installed by the d-pad plugin after the page boots, so a
    * cold start from the update notification has to wait for it rather than
@@ -554,15 +614,42 @@ class MainActivity : TauriActivity() {
     /**
      * Open the previously downloaded APK so the user can install it. Same
      * package name means Android replaces the running app with the new build.
+     * Returns JSON: `{"started":bool,"reason":"…"}` when [started] is false.
      */
     @JavascriptInterface
-    fun installUpdate(): Boolean {
-      val path = updateApkPath ?: updateApkFile().takeIf { it.exists() }?.absolutePath ?: return false
+    fun installUpdate(): String {
+      val obj = JSONObject()
+      val path = updateApkPath ?: updateApkFile().takeIf { it.exists() }?.absolutePath
+      if (path == null) {
+        obj.put("started", false).put("reason", "missing_file")
+        return obj.toString()
+      }
       val file = File(path)
-      if (!file.exists()) return false
+      if (!file.exists()) {
+        obj.put("started", false).put("reason", "missing_file")
+        return obj.toString()
+      }
       updateApkPath = path
+
+      validateUpdateApk(file)?.let { reason ->
+        obj.put("started", false).put("reason", reason)
+        return obj.toString()
+      }
+
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
+        runOnUiThread {
+          startActivity(
+            Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))
+              .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+          )
+        }
+        obj.put("started", false).put("reason", "no_permission")
+        return obj.toString()
+      }
+
       runOnUiThread { launchInstaller(file) }
-      return true
+      obj.put("started", true)
+      return obj.toString()
     }
 
     /**

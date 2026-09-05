@@ -39,22 +39,18 @@ function handleRemove() {
   setTimeout(() => props.onRemove?.(), 250)
 }
 
-function prime() {
-  ui.open(props.media)
-  prefetchMediaDetail(props.media)
-}
-
 function handleClick(e: MouseEvent) {
   if (removing.value) {
     e.preventDefault()
     e.stopPropagation()
     return
   }
-  prime()
+  openDetail(e, props.media)
 }
 
 function play() {
-  prime()
+  if (!props.resumeTo && !props.to)
+    armDetail(props.media)
   return navigateTo(props.resumeTo || props.to || mediaLink(props.media))
 }
 
@@ -63,6 +59,7 @@ function onEnter() {
     return
   hover.value = true
   ui.preview(props.media)
+  prefetchMediaDetail(props.media)
 }
 
 // Not while hovered, though. The card you're pointing at is the definition of
@@ -88,14 +85,15 @@ const cardStyle = computed(() => {
 <template>
   <nuxt-link
     :to="to ?? mediaLink(media)"
+    no-prefetch
     class="group relative block select-none outline-none"
     :class="{ '[content-visibility:auto]': !hover }"
     :style="{ containIntrinsicSize: reserve, ...cardStyle }"
     @mouseenter="onEnter"
     @mouseleave="hover = false"
-    @focus="hover = true; ui.hover(media)"
+    @focus="hover = true; ui.hover(media); prefetchMediaDetail(media)"
     @blur="hover = false"
-    @pointerdown="prime"
+    @pointerdown="armDetailPress($event, media)"
     @click="handleClick"
   >
     <!-- Ring lives on the poster, not the title under it. An outside ring on
@@ -198,10 +196,10 @@ const cardStyle = computed(() => {
     </div>
 
     <div v-if="detail" class="pt-2">
-      <div class="truncate text-title-small">
+      <div class="truncate text-title-small text-on-surface">
         {{ media.title }}
       </div>
-      <div class="truncate text-body-small opacity-55">
+      <div class="truncate text-body-small text-on-surface opacity-80">
         {{ media.year || $t('unknown') }}
       </div>
     </div>

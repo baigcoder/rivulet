@@ -24,6 +24,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   openMovie: [item: PremiumVodItem]
   openSeries: [item: PremiumSeriesItem]
+  primeMovie: [item: PremiumVodItem]
+  primeSeries: [item: PremiumSeriesItem]
   loadMore: []
 }>()
 
@@ -190,6 +192,7 @@ watch(
               kind="movie"
               :compact="density === 'compact'"
               :show-caption="false"
+              @prime="emit('primeMovie', item)"
               @open="emit('openMovie', item)"
             />
           </template>
@@ -204,6 +207,7 @@ watch(
               kind="series"
               :compact="density === 'compact'"
               :show-caption="false"
+              @prime="emit('primeSeries', item)"
               @open="emit('openSeries', item)"
             />
           </template>

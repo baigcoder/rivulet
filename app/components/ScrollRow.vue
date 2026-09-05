@@ -81,7 +81,7 @@ function page(direction: 1 | -1) {
     <div class="mx-4 flex items-center gap-3 px-1 pb-3 pt-1 md:mx-6">
       <div class="min-w-0 flex-1">
         <div class="flex items-center gap-2">
-          <h2 class="truncate text-title-large font-bold tracking-tight">
+          <h2 class="truncate text-title-large font-bold tracking-tight text-on-surface">
             {{ title }}
           </h2>
           <span

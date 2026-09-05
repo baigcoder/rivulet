@@ -397,6 +397,44 @@ assert.deepEqual(planEviction(cache, 4 * GB, null, ages), [2, 3, 1], 'oldest fir
 assert.deepEqual(planEviction(cache, 4 * GB, 2, ages), [3, 1], 'never what is playing')
 assert.deepEqual(planEviction(cache, 4 * GB, 2, {}), [1, 3], 'no history: engine order')
 assert.deepEqual(planEviction(cache, Number.POSITIVE_INFINITY, null, ages), [])
+const fetching = [
+  { id: 1, info_hash: 'new', stats: { progress_bytes: 0 } },
+  { id: 2, info_hash: 'old', stats: { progress_bytes: 5 * GB } },
+]
+assert.deepEqual(
+  planEviction(fetching, 4 * GB, null, { new: 200, old: 100 }),
+  [2],
+  'a release still fetching metadata must not be evicted — it holds no bytes',
+)
+
+// A big disk that is nearly full still has room for a film. 10% of 235 GB hits
+// the 20 GiB cap, which on a drive with 16 GB free used to leave a budget of
+// exactly 0 — and a budget of 0 deleted every torrent holding a byte, every
+// two-second poll: the download that started and then vanished.
+assert.equal(diskBudget({ free: 16 * GB, total: 235 * GB }, 0), 8 * GB, 'the reserve never takes more than half of what is free')
+// The floor still bites, so a genuinely full disk yields nothing rather than
+// filling the last gigabyte.
+assert.equal(diskBudget({ free: 2 * GB, total: 235 * GB }, 0), 0)
+
+// `keep` is only ever the torrent being *watched*. A press of Download marks
+// nothing, so without a grace window the poll deleted the torrent it had just
+// added — while older, colder copies stayed.
+const now = Date.now()
+const fresh = [
+  { id: 1, info_hash: 'just-asked-for', stats: { progress_bytes: 2 * GB } },
+  { id: 2, info_hash: 'cold', stats: { progress_bytes: 5 * GB } },
+]
+const justAsked = { 'just-asked-for': now, 'cold': now - 60 * 60_000 }
+assert.deepEqual(
+  planEviction(fresh, 1 * GB, null, justAsked, now),
+  [2],
+  'a download just asked for outlives the budget; the cold copy goes instead',
+)
+assert.deepEqual(
+  planEviction(fresh, 0, null, justAsked, now),
+  [2],
+  'a budget of 0 is no licence to delete what the user just started',
+)
 
 // --- Only download on Wi-Fi ---------------------------------------------------
 // The rule is asymmetric on purpose: it stops anything running, but only ever

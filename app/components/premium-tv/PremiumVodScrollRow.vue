@@ -12,6 +12,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   openMovie: [item: PremiumVodItem]
   openSeries: [item: PremiumSeriesItem]
+  primeMovie: [item: PremiumVodItem]
+  primeSeries: [item: PremiumSeriesItem]
 }>()
 
 const visibleMovies = computed(() => (props.movies ?? []).slice(0, props.max ?? 16))
@@ -38,6 +40,7 @@ const count = computed(() => props.kind === 'movie' ? (props.movies?.length ?? 0
         kind="movie"
         class="w-40 shrink-0 sm:w-44 lg:w-48"
         show-caption
+        @prime="emit('primeMovie', item)"
         @open="emit('openMovie', item)"
       />
     </template>
@@ -52,6 +55,7 @@ const count = computed(() => props.kind === 'movie' ? (props.movies?.length ?? 0
         kind="series"
         class="w-40 shrink-0 sm:w-44 lg:w-48"
         show-caption
+        @prime="emit('primeSeries', item)"
         @open="emit('openSeries', item)"
       />
     </template>
