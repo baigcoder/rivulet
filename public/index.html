@@ -797,9 +797,12 @@
       background: #000;
       align-items: center;
       justify-content: center;
+      opacity: 0;
+      transition: opacity .25s ease;
     }
     .hero-fs.is-active {
       display: flex;
+      opacity: 1;
     }
     .hero-fs video {
       width: 100%;
@@ -828,6 +831,59 @@
     }
     .hero-fs-close:hover, .hero-fs-close:focus-visible {
       background: rgba(255,255,255,.3);
+    }
+    .hero-fs-controls {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      z-index: 901;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px 20px;
+      background: linear-gradient(transparent, rgba(0,0,0,.7));
+      opacity: 0;
+      transition: opacity .2s;
+    }
+    .hero-fs.is-active .hero-fs-controls { opacity: 1; }
+    .hero-fs-controls button {
+      border: 0;
+      background: none;
+      color: #fff;
+      font-size: 1.25rem;
+      cursor: pointer;
+      padding: 4px;
+      display: grid;
+      place-items: center;
+      min-width: 36px;
+      min-height: 36px;
+    }
+    .hero-fs-controls button:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
+    .hero-fs-seek {
+      flex: 1;
+      height: 4px;
+      background: rgba(255,255,255,.25);
+      border-radius: 2px;
+      cursor: pointer;
+      position: relative;
+    }
+    .hero-fs-seek-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 2px;
+      width: 0%;
+      pointer-events: none;
+    }
+    .hero-fs-time {
+      color: rgba(255,255,255,.8);
+      font-size: .8125rem;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
     }
 
     @media (max-width: 680px) {
@@ -1206,6 +1262,18 @@
   <div class="hero-fs" id="hero-fs">
     <video id="hero-fs-video" playsinline></video>
     <button type="button" class="hero-fs-close" id="hero-fs-close" aria-label="Close video">&times;</button>
+    <div class="hero-fs-controls" id="hero-fs-controls">
+      <button type="button" id="hero-fs-toggle" aria-label="Play/Pause">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+      </button>
+      <div class="hero-fs-seek" id="hero-fs-seek">
+        <div class="hero-fs-seek-fill" id="hero-fs-seek-fill"></div>
+      </div>
+      <span class="hero-fs-time" id="hero-fs-time">0:00</span>
+      <button type="button" id="hero-fs-sound" aria-label="Toggle sound">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0014 8.5v7a4.47 4.47 0 002.5-3.5zM14 3.23v2.06a6.51 6.51 0 010 13.42v2.06A8.51 8.51 0 0014 3.23z"/></svg>
+      </button>
+    </div>
   </div>
 
   <script>
@@ -1385,23 +1453,90 @@
     var heroFs = document.getElementById('hero-fs');
     var heroFsVideo = document.getElementById('hero-fs-video');
     var heroFsClose = document.getElementById('hero-fs-close');
+    var heroFsToggle = document.getElementById('hero-fs-toggle');
+    var heroFsSound = document.getElementById('hero-fs-sound');
+    var heroFsSeek = document.getElementById('hero-fs-seek');
+    var heroFsSeekFill = document.getElementById('hero-fs-seek-fill');
+    var heroFsTime = document.getElementById('hero-fs-time');
     var isMobile = window.matchMedia('(max-width: 680px)').matches;
+
+    function fsFormatTime(s) {
+      if (!s || !isFinite(s)) return '0:00';
+      var m = Math.floor(s / 60);
+      var sec = Math.floor(s % 60);
+      return m + ':' + (sec < 10 ? '0' : '') + sec;
+    }
 
     if (heroVid && heroPlay) {
       heroVid.play();
 
       function openHeroFullscreen() {
         heroFsVideo.src = heroVid.currentSrc || '/hero.mp4';
+        heroFsVideo.muted = false;
         heroFs.classList.add('is-active');
         document.body.style.overflow = 'hidden';
         heroFsVideo.play();
+        if (heroFsSound) heroFsSound.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0014 8.5v7a4.47 4.47 0 002.5-3.5zM14 3.23v2.06a6.51 6.51 0 010 13.42v2.06A8.51 8.51 0 0014 3.23z"/></svg>';
+        if (isMobile && heroFs.requestFullscreen) {
+          heroFs.requestFullscreen().catch(function () {});
+        } else if (isMobile && heroFs.webkitRequestFullscreen) {
+          heroFs.webkitRequestFullscreen();
+        }
       }
       function closeHeroFullscreen() {
         heroFsVideo.pause();
         heroFsVideo.removeAttribute('src');
         heroFs.classList.remove('is-active');
         document.body.style.overflow = '';
+        if (document.fullscreenElement) {
+          document.exitFullscreen().catch(function () {});
+        } else if (document.webkitFullscreenElement) {
+          document.webkitExitFullscreen();
+        }
         heroVid.play();
+      }
+
+      if (heroFsVideo) {
+        heroFsVideo.addEventListener('timeupdate', function () {
+          if (heroFsVideo.duration && heroFsSeekFill) {
+            heroFsSeekFill.style.width = (heroFsVideo.currentTime / heroFsVideo.duration * 100) + '%';
+          }
+          if (heroFsTime) heroFsTime.textContent = fsFormatTime(heroFsVideo.currentTime);
+        });
+        heroFsVideo.addEventListener('ended', function () {
+          if (heroFsToggle) heroFsToggle.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+        });
+      }
+
+      if (heroFsToggle) {
+        heroFsToggle.addEventListener('click', function () {
+          if (heroFsVideo.paused) {
+            heroFsVideo.play();
+            heroFsToggle.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
+          } else {
+            heroFsVideo.pause();
+            heroFsToggle.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+          }
+        });
+      }
+
+      if (heroFsSound) {
+        heroFsSound.addEventListener('click', function () {
+          heroFsVideo.muted = !heroFsVideo.muted;
+          if (heroFsVideo.muted) {
+            heroFsSound.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M16.5 12A4.5 4.5 0 0014 8.5v2.14l2.45 2.45c.03-.2.05-.41.05-.61zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.8 8.8 0 0021 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 003.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>';
+          } else {
+            heroFsSound.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0014 8.5v7a4.47 4.47 0 002.5-3.5zM14 3.23v2.06a6.51 6.51 0 010 13.42v2.06A8.51 8.51 0 0014 3.23z"/></svg>';
+          }
+        });
+      }
+
+      if (heroFsSeek) {
+        heroFsSeek.addEventListener('click', function (e) {
+          var rect = heroFsSeek.getBoundingClientRect();
+          var pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+          if (heroFsVideo.duration) heroFsVideo.currentTime = pct * heroFsVideo.duration;
+        });
       }
 
       function toggleHeroVideo() {
@@ -1460,6 +1595,16 @@
         if (e.target === heroFs) closeHeroFullscreen();
       });
     }
+    document.addEventListener('fullscreenchange', function () {
+      if (!document.fullscreenElement && heroFs && heroFs.classList.contains('is-active')) {
+        closeHeroFullscreen();
+      }
+    });
+    document.addEventListener('webkitfullscreenchange', function () {
+      if (!document.webkitFullscreenElement && heroFs && heroFs.classList.contains('is-active')) {
+        closeHeroFullscreen();
+      }
+    });
 
     if (heroDuration && heroVid) {
       function seekHero(e) {
