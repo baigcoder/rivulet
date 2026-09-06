@@ -31,7 +31,7 @@
       --ground-rgb: 8, 9, 11;
       --surface: #121418;
       --surface-hover: #191c22;
-      --surface-glass: rgba(18, 20, 24, 0.75);
+      --surface-glass: rgba(18, 20, 24, 0.85);
       --accent: #6fe3ff;
       --accent-rgb: 111, 227, 255;
       --accent-glow: rgba(111, 227, 255, 0.25);
@@ -48,7 +48,7 @@
       --display: 'Syne', var(--font);
       --mono: 'IBM Plex Mono', monospace;
       --max-width: 1280px;
-      --gutter: clamp(20px, 5vw, 48px);
+      --gutter: clamp(16px, 4vw, 48px);
       --radius: 20px;
     }
 
@@ -115,7 +115,7 @@
     }
 
     .section-pad {
-      padding: clamp(64px, 8vw, 120px) 0;
+      padding: clamp(48px, 6vw, 120px) 0;
     }
 
     .section-border {
@@ -158,24 +158,24 @@
     }
 
     h1 {
-      font-size: clamp(2.8rem, 6.5vw, 5.5rem);
+      font-size: clamp(2.4rem, 6.5vw, 5.5rem);
     }
 
     h2 {
-      font-size: clamp(2rem, 4vw, 3.2rem);
+      font-size: clamp(1.8rem, 4vw, 3.2rem);
     }
 
     h3 {
       font-family: var(--font);
       font-weight: 800;
       letter-spacing: -0.02em;
-      font-size: clamp(1.2rem, 2vw, 1.65rem);
+      font-size: clamp(1.15rem, 2vw, 1.65rem);
       line-height: 1.25;
     }
 
     .lede {
       color: #a8b0c0;
-      font-size: clamp(1.05rem, 1.8vw, 1.25rem);
+      font-size: clamp(1rem, 1.8vw, 1.25rem);
       line-height: 1.65;
       max-width: 50ch;
       font-weight: 450;
@@ -275,6 +275,7 @@
       align-items: center;
       justify-content: space-between;
       height: 72px;
+      position: relative;
     }
 
     .brand {
@@ -339,10 +340,20 @@
       background: rgba(255, 255, 255, 0.08);
     }
 
+    .hamburger {
+      display: none;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid var(--border);
+      color: var(--on);
+      cursor: pointer;
+      padding: 8px;
+      border-radius: 10px;
+    }
+
     /* Hero Section */
     .hero {
       position: relative;
-      padding: clamp(56px, 8vw, 100px) 0 clamp(40px, 6vw, 80px);
+      padding: clamp(40px, 8vw, 100px) 0 clamp(32px, 6vw, 80px);
     }
 
     .hero-glow {
@@ -369,7 +380,7 @@
 
     .hero-content {
       max-width: 840px;
-      margin-bottom: 48px;
+      margin-bottom: 40px;
     }
 
     .hero .kicker {
@@ -377,11 +388,11 @@
     }
 
     .hero h1 {
-      margin-bottom: 24px;
+      margin-bottom: 20px;
     }
 
     .hero .lede {
-      margin: 0 auto 36px;
+      margin: 0 auto 32px;
     }
 
     .hero-actions {
@@ -404,6 +415,7 @@
       left: 50%;
       transform: translateX(-50%) translateY(-6px);
       width: 320px;
+      max-width: 90vw;
       background: var(--surface);
       border: 1px solid var(--border-bright);
       border-radius: 18px;
@@ -634,7 +646,7 @@
       gap: 24px;
       width: 100%;
       max-width: 1000px;
-      margin-top: 60px;
+      margin-top: 50px;
       padding: 24px 32px;
       border-radius: 20px;
       background: var(--surface);
@@ -647,7 +659,7 @@
 
     .stat-val {
       font-family: var(--display);
-      font-size: 2.2rem;
+      font-size: clamp(1.8rem, 3.5vw, 2.4rem);
       font-weight: 800;
       color: var(--on);
       line-height: 1.1;
@@ -664,13 +676,13 @@
     .grid-3 {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: 28px;
+      gap: 24px;
     }
 
     .grid-2 {
       display: grid;
       grid-template-columns: repeat(2, 1fr);
-      gap: 28px;
+      gap: 24px;
     }
 
     /* Cards */
@@ -678,7 +690,7 @@
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius);
-      padding: 36px 30px;
+      padding: clamp(24px, 4vw, 36px);
       position: relative;
       transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
     }
@@ -736,7 +748,7 @@
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius);
-      padding: 36px;
+      padding: clamp(20px, 4vw, 36px);
       overflow-x: auto;
     }
 
@@ -744,10 +756,11 @@
       width: 100%;
       border-collapse: collapse;
       text-align: left;
+      min-width: 540px;
     }
 
     .matrix-table th, .matrix-table td {
-      padding: 16px 20px;
+      padding: 14px 16px;
       border-bottom: 1px solid var(--border);
     }
 
@@ -760,7 +773,7 @@
     }
 
     .matrix-table td {
-      font-size: 0.9375rem;
+      font-size: 0.875rem;
     }
 
     .matrix-table tbody tr:hover {
@@ -897,9 +910,9 @@
     }
 
     .faq-summary {
-      padding: 20px 24px;
+      padding: 18px 20px;
       font-weight: 700;
-      font-size: 1.05rem;
+      font-size: 1rem;
       cursor: pointer;
       user-select: none;
       display: flex;
@@ -908,24 +921,24 @@
     }
 
     .faq-content {
-      padding: 0 24px 20px;
+      padding: 0 20px 18px;
       color: var(--muted);
-      font-size: 0.9375rem;
+      font-size: 0.9rem;
       line-height: 1.6;
     }
 
     /* Footer */
     footer {
       border-top: 1px solid var(--border);
-      padding: 60px 0 30px;
+      padding: 50px 0 30px;
       background: #050608;
     }
 
     .footer-grid {
       display: grid;
       grid-template-columns: 2fr repeat(3, 1fr);
-      gap: 40px;
-      margin-bottom: 48px;
+      gap: 36px;
+      margin-bottom: 40px;
     }
 
     .footer-col h5 {
@@ -966,27 +979,95 @@
       gap: 12px;
     }
 
-    /* Responsive Breakdown */
+    /* Mobile & Tablet Responsive Breakdown */
     @media (max-width: 1024px) {
-      .grid-3 { grid-template-columns: 1fr; }
+      .grid-3 { grid-template-columns: repeat(2, 1fr); }
       .grid-2 { grid-template-columns: 1fr; }
       .stats-bar { grid-template-columns: repeat(2, 1fr); }
       .theme-grid { grid-template-columns: repeat(3, 1fr); }
       .footer-grid { grid-template-columns: 1fr 1fr; }
       .download-grid { grid-template-columns: 1fr; }
+      .dl-card[style*="grid-column: span 2"] { grid-column: span 1 !important; }
     }
 
     @media (max-width: 768px) {
-      .nav-links { display: none; }
-      .hamburger { display: block; }
-      .theme-grid { grid-template-columns: repeat(2, 1fr); }
-      .footer-grid { grid-template-columns: 1fr; }
+      .wrap { padding: 0 16px; }
+      .section-pad { padding: 48px 0; }
+      .nav-links {
+        display: none;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        background: rgba(18, 20, 24, 0.96);
+        backdrop-filter: blur(24px);
+        -webkit-backdrop-filter: blur(24px);
+        border-bottom: 1px solid var(--border-bright);
+        flex-direction: column;
+        padding: 20px 16px;
+        gap: 10px;
+        box-shadow: 0 20px 40px rgba(0,0,0,0.95);
+        z-index: 999;
+      }
+      .nav-links.is-open {
+        display: flex;
+        animation: navSlideDown 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      }
+      @keyframes navSlideDown {
+        from { opacity: 0; transform: translateY(-10px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .nav-links a {
+        padding: 12px 18px;
+        font-size: 1rem;
+        width: 100%;
+        border-radius: 12px;
+      }
+      .hamburger { display: flex; align-items: center; justify-content: center; width: 42px; height: 42px; }
+      .desktop-only { display: none; }
+      .hero { padding: 40px 0 32px; }
+      .hero-actions { flex-direction: column; width: 100%; gap: 12px; }
+      .btn { width: 100%; min-height: 48px; }
+      .dl-dropdown-wrap { width: 100%; }
+      .dl-dropdown-menu { width: 100%; left: 0; transform: none; top: calc(100% + 8px); }
+      .dl-dropdown-wrap.is-open .dl-dropdown-menu { transform: none; }
+      .dl-card div[style*="grid-template-columns"] { grid-template-columns: 1fr !important; }
+      .showcase-bezel { padding: 6px; border-radius: 16px; }
+      .showcase-screen { border-radius: 10px; }
+      .video-hud-overlay { padding: 10px; }
+      .vid-controls-bar { padding: 6px 10px; gap: 6px; }
+      .vid-audio-btn span { display: none; }
+      .vid-btn { padding: 6px 8px; font-size: 0.75rem; }
+      .view-tabs {
+        justify-content: flex-start;
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        padding: 4px 0 12px;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+      }
+      .view-tabs::-webkit-scrollbar { display: none; }
+      .tab-btn { flex-shrink: 0; white-space: nowrap; }
+      .footer-grid { grid-template-columns: 1fr; gap: 28px; }
+      .matrix-card { padding: 16px; }
+    }
+
+    @media (max-width: 480px) {
+      .grid-3 { grid-template-columns: 1fr; }
+      .stats-bar { grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 16px; }
+      .stat-val { font-size: 1.6rem; }
+      .theme-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+      .vid-time-display { display: none; }
+      .tab-btn { font-size: 0.75rem; padding: 8px 14px; }
+      .kicker { font-size: 0.75rem; }
+      .lede { font-size: 0.95rem; }
+      .footer-bottom { flex-direction: column; text-align: center; gap: 8px; }
     }
   </style>
 </head>
 <body>
 
-  <!-- Sticky Navbar -->
+  <!-- Sticky Navbar with Mobile Menu Drawer -->
   <header class="navbar">
     <div class="wrap nav-inner">
       <a href="#" class="brand">
@@ -994,8 +1075,9 @@
         <span>Rivulet</span>
       </a>
 
-      <nav class="nav-links">
+      <nav class="nav-links" id="nav-menu">
         <a href="#watch">Engine</a>
+        <a href="#dual-mode">Dual-Mode</a>
         <a href="#player">Player</a>
         <a href="#live">Live TV</a>
         <a href="#codecs">Codecs</a>
@@ -1007,9 +1089,12 @@
       <div class="nav-actions">
         <a href="https://github.com/baigcoder/rivulet" target="_blank" class="github-star-btn" rel="noreferrer">
           <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
-          <span>Star on GitHub</span>
+          <span class="desktop-only">Star on GitHub</span>
         </a>
         <a href="#download" class="btn btn-primary" style="padding: 8px 18px; font-size: 0.875rem;">Download</a>
+        <button type="button" class="hamburger" id="nav-toggle" aria-label="Toggle navigation menu">
+          <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+        </button>
       </div>
     </div>
   </header>
@@ -1019,10 +1104,11 @@
     <div class="hero-glow"></div>
     <div class="wrap hero-grid">
       <div class="hero-content">
-        <div class="kicker hero-title-anim">Linux · Windows · Android TV · macOS</div>
+        <div class="kicker hero-title-anim">Dual-Mode Engine · Linux · Windows · Android TV · macOS</div>
         <h1 class="hero-title-anim">Play it while it <span class="text-gradient">lands.</span></h1>
         <p class="lede hero-lede-anim">
           Torrents, direct HTTP links, and Live TV in a real mpv/libVLC player window.
+          Powered by a dual-mode engine for instant P2P torrent streaming and zero-cache direct play.
           The library stays on this device. No account. No cloud servers. No bundled sources.
         </p>
 
@@ -1178,6 +1264,67 @@
             <li>Uncapped favorites & watchlists</li>
             <li>1-click offline JSON library backup</li>
           </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Section 1.5: Dual-Engine Playback Architecture -->
+  <section class="section-pad section-border" id="dual-mode">
+    <div class="wrap">
+      <div style="margin-bottom: 48px; text-align: center;">
+        <span class="kicker">Dual-Engine Architecture</span>
+        <h2 style="margin-top: 12px; max-width: 22ch; margin-left: auto; margin-right: auto;">
+          Two streaming engines. One unified player.
+        </h2>
+        <p class="lede" style="margin: 16px auto 0;">
+          Rivulet seamlessly handles BitTorrent sequential P2P downloading and zero-cache HTTP/HLS direct playback inside the exact same native player window.
+        </p>
+      </div>
+
+      <div class="grid-2">
+        <!-- Engine 1: BitTorrent P2P -->
+        <div class="card" style="border-color: rgba(111, 227, 255, 0.3); background: linear-gradient(180deg, var(--surface) 0%, rgba(18, 20, 24, 0.9) 100%);">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 8px;">
+            <span class="card-badge cyan">Mode 1 · BitTorrent Swarm</span>
+            <span style="font-family: var(--mono); font-size: 0.75rem; color: var(--accent);">librqbit Rust Engine</span>
+          </div>
+          <h3>Sequential Torrent Streaming</h3>
+          <p>
+            Stream high-bitrate torrents the moment you add a magnet link or .torrent file. The embedded Rust BitTorrent engine prioritizes early video headers and sequential chunks directly into the player window.
+          </p>
+          <ul class="feature-list" style="margin-bottom: 24px;">
+            <li>First-byte instant playback without waiting for full download</li>
+            <li>Magnet link & .torrent file drag-and-drop support</li>
+            <li>Granular file selection inside multi-file torrent archives</li>
+            <li>Configurable seeding limits & upload/download speed caps</li>
+            <li>Disk budget auto-eviction clears oldest watched torrents</li>
+          </ul>
+          <div style="padding: 12px 16px; border-radius: 12px; background: rgba(111, 227, 255, 0.06); border: 1px solid rgba(111, 227, 255, 0.15); font-size: 0.8125rem; color: var(--muted); font-family: var(--mono);">
+            💡 Best for: High quality 4K REMUXes, complete series packs, & P2P archives.
+          </div>
+        </div>
+
+        <!-- Engine 2: Direct HTTP / HLS -->
+        <div class="card" style="border-color: rgba(255, 201, 120, 0.3); background: linear-gradient(180deg, var(--surface) 0%, rgba(18, 20, 24, 0.9) 100%);">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 8px;">
+            <span class="card-badge warm">Mode 2 · Direct HTTP & HLS</span>
+            <span style="font-family: var(--mono); font-size: 0.75rem; color: var(--warm);">Zero Disk Overhead</span>
+          </div>
+          <h3>Instant Direct Stream Play</h3>
+          <p>
+            Zero waiting, zero disk storage, zero P2P connection overhead. Stream raw HTTP, HTTPS, and HLS (.m3u8) video URLs directly into native GPU hardware decoders.
+          </p>
+          <ul class="feature-list" style="margin-bottom: 24px;">
+            <li>Sub-second stream startup without local disk writes</li>
+            <li>HTTP/HTTPS, HLS (.m3u8), and TS stream protocol support</li>
+            <li>Live stream automatic reconnects & latency recovery</li>
+            <li>Custom HTTP headers (User-Agent, Referer, Authorization)</li>
+            <li>Zero P2P upload bandwidth consumption</li>
+          </ul>
+          <div style="padding: 12px 16px; border-radius: 12px; background: rgba(255, 201, 120, 0.06); border: 1px solid rgba(255, 201, 120, 0.15); font-size: 0.8125rem; color: var(--muted); font-family: var(--mono);">
+            ⚡ Best for: Fast playback, limited disk space, & Live TV streams.
+          </div>
         </div>
       </div>
     </div>
@@ -1624,9 +1771,28 @@
       if (mainBtnText) mainBtnText.textContent = `Download for ${os.split(' ')[0]}`;
     })();
 
+    // Mobile Navigation Toggle
+    const navToggle = document.getElementById('nav-toggle');
+    const navMenu = document.getElementById('nav-menu');
+
+    if (navToggle && navMenu) {
+      navToggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        navMenu.classList.toggle('is-open');
+      });
+      document.addEventListener('click', (e) => {
+        if (!navMenu.contains(e.target) && e.target !== navToggle) {
+          navMenu.classList.remove('is-open');
+        }
+      });
+      navMenu.querySelectorAll('a').forEach(link => {
+        link.addEventListener('click', () => navMenu.classList.remove('is-open'));
+      });
+    }
+
     // Dropdown Toggle
     const dropdownWrap = document.getElementById('dl-dropdown');
-    const mainDlBtn = document.getElementById('main-dl-btn');
+    const mainDlBtn = document.getElementById('main-dl-text')?.parentElement;
 
     if (mainDlBtn && dropdownWrap) {
       mainDlBtn.addEventListener('click', (e) => {
@@ -1702,11 +1868,11 @@
       showcaseVid.muted = !showcaseVid.muted;
       if (showcaseVid.muted) {
         vidAudioIcon.innerHTML = mutedSvg;
-        vidAudioLabel.textContent = 'Muted • Click for Audio';
+        if (vidAudioLabel) vidAudioLabel.textContent = 'Muted • Click for Audio';
         showToast('🔇 Muted');
       } else {
         vidAudioIcon.innerHTML = unmutedSvg;
-        vidAudioLabel.textContent = 'Unmuted';
+        if (vidAudioLabel) vidAudioLabel.textContent = 'Unmuted';
         showToast('🔊 Audio Enabled');
       }
     }
@@ -1720,9 +1886,25 @@
       });
 
       if (showcaseScreen) {
+        let hudTimer = null;
+        const triggerTouchHud = () => {
+          if (!vidHud) return;
+          vidHud.classList.add('is-active');
+          clearTimeout(hudTimer);
+          hudTimer = setTimeout(() => {
+            vidHud.classList.remove('is-active');
+          }, 3500);
+        };
+
+        showcaseScreen.addEventListener('touchstart', (e) => {
+          if (e.target.closest('.vid-btn') || e.target.closest('.vid-progress-container')) return;
+          triggerTouchHud();
+        }, { passive: true });
+
         showcaseScreen.addEventListener('click', (e) => {
           if (e.target.closest('.vid-btn') || e.target.closest('.vid-progress-container')) return;
           togglePlayPause();
+          triggerTouchHud();
         });
       }
 
