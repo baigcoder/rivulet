@@ -98,7 +98,7 @@ const cardStyle = computed(() => {
   >
     <!-- Ring lives on the poster, not the title under it. An outside ring on
          the whole card is what boxed the caption in on hover. -->
-    <div class="relative aspect-2/3 overflow-hidden rounded-lg bg-surface-container">
+    <div class="relative aspect-2/3 overflow-hidden rounded-2xl bg-surface-container shadow-md ring-1 ring-white/10 transition-transform duration-300 group-hover:scale-[1.03] group-hover:shadow-xl">
       <media-poster
         :src="posterUrl(media.poster, ui.posterSize)"
         :alt="media.title"
@@ -106,7 +106,7 @@ const cardStyle = computed(() => {
       />
 
       <!-- Watched tick — top-right -->
-      <div v-if="watched" class="absolute right-1.5 top-1.5 grid size-5 place-items-center rounded-full bg-primary text-on-primary z-20">
+      <div v-if="watched" class="absolute right-1.5 top-1.5 grid size-5 place-items-center rounded-full bg-primary text-on-primary z-20 shadow-md">
         <svg viewBox="0 0 24 24" class="size-3.5 fill-current"><path :d="mdiCheck" /></svg>
       </div>
 
@@ -148,7 +148,7 @@ const cardStyle = computed(() => {
         <div v-if="episode" class="px-1.5 pb-0.5 text-label-small font-medium text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]">
           {{ episode }}
         </div>
-        <div class="h-1 bg-black/50">
+        <div class="h-1.5 bg-black/60">
           <div class="h-full rounded-r-full bg-primary transition-[width] duration-300" :style="{ width: `${played * 100}%` }" />
         </div>
       </div>
@@ -163,26 +163,26 @@ const cardStyle = computed(() => {
       >
         <div
           v-if="hover && !removing"
-          class="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/50 px-2"
+          class="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/60 backdrop-blur-xs px-2"
         >
           <button
             type="button"
             tabindex="-1"
-            class="grid size-14 place-items-center rounded-full bg-white shadow-xl transition-[transform,box-shadow] duration-200 hover:scale-110 hover:shadow-[0_4px_24px_rgba(255,255,255,0.35)] focus-visible:scale-110 focus-visible:shadow-[0_4px_24px_rgba(255,255,255,0.35)]"
+            class="grid size-14 place-items-center rounded-full bg-primary text-on-primary shadow-xl transition-[transform,box-shadow] duration-200 hover:scale-110 hover:shadow-[0_4px_24px_rgba(var(--v-theme-primary),0.5)] focus-visible:scale-110"
             @pointerdown.stop
             @click.stop.prevent="play()"
           >
-            <v-icon :icon="mdiPlay" size="30" class="ml-0.5 text-black" />
+            <v-icon :icon="mdiPlay" size="32" class="ml-0.5" />
           </button>
           <div class="mt-3 max-w-full text-center">
             <div class="line-clamp-2 text-title-small font-semibold leading-tight text-white drop-shadow-[0_1px_4px_rgba(0,0,0,0.8)]">
               {{ media.title }}
             </div>
-            <div class="mt-0.5 flex items-center justify-center gap-1 text-body-small text-white/80 drop-shadow-[0_1px_3px_rgba(0,0,0,0.7)]">
-              <span v-if="media.year">{{ media.year }}</span>
-              <span v-if="media.year && media.rating" class="opacity-50">·</span>
-              <span v-if="media.rating" class="flex items-center gap-0.5">
-                <svg viewBox="0 0 24 24" class="size-3 fill-amber-400"><path :d="mdiStar" /></svg>
+            <div class="mt-1 flex items-center justify-center gap-1.5 text-body-small text-white/90 drop-shadow-[0_1px_3px_rgba(0,0,0,0.7)]">
+              <span v-if="media.year" class="font-medium">{{ media.year }}</span>
+              <span v-if="media.year && media.rating" class="opacity-40">•</span>
+              <span v-if="media.rating" class="flex items-center gap-0.5 font-semibold text-amber-300">
+                <svg viewBox="0 0 24 24" class="size-3.5 fill-amber-400"><path :d="mdiStar" /></svg>
                 {{ media.rating.toFixed(1) }}
               </span>
             </div>
@@ -192,14 +192,14 @@ const cardStyle = computed(() => {
 
       <!-- Inside the poster: hover, d-pad focus, and script-moved focus all
            have to light this. An outside ring on the <a> boxed the title. -->
-      <div class="pointer-events-none absolute inset-0 z-20 rounded-lg opacity-0 ring-2 ring-inset ring-white transition-opacity duration-200 group-hover:opacity-100 group-focus:opacity-100 group-focus-visible:opacity-100" />
+      <div class="pointer-events-none absolute inset-0 z-20 rounded-2xl opacity-0 ring-2 ring-inset ring-primary transition-opacity duration-200 group-hover:opacity-100 group-focus:opacity-100 group-focus-visible:opacity-100" />
     </div>
 
     <div v-if="detail" class="pt-2">
-      <div class="truncate text-title-small text-on-surface">
+      <div class="truncate text-body-medium font-semibold text-on-surface group-hover:text-primary transition-colors">
         {{ media.title }}
       </div>
-      <div class="truncate text-body-small text-on-surface opacity-80">
+      <div class="truncate text-body-small text-on-surface-variant opacity-80 mt-0.5">
         {{ media.year || $t('unknown') }}
       </div>
     </div>

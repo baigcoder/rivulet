@@ -513,7 +513,7 @@ watch(() => props.id, () => {
             <iframe
               ref="heroFrame"
               :src="heroSrc"
-              class="absolute left-1/2 top-1/2 h-full w-full -translate-x-1/2 -translate-y-1/2 scale-[1.45] transition-opacity duration-300 pointer-events-none"
+              class="absolute left-1/2 top-1/2 min-w-[177.78vh] min-h-[56.25vw] w-[130%] h-[130%] -translate-x-1/2 -translate-y-1/2 transition-opacity duration-500 pointer-events-none"
               :class="heroPlaying ? 'opacity-100' : 'opacity-0'"
               frameborder="0"
               allow="autoplay; encrypted-media; gyroscope; picture-in-picture; web-share"
@@ -524,12 +524,12 @@ watch(() => props.id, () => {
               @load="onHeroReady"
             />
           </div>
-          <div class="absolute inset-0 bg-gradient-to-t from-black/95 via-black/40 to-black/20" />
-          <div class="absolute inset-0 bg-gradient-to-r from-black/80 via-transparent to-transparent" />
+          <div class="absolute inset-0 bg-gradient-to-t from-background via-black/50 to-black/20" />
+          <div class="absolute inset-0 bg-gradient-to-r from-background/90 via-black/30 to-transparent" />
 
           <p
             v-if="sourceLabel"
-            class="absolute start-4 top-4 z-10 max-w-[min(70%,18rem)] truncate rounded-full border border-white/20 bg-black/70 px-3 py-1 text-label-small font-semibold tracking-wide text-white"
+            class="absolute start-4 top-4 z-10 max-w-[min(70%,18rem)] truncate rounded-full border border-white/20 bg-black/75 px-3.5 py-1 text-label-small font-semibold tracking-wide text-white shadow-lg backdrop-blur-md"
           >
             {{ sourceLabel }}
           </p>
@@ -537,7 +537,7 @@ watch(() => props.id, () => {
           <div v-if="trailerKey" class="absolute right-4 top-4 z-10 flex items-center gap-2">
             <button
               v-tooltip:bottom="heroMuted ? $t('Sound on') : $t('Sound off')"
-              class="grid size-10 place-items-center rounded-full border border-white/20 bg-black/60 text-white opacity-95 transition-[transform,background-color] hover:scale-110 hover:bg-black/80 focus-visible:scale-110 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary"
+              class="grid size-10 place-items-center rounded-full border border-white/20 bg-black/60 text-white opacity-95 transition-[transform,background-color] hover:scale-110 hover:bg-black/80 focus-visible:scale-110 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary backdrop-blur-md"
               :aria-label="heroMuted ? $t('Sound on') : $t('Sound off')"
               @click="toggleHeroSound"
             >
@@ -545,7 +545,7 @@ watch(() => props.id, () => {
             </button>
             <button
               v-tooltip:bottom="$t('Hide video')"
-              class="grid size-10 place-items-center rounded-full border border-white/20 bg-black/60 text-white opacity-95 transition-[transform,background-color] hover:scale-110 hover:bg-black/80 focus-visible:scale-110 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary"
+              class="grid size-10 place-items-center rounded-full border border-white/20 bg-black/60 text-white opacity-95 transition-[transform,background-color] hover:scale-110 hover:bg-black/80 focus-visible:scale-110 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary backdrop-blur-md"
               :aria-label="$t('Hide video')"
               @click="videoHidden = true"
             >
@@ -558,12 +558,12 @@ watch(() => props.id, () => {
               v-if="coverLogo"
               :src="logoUrl(coverLogo)!"
               :alt="cover!.title"
-              class="h-16 w-auto max-w-md object-contain drop-shadow-[0_2px_24px_rgba(0,0,0,0.8)] md:h-24 md:max-w-lg"
+              class="h-16 w-auto max-w-md object-contain drop-shadow-[0_4px_28px_rgba(0,0,0,0.9)] md:h-24 md:max-w-lg"
             >
-            <h1 v-else class="text-headline-large font-bold text-white drop-shadow-[0_2px_24px_rgba(0,0,0,0.7)]">
+            <h1 v-else class="text-headline-large font-extrabold text-white drop-shadow-[0_4px_28px_rgba(0,0,0,0.85)] tracking-tight">
               {{ cover!.title }}
             </h1>
-            <p v-if="media?.tagline" class="mt-1 max-w-3xl text-body-medium italic text-white/70">
+            <p v-if="media?.tagline" class="mt-1.5 max-w-3xl text-body-medium italic text-white/80 font-medium drop-shadow-sm">
               {{ media.tagline }}
             </p>
           </div>
@@ -572,12 +572,12 @@ watch(() => props.id, () => {
 
       <section class="px-4 pb-8 pt-4 md:px-6">
         <div class="flex flex-col gap-6 sm:flex-row sm:items-end">
-          <div class="aspect-2/3 w-32 shrink-0 overflow-hidden rounded-2xl shadow-2xl sm:w-44 lg:w-52">
+          <div class="aspect-2/3 w-32 shrink-0 overflow-hidden rounded-2xl shadow-2xl ring-1 ring-white/10 sm:w-44 lg:w-52">
             <media-poster eager :src="posterUrl(cover?.poster, ui.posterSize) || fallbackPoster" :alt="cover?.title" />
           </div>
 
           <div v-if="cover && !heroPending" class="flex min-w-0 flex-1 flex-col gap-3">
-            <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-body-small opacity-75">
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-body-small font-medium text-on-surface-variant">
               <media-reviews
                 v-if="id"
                 :id="id"
@@ -585,23 +585,31 @@ watch(() => props.id, () => {
                 :rating="cover.rating"
                 :votes="media?.votes"
               />
-              <span v-else-if="cover.rating" class="flex items-center gap-1">
-                <v-icon :icon="mdiStar" size="14" class="text-amber-400" />
-                <span class="font-medium">{{ cover.rating.toFixed(1) }}</span>
+              <span v-else-if="cover.rating" class="flex items-center gap-1 bg-amber-400/10 px-2 py-0.5 rounded-full border border-amber-400/20">
+                <v-icon :icon="mdiStar" size="15" class="text-amber-400" />
+                <span class="font-bold text-amber-300 text-body-medium">{{ cover.rating.toFixed(1) }}</span>
               </span>
-              <span v-if="media?.certification" class="rounded border border-outline-variant px-1.5 py-0.5 text-label-small">
+              <span v-if="media?.certification" class="rounded-md border border-primary/30 bg-primary/10 px-2 py-0.5 text-label-small font-semibold text-primary">
                 {{ media.certification }}
               </span>
-              <span v-for="part in meta" :key="part">{{ part }}</span>
-              <span v-if="!media && cover.year">{{ cover.year }}</span>
+              <span v-for="part in meta" :key="part" class="flex items-center gap-2">
+                <span class="opacity-30">•</span>
+                <span>{{ part }}</span>
+              </span>
+              <span v-if="!media && cover.year" class="flex items-center gap-2">
+                <span class="opacity-30">•</span>
+                <span>{{ cover.year }}</span>
+              </span>
             </div>
 
             <div v-if="media" class="flex flex-wrap gap-1.5">
-              <v-chip v-for="genre in media.genres" :key="genre.id" size="small" :text="genre.name" />
+              <v-chip v-for="genre in media.genres" :key="genre.id" size="small" class="font-medium" :text="genre.name" />
               <v-chip
                 v-if="media.collection"
                 size="small"
                 variant="tonal"
+                color="primary"
+                class="font-medium"
                 :text="media.collection.name"
                 :to="collectionLink(media.collection.id)"
               />
@@ -610,16 +618,16 @@ watch(() => props.id, () => {
               <div v-for="n in 3" :key="n" class="h-7 w-16 animate-pulse rounded-full bg-surface-container/60" />
             </div>
 
-            <p class="max-w-3xl text-body-medium opacity-85">
+            <p class="max-w-3xl text-body-medium leading-relaxed text-on-surface opacity-90">
               {{ cover.overview || $t('No overview.') }}
             </p>
 
-            <dl v-if="credits.length" class="grid grid-cols-1 gap-x-6 gap-y-1 text-body-small sm:grid-cols-2 lg:max-w-2xl">
+            <dl v-if="credits.length" class="grid grid-cols-1 gap-x-8 gap-y-1.5 text-body-small sm:grid-cols-2 lg:max-w-2xl pt-1">
               <div v-for="row in credits" :key="row.label" class="flex gap-2">
-                <dt class="shrink-0 opacity-50">
-                  {{ row.label }}
+                <dt class="shrink-0 font-medium text-on-surface-variant opacity-80">
+                  {{ row.label }}:
                 </dt>
-                <dd class="truncate opacity-85">
+                <dd class="truncate font-medium text-on-surface opacity-95">
                   {{ row.value }}
                 </dd>
               </div>
