@@ -86,18 +86,23 @@ function syncPlayerState() {
   if (!p)
     return
   const wasPlaying = playerPlaying.value
-  hasPicture.value = (typeof p.videoWidth === 'number' && p.videoWidth > 0) || (asBool(p.started) && !asBool(p.paused))
-  playerPlaying.value = asBool(p.started) && !asBool(p.paused) && hasPicture.value
+  const started = asBool(p.started)
+  const paused = asBool(p.paused)
+  const videoW = typeof p.videoWidth === 'number' ? p.videoWidth : 0
+  const pos = typeof p.position === 'number' ? p.position : 0
+  
+  hasPicture.value = (videoW > 0) || (started && (!paused || pos > 0))
+  playerPlaying.value = started && (!paused || pos > 0) && hasPicture.value
   playerBehindLive.value = asBool(p.behindLive)
   playerVolume.value = typeof p.volume === 'number' ? p.volume : 100
   playerMuted.value = asBool(p.muted)
   playerChrome.value = asBool(p.ui)
   playerCatchError.value = asText(p.errorMsg ?? p.catchError)
 
-  // If the stream just crossed from not-playing to actually playing, clear
-  // any stale errors from the previous attempt. Without this an auto-skip
-  // loop's last dead-channel error would linger over a perfectly good picture
-  // until the user clicked something.
+  if (hasPicture.value || playerPlaying.value) {
+    autoSkips.value = 0
+  }
+
   if (playerPlaying.value && !wasPlaying) {
     errorMsg.value = ''
     resolveError.value = ''
@@ -577,14 +582,10 @@ onMounted(async () => {
   // has no Fullscreen API, so this has to go through MainActivity.
   if (isAndroid())
     setAndroidPlayerMode(true)
+  pollHandle = setInterval(syncPlayerState, 200)
   await resolveStreamUrl()
-  // Poll the player state every 500ms so the overlay's playing/volume
-  // bound values stay current. mpv's IPC properties are already polled
-  // inside the player, so this is just mirroring into the overlay's
-  // local reactive state.
   if (channelId.value)
     void liveTv.loadEpg(channelId.value)
-  pollHandle = setInterval(syncPlayerState, 250)
 })
 
 watch(() => route.query.id, (id, prev) => {

@@ -516,12 +516,13 @@ class RivuletPlayer(private val activity: MainActivity) {
     val duration = if (length <= 0) 0.0 else length / 1000.0
     val pos = if (p.time < 0) 0.0 else p.time / 1000.0
     val rate = p.rate.toDouble()
-    // Opening a Direct URL reports pause and length=0. `pos < duration` is
-    // then false, so the page thought we were idle and hid Loading.
-    val stalling = !p.isPlaying && !userPaused && (length <= 0 || pos < duration)
-    val track = p.currentVideoTrack
+    val isLive = length <= 0
+    // If the player is actively playing (isPlaying is true), it is NOT stalled.
+    // Cache fluctuation during live HLS chunk downloads should never report
+    // paused-for-cache=true while video frames are rendering.
+    val stalling = if (p.isPlaying || userPaused) false else if (isLive) (cacheFill == 0) else (pos < duration)
     snap = JSONObject()
-      .put("pause", !p.isPlaying)
+      .put("pause", userPaused)                         // ← only true on explicit pause
       .put("paused-for-cache", stalling)
       .put("duration", duration)
       .put("time-pos", pos)
@@ -548,7 +549,9 @@ class RivuletPlayer(private val activity: MainActivity) {
           vh = t.height
         }
       }
-      if (vw == 0 && p.isPlaying) {
+      // Fallback: once we have ANY cache data or the player is playing,
+      // publish 1280×720 so the UI can dismiss its spinner.
+      if (vw == 0 && (p.isPlaying || cacheFill > 0)) {
         vw = 1280
         vh = 720
       }

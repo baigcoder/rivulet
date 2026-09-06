@@ -2941,9 +2941,9 @@ const centre = computed(() => {
   // frame. Live used to skip this so the watch page could draw its own
   // notice — that notice unmounts the moment the URL exists, so a live
   // channel sat on a black screen with a Pause button and no spinner.
-  if (!fromEngine.value && started.value && !ended.value && videoWidth.value === 0)
+  if (!fromEngine.value && started.value && !ended.value && videoWidth.value === 0 && !isLive.value)
     return 'loading'
-  if (started.value && (buffering.value || stalled.value))
+  if (started.value && (buffering.value || stalled.value) && !isLive.value)
     return 'stalled'
   return ''
 })
