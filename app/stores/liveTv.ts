@@ -731,6 +731,10 @@ export const useLiveTvStore = defineStore('liveTv', () => {
       if (probedIds.has(id))
         continue
       const ch = visibleChannels.value.find(c => c.id === id)
+        || dashboard.value?.recentPreviews?.find(c => c.id === id)
+        || dashboard.value?.favoritePreviews?.find(c => c.id === id)
+        || (dashboard.value?.countryPreviews ?? []).flatMap(cp => cp.channels).find(c => c.id === id)
+        || (dashboard.value?.categoryPreviews ?? []).flatMap(cp => cp.channels).find(c => c.id === id)
       const url = ch?.streamUrl
       if (!ch || !url || url === 'undefined' || url === 'null')
         continue
@@ -755,6 +759,8 @@ export const useLiveTvStore = defineStore('liveTv', () => {
       }
       if (await probeStream(proxied) === 'offline')
         markOffline(ch.id)
+      else
+        markLive(ch.id)
     })
   }
 

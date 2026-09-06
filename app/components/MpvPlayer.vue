@@ -2366,9 +2366,12 @@ async function poll() {
   // detect 4K content for HDR tone mapping.
   // mpv's video-params uses `w`/`h`; the <video> shim mirrors it.
   const vp = p['video-params']
-  if (vp && typeof vp.w === 'number' && typeof vp.h === 'number') {
+  if (vp && typeof vp.w === 'number' && typeof vp.h === 'number' && vp.w > 0) {
     videoWidth.value = vp.w
     videoHeight.value = vp.h
+  } else if (!p.pause && (isLive.value || (typeof p['time-pos'] === 'number' && p['time-pos'] > 0))) {
+    videoWidth.value ||= 1280
+    videoHeight.value ||= 720
   }
 
   // The rAF loop runs the clock between polls; only correct it once it has
@@ -2661,13 +2664,18 @@ async function grab(bucket: number) {
     // answer which changes as the download runs.
     if (!await onDisk(bucket))
       return
-    const bytes = await invoke<ArrayBuffer>('thumbnail', { url: props.src, at: bucket }).catch(() => null)
+    const bytes = await invoke<any>('thumbnail', { url: props.src, at: bucket }).catch(() => null)
     // Next episode may have started while ffmpeg worked, and this frame is of
     // the last one — under a bucket number the new film will read as its own.
     if (mine !== era)
       return
-    // Misses are remembered too: a position ffmpeg can't decode never will.
-    thumbs.set(bucket, bytes?.byteLength ? URL.createObjectURL(new Blob([bytes], { type: 'image/jpeg' })) : '')
+    const len = bytes?.byteLength ?? bytes?.length ?? 0
+    let blobUrl = ''
+    if (len > 0) {
+      const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+      blobUrl = URL.createObjectURL(new Blob([arr], { type: 'image/jpeg' }))
+    }
+    thumbs.set(bucket, blobUrl)
   }
   finally {
     pending.delete(bucket)
@@ -3268,6 +3276,9 @@ watch(() => props.src, (src, prev) => {
   // `startPlayer` (busy guard) and can stop the stream before it starts.
   if (prev === undefined)
     return
+  started.value = false
+  videoWidth.value = 0
+  videoHeight.value = 0
   if (src)
     restart()
   else

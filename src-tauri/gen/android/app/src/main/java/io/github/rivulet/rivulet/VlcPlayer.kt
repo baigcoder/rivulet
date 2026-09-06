@@ -116,14 +116,16 @@ class RivuletPlayer(private val activity: MainActivity) {
       // Options have to be added before the media is handed to the player and
       // before it is released. Adding one afterwards calls into a freed native
       // object and is the release-build crash seen when opening a stream.
-      media.addOption(":network-caching=300")
-      media.addOption(":file-caching=300")
-      media.addOption(":live-caching=300")
-      // Debrid hosts reject libVLC's default UA; the proxy also sends this,
-      // but a wrap miss used to hit the resolver with Lavf and sit 30s/hop.
-      media.addOption(":http-user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+      media.addOption(":network-caching=1500")
+      media.addOption(":file-caching=1500")
+      media.addOption(":live-caching=1500")
+      media.addOption(":http-continuous")
       media.addOption(":http-reconnect")
+      media.addOption(":http-timeout=10000")
+      media.addOption(":clock-jitter=0")
+      media.addOption(":clock-synchro=0")
       media.addOption(":no-mediacodec-dr")
+      media.addOption(":http-user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
       // Hardware decoders on with software fallback. For 4K content the
       // hardware decoder may hit its resolution ceiling; FFmpeg picks up
       // the frames it cannot handle. `avcodec-fast` disables certain
@@ -319,7 +321,9 @@ class RivuletPlayer(private val activity: MainActivity) {
         return true
       }
 
-      override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {}
+      override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {
+        textureView?.visibility = View.VISIBLE
+      }
     }
     tv.visibility = View.GONE
     // The WebView (index 1) sits on top of this TextureView (index 0).
@@ -359,6 +363,7 @@ class RivuletPlayer(private val activity: MainActivity) {
     val p = player ?: return
     val view = textureView ?: return
     if (view.width <= 0 || view.height <= 0) return
+    view.visibility = View.VISIBLE
     p.vlcVout.setWindowSize(view.width, view.height)
     applyVideoScale(p, view.width, view.height)
   }
@@ -528,11 +533,30 @@ class RivuletPlayer(private val activity: MainActivity) {
       .put("track-list", list)
       .put("aid", aid)
       .put("sid", sid)
-      .put("sub-text", "")
+    var vw = 0
+    var vh = 0
+    val track = p.currentVideoTrack
     if (track != null && track.width > 0 && track.height > 0) {
+      vw = track.width
+      vh = track.height
+    } else {
+      val tracks = p.videoTracks
+      if (tracks != null && tracks.isNotEmpty()) {
+        val t = tracks.firstOrNull { it.width > 0 && it.height > 0 } ?: tracks[0]
+        if (t.width > 0 && t.height > 0) {
+          vw = t.width
+          vh = t.height
+        }
+      }
+      if (vw == 0 && p.isPlaying) {
+        vw = 1280
+        vh = 720
+      }
+    }
+    if (vw > 0 && vh > 0) {
       snap.put(
         "video-params",
-        JSONObject().put("w", track.width).put("h", track.height),
+        JSONObject().put("w", vw).put("h", vh),
       )
     }
   }

@@ -3,6 +3,8 @@ import type { LiveChannel } from '~/utils/iptv'
 import { mdiPlay, mdiStar, mdiTelevision } from '@mdi/js'
 import { proxyLogo } from '~/utils/premiumTv'
 
+import { useLiveTvStore } from '~/stores/liveTv'
+
 const props = defineProps<{
   channel: LiveChannel
   getEpg: (id: string) => Array<{ title: string, description?: string | null, start: string, stop?: string | null }>
@@ -15,14 +17,16 @@ const emit = defineEmits<{
   toggleFavorite: [channel: LiveChannel]
 }>()
 
+const liveTv = useLiveTvStore()
 const epg = computed(() => props.getEpg(props.channel.id))
 const nowProgram = computed(() => epg.value[0] ?? null)
 const fav = computed(() => props.isFavorite(props.channel))
 const dead = computed(() => {
-  const s = props.channel.streamUrl
+  const ch = props.channel
+  const s = ch.streamUrl
   if (!s || s === 'undefined' || s === 'null')
     return true
-  return props.isOffline?.(props.channel) === true
+  return liveTv.offlineIds.has(ch.id) || props.isOffline?.(ch) === true
 })
 const imgError = ref(false)
 const proxyLogoUrl = computed(() => proxyLogo(props.channel.logoUrl))

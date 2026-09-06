@@ -65,24 +65,10 @@ watch(featured, (_m, _old, onCleanup) => {
 const trailerDialog = ref(false)
 const trailerKey = computed(() => featuredDetail.value?.trailer)
 
-async function openFeaturedTrailer() {
+function openFeaturedTrailer() {
   const key = trailerKey.value
   if (!key) return
-  const isDesktop = import.meta.client && isTauri()
-  if (isDesktop) {
-    await navigateTo({
-      path: localePath('/watch'),
-      query: {
-        type: 'movie',
-        id: String(featured.value?.id ?? ''),
-        url: `https://www.youtube.com/watch?v=${key}`,
-        title: featured.value?.title ?? '',
-      },
-    })
-  }
-  else {
-    trailerDialog.value = true
-  }
+  trailerDialog.value = true
 }
 
 function runtimeText(min?: number) {
@@ -396,7 +382,7 @@ const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
       <v-card v-if="trailerKey" rounded="xl" class="overflow-hidden">
         <div class="relative aspect-video">
           <iframe
-            :src="`https://www.youtube.com/embed/${trailerKey}?autoplay=1&rel=0`"
+            :src="youtubeEmbedSrc(trailerKey)"
             class="absolute inset-0 h-full w-full"
             allow="autoplay; encrypted-media"
             allowfullscreen

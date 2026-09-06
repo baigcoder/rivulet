@@ -21,8 +21,8 @@
  * zap list; it never disables the click.
  */
 
-/** A stream that has not answered in five seconds is not worth a card. */
-export const PROBE_TIMEOUT_MS = 5000
+/** A stream that has not answered in 3.5 seconds is not worth a card. */
+export const PROBE_TIMEOUT_MS = 3500
 
 /** In flight at once. The bound is the upstreams' patience, not ours. */
 export const PROBE_CONCURRENCY = 4

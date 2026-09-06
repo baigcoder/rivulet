@@ -10,6 +10,8 @@ import { channelTileStyle, isPlaceholderLogoUrl, isTinyLogo } from '~/utils/chan
 import { channelInitials, parseChannelName } from '~/utils/channelName'
 import { proxyLogo } from '~/utils/premiumTv'
 
+import { useLiveTvStore } from '~/stores/liveTv'
+
 const props = defineProps<{
   channel: LiveChannel
   getEpg: (id: string) => Array<{ title: string, description?: string | null, start: string, stop?: string | null }>
@@ -23,10 +25,17 @@ const emit = defineEmits<{
   toggleFavorite: [channel: LiveChannel]
 }>()
 
+const liveTv = useLiveTvStore()
 const epg = computed(() => props.getEpg(props.channel.id))
 const nowProgram = computed(() => epg.value[0] ?? null)
 const fav = computed(() => props.isFavorite(props.channel))
-const offline = computed(() => props.isOffline?.(props.channel) === true)
+const offline = computed(() => {
+  const ch = props.channel
+  const s = ch.streamUrl
+  if (!s || s === 'undefined' || s === 'null')
+    return true
+  return liveTv.offlineIds.has(ch.id) || props.isOffline?.(ch) === true
+})
 const imgError = ref(false)
 const imgLoaded = ref(false)
 

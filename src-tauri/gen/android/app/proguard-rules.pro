@@ -32,9 +32,15 @@
     native <methods>;
 }
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Media3 ExoPlayer rules
+-keep class androidx.media3.decoder.** { *; }
+-keep class androidx.media3.exoplayer.** { *; }
+-keep class androidx.media3.datasource.** { *; }
+-keep class io.github.rivulet.rivulet.RivuletPremiumPlayer { *; }
+-keep class io.github.rivulet.rivulet.RivuletPlayer { *; }
+
+# Preserve source file line numbers for debugging
+-keepattributes SourceFile,LineNumberTable
 
 # If you keep the line number information, uncomment this to
 # hide the original source file name.

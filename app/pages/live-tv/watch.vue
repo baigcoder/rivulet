@@ -86,7 +86,7 @@ function syncPlayerState() {
   if (!p)
     return
   const wasPlaying = playerPlaying.value
-  hasPicture.value = typeof p.videoWidth === 'number' && p.videoWidth > 0
+  hasPicture.value = (typeof p.videoWidth === 'number' && p.videoWidth > 0) || (asBool(p.started) && !asBool(p.paused))
   playerPlaying.value = asBool(p.started) && !asBool(p.paused) && hasPicture.value
   playerBehindLive.value = asBool(p.behindLive)
   playerVolume.value = typeof p.volume === 'number' ? p.volume : 100
@@ -220,12 +220,14 @@ const autoSkips = ref(0)
 const autoSkipping = computed<boolean>(() =>
   autoSkips.value > 0
   && autoSkips.value < MAX_AUTO_SKIPS
+  && !hasPicture.value
+  && !playerPlaying.value
   && errorMsg.value === ''
   && resolveError.value === '')
 
 /** One notice. Passed as `resolving` so MpvPlayer does not draw a second spinner. */
 const waiting = computed(() =>
-  resolving.value || autoSkipping.value || (!!streamUrl.value && !hasPicture.value && !overlayError.value))
+  !hasPicture.value && (resolving.value || autoSkipping.value || (!!streamUrl.value && !overlayError.value)))
 
 /**
  * The player must get the loopback proxy URL, not the raw M3U link.
@@ -389,10 +391,23 @@ const attemptedFallback = ref(false)
  * dead, not this channel. The counter resets as soon as one plays.
  */
 
+const channelRetries = ref(0)
+
 watch(playerPlaying, playing => {
   if (!playing)
     return
   autoSkips.value = 0
+  channelRetries.value = 0
+  const id = channelId.value
+  if (id)
+    liveTv.markLive(id)
+})
+
+watch(hasPicture, pic => {
+  if (!pic)
+    return
+  autoSkips.value = 0
+  channelRetries.value = 0
   const id = channelId.value
   if (id)
     liveTv.markLive(id)
@@ -461,25 +476,49 @@ function onActivity() {
 }
 
 async function onPlaybackFailed() {
+  const current = channelList.value[channelIndex.value]
+
+  if (channelRetries.value < 1) {
+    channelRetries.value++
+    if (streamUrl.value.includes('127.0.0.1:3031') && rawUrl.value && rawUrl.value !== streamUrl.value) {
+      streamUrl.value = rawUrl.value
+      proxiedStreamUrl.value = rawUrl.value
+      return
+    }
+    const prev = streamUrl.value
+    streamUrl.value = ''
+    await nextTick()
+    streamUrl.value = prev
+    return
+  }
+
+  if (current)
+    liveTv.markOffline(current.id)
+
   if (!attemptedFallback.value && rawUrl.value) {
     attemptedFallback.value = true
-    if (streamUrl.value.includes('.m3u8') || /\.m3u8$/i.test(rawUrl.value)) {
-      const tsUrl = rawUrl.value.replace(/\.m3u8$/i, '.ts')
-      if (tsUrl !== rawUrl.value) {
-        const current = channelList.value[channelIndex.value]
-        try {
-          const proxied = await proxyFreeStreamUrl(
-            tsUrl,
-            userAgent.value ?? current?.userAgent ?? undefined,
-            referer.value ?? current?.referer ?? undefined,
-          )
-          if (proxied) {
-            streamUrl.value = proxied
-            proxiedStreamUrl.value = proxied
-            return
-          }
+    const isM3u8 = streamUrl.value.includes('.m3u8') || /\.m3u8$/i.test(rawUrl.value)
+    const targetAlt = isM3u8
+      ? rawUrl.value.replace(/\.m3u8$/i, '.ts')
+      : rawUrl.value.replace(/\.ts$/i, '.m3u8')
+
+    if (targetAlt !== rawUrl.value) {
+      try {
+        const proxied = await proxyFreeStreamUrl(
+          targetAlt,
+          userAgent.value ?? current?.userAgent ?? undefined,
+          referer.value ?? current?.referer ?? undefined,
+        )
+        if (proxied) {
+          streamUrl.value = proxied
+          proxiedStreamUrl.value = proxied
+          return
         }
-        catch { /* auto-skip below */ }
+      }
+      catch {
+        streamUrl.value = targetAlt
+        proxiedStreamUrl.value = targetAlt
+        return
       }
     }
   }
@@ -497,6 +536,7 @@ async function onRetry() {
   resolveError.value = ''
   playerCatchError.value = ''
   attemptedFallback.value = false
+  channelRetries.value = 0
   const id = channelId.value
   if (id)
     resolvedById.delete(id)
@@ -551,9 +591,8 @@ watch(() => route.query.id, (id, prev) => {
   if (!id || id === prev)
     return
   loadChannelList()
-  // Per channel, not per page: without this the first channel to fail
-  // spent the one `.m3u8` → `.ts` retry for every channel after it.
   attemptedFallback.value = false
+  channelRetries.value = 0
   void liveTv.loadEpg(String(id))
   void resolveStreamUrl()
 })

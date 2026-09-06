@@ -668,6 +668,8 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
     view.value = 'all'
     searchQuery.value = ''
     searchDebounced.value = ''
+    vodTotal.value = 0
+    vodNextCursor.value = null
     if (section === 'live') {
       void loadChannels({ reset: true })
     }

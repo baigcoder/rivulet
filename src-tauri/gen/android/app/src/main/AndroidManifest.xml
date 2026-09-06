@@ -38,6 +38,7 @@
         android:enableOnBackInvokedCallback="true"
         android:theme="@style/Theme.Rivulet"
         android:hardwareAccelerated="true"
+        android:largeHeap="true"
         android:usesCleartextTraffic="${usesCleartextTraffic}"
         android:networkSecurityConfig="@xml/network_security_config">
         <activity

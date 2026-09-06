@@ -411,6 +411,7 @@ async fn thumbnail(
     tauri::async_runtime::spawn_blocking(move || {
         let out = ffmpeg_command(exe)
             .args(["-hide_banner", "-nostats", "-nostdin", "-v", "error"])
+            .args(["-user_agent", crate::player_direct::STREAM_UA])
             .args(["-rw_timeout", "5000000"])
             // Before -i: seek by keyframe and start decoding there, rather than
             // reading the file from the top to reach one frame.
@@ -430,7 +431,32 @@ async fn thumbnail(
             ])
             .output()
             .map_err(|e| format!("previews need ffmpeg, and {exe:?} would not start: {e}"))?;
-        Ok(tauri::ipc::Response::new(out.stdout))
+
+        if !out.stdout.is_empty() {
+            return Ok(tauri::ipc::Response::new(out.stdout));
+        }
+
+        // Fallback for HTTP/HLS streams where -ss before -i returns 0 bytes
+        let out_fallback = ffmpeg_command(exe)
+            .args(["-hide_banner", "-nostats", "-nostdin", "-v", "error"])
+            .args(["-user_agent", crate::player_direct::STREAM_UA])
+            .args(["-rw_timeout", "5000000"])
+            .args(["-i", &url])
+            .args(["-ss", &at.to_string()])
+            .args(["-an", "-frames:v", "1"])
+            .args([
+                "-vf",
+                "scale=320:-2",
+                "-pix_fmt",
+                "yuvj420p",
+                "-f",
+                "mjpeg",
+                "-",
+            ])
+            .output()
+            .map_err(|e| format!("previews need ffmpeg: {e}"))?;
+
+        Ok(tauri::ipc::Response::new(out_fallback.stdout))
     })
     .await
     .map_err(|e| e.to_string())?

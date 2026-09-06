@@ -310,17 +310,7 @@ pub async fn live_resolve_stream(
 
     let stream_url = row.stream_url.clone();
 
-    // The webview wants HLS. If the upstream is `.ts`, try the `.m3u8`
-    // form through the proxy — most iptv-org providers serve both at
-    // the same path.
-    let proxied = if stream_url.ends_with(".ts") {
-        let mut m3u8 = stream_url.clone();
-        m3u8.truncate(m3u8.len() - 3);
-        m3u8.push_str(".m3u8");
-        proxy_free_stream_url(m3u8, row.user_agent.clone(), row.referer.clone())
-    } else {
-        proxy_free_stream_url(stream_url.clone(), row.user_agent.clone(), row.referer.clone())
-    };
+    let proxied = proxy_free_stream_url(stream_url.clone(), row.user_agent.clone(), row.referer.clone());
     Ok(LiveStream {
         id: row.id,
         name: row.name,

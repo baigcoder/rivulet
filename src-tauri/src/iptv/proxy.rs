@@ -43,7 +43,7 @@ static STREAM: OnceLock<Client> = OnceLock::new();
 fn stream_http() -> &'static Client {
     STREAM.get_or_init(|| {
         Client::builder()
-            .connect_timeout(Duration::from_secs(15))
+            .connect_timeout(Duration::from_secs(8))
             // Video must stay identity: gzip/br advertise Accept-Encoding, then
             // reqwest strips Content-Length and mpv sees a chunked file — it
             // cannot seek and Direct play sits on Buffering until a huge probe.

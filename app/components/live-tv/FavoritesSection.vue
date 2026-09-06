@@ -3,6 +3,8 @@ import type { LiveChannel } from '~/utils/iptv'
 import { mdiPlay, mdiTelevision } from '@mdi/js'
 import { proxyLogo } from '~/utils/premiumTv'
 
+import { useLiveTvStore } from '~/stores/liveTv'
+
 defineProps<{
   channels: LiveChannel[]
   getEpg: (id: string) => Array<{ title: string, description?: string | null, start: string, stop?: string | null }>
@@ -13,6 +15,14 @@ const emit = defineEmits<{
   play: [channel: LiveChannel]
   toggleFavorite: [channel: LiveChannel]
 }>()
+
+const liveTv = useLiveTvStore()
+function isDead(ch: LiveChannel): boolean {
+  const s = ch.streamUrl
+  if (!s || s === 'undefined' || s === 'null')
+    return true
+  return liveTv.offlineIds.has(ch.id)
+}
 </script>
 
 <template>
@@ -39,6 +49,15 @@ const emit = defineEmits<{
           >
           <div v-else class="grid size-full place-items-center">
             <v-icon :icon="mdiTelevision" size="24" class="opacity-15" />
+          </div>
+
+          <div class="pointer-events-none absolute start-1.5 top-1.5 z-10">
+            <span
+              class="rounded px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide"
+              :class="isDead(ch) ? 'bg-zinc-800/90 text-white/75' : 'bg-red-600 text-white'"
+            >
+              {{ isDead(ch) ? $t('Offline') : $t('LIVE') }}
+            </span>
           </div>
         </div>
         <div class="p-2">

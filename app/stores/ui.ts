@@ -58,10 +58,9 @@ export const useUiStore = defineStore('ui', () => {
   const backdropImage = useLocalStorage(key('backdropImage'), '')
   /**
    * Whether pointing at or focusing a card swaps the art, rather than only
-   * opening a title. Off by default: sweeping a grid otherwise repaints the
-   * whole window per card, which reads as flicker more than as preview.
+   * opening a title. On by default for instant backdrop preview.
    */
-  const backdropFollowsHover = useLocalStorage(key('backdropHover'), false)
+  const backdropFollowsHover = useLocalStorage(key('backdropHover'), true)
   /**
    * With a picture of your own set, whether artwork still takes over while
    * browsing (hover-follow). A title you open keeps the theme either way —

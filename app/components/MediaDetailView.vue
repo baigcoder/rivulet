@@ -194,24 +194,17 @@ watch(() => trailerKeys.value.join(',') || media.value?.trailer || '', keys => {
   trailerPick.value = 0
   if (!keys || import.meta.server)
     return
-  const go = () => {
-    heroIdle.value = true
-  }
-  idleHandle = window.setTimeout(go, 4000)
+  heroIdle.value = true
 }, { immediate: true })
 
 const heroSrc = computed(() => {
   const key = trailerKey.value
   if (!key || videoHidden.value || !heroIdle.value)
     return ''
-  // GTK WebKit can't render YouTube iframe embeds, but it CAN play direct
-  // video streams. The proxy resolves the video ID via yt-dlp and redirects
-  // to the actual video URL.
-  if (isDesktop) return `http://127.0.0.1:3031/youtube-stream?v=${key}&mute=1&loop=1`
   return youtubeEmbedSrc(key, { mute: true, loop: true })
 })
 
-const heroFrame = ref<HTMLIFrameElement | HTMLVideoElement | null>(null)
+const heroFrame = ref<HTMLIFrameElement | null>(null)
 const heroPlaying = ref(false)
 let showHero = 0
 watch(heroSrc, src => {
@@ -221,17 +214,15 @@ watch(heroSrc, src => {
     showHero = window.setTimeout(() => {
       if (!heroPlaying.value)
         nextTrailer()
-    }, 5000)
+    }, 12000)
   }
 })
 
 function heroCommand(func: string, args: unknown[] = []) {
-  if (isDesktop) return
   (heroFrame.value as HTMLIFrameElement | null)?.contentWindow?.postMessage(youtubeCommand(func, args), '*')
 }
 
 function lockHeroQuality() {
-  if (isDesktop) return
   heroCommand('setPlaybackQuality', ['hd720'])
   heroCommand('setPlaybackQualityRange', ['hd720', 'hd720'])
 }
@@ -239,30 +230,17 @@ function lockHeroQuality() {
 function toggleHeroSound() {
   heroIdle.value = true
   heroMuted.value = !heroMuted.value
-  if (isDesktop && heroFrame.value && 'muted' in heroFrame.value) {
-    const v = heroFrame.value as HTMLVideoElement
-    v.muted = heroMuted.value
-  }
-  else {
-    heroCommand(heroMuted.value ? 'mute' : 'unMute')
-  }
+  heroCommand(heroMuted.value ? 'mute' : 'unMute')
 }
 
 function onHeroReady() {
-  if (isDesktop && heroFrame.value && 'muted' in heroFrame.value) {
-    const v = heroFrame.value as HTMLVideoElement
-    v.muted = heroMuted.value
-    v.play().catch(() => {})
-    heroPlaying.value = true
-    return
-  }
   (heroFrame.value as HTMLIFrameElement | null)?.contentWindow?.postMessage(JSON.stringify({ event: 'listening' }), '*')
   heroCommand(heroMuted.value ? 'mute' : 'unMute')
   lockHeroQuality()
+  heroPlaying.value = true
 }
 
 function onHeroMessage(e: MessageEvent) {
-  if (isDesktop) return
   if (e.source !== (heroFrame.value as HTMLIFrameElement | null)?.contentWindow)
     return
   if (youtubeError(e.data)) {
@@ -384,20 +362,7 @@ async function openTrailer() {
 function showTrailer() {
   const key = trailerKey.value || media.value?.trailer
   if (!key) return
-  if (isDesktop) {
-    navigateTo({
-      path: localePath('/watch'),
-      query: {
-        type: props.type,
-        id: props.id,
-        url: `https://www.youtube.com/watch?v=${key}`,
-        title: cover.value?.title ?? '',
-      },
-    })
-  }
-  else {
-    trailer.value = true
-  }
+  trailer.value = true
 }
 
 const firstSeason = computed(() => media.value?.seasons[0]?.number ?? 1)
@@ -543,27 +508,12 @@ watch(() => props.id, () => {
           >
           <div
             v-if="heroSrc"
-            class="absolute inset-0 overflow-hidden"
+            class="absolute inset-0 overflow-hidden pointer-events-none"
           >
-            <video
-              v-if="isDesktop"
-              ref="heroFrame"
-              :src="heroSrc"
-              class="absolute left-1/2 top-1/2 h-full w-full -translate-x-1/2 -translate-y-1/2 scale-[1.45] object-cover transition-opacity duration-300"
-              :class="heroPlaying ? 'opacity-100' : 'opacity-0'"
-              muted
-              loop
-              playsinline
-              autoplay
-              tabindex="-1"
-              aria-hidden="true"
-              @loadeddata="onHeroReady"
-            />
             <iframe
-              v-else
               ref="heroFrame"
               :src="heroSrc"
-              class="absolute left-1/2 top-1/2 h-full w-full -translate-x-1/2 -translate-y-1/2 scale-[1.45] transition-opacity duration-300"
+              class="absolute left-1/2 top-1/2 h-full w-full -translate-x-1/2 -translate-y-1/2 scale-[1.45] transition-opacity duration-300 pointer-events-none"
               :class="heroPlaying ? 'opacity-100' : 'opacity-0'"
               frameborder="0"
               allow="autoplay; encrypted-media; gyroscope; picture-in-picture; web-share"

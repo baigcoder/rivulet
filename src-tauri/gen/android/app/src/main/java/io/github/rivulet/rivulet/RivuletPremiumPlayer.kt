@@ -84,9 +84,9 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
             activity.setVlcVideoMode(true)
             textureView?.visibility = View.VISIBLE
             val httpFactory = DefaultHttpDataSource.Factory()
-                .setUserAgent("Rivulet/0.5 (Media3)")
-                .setConnectTimeoutMs(10_000)
-                .setReadTimeoutMs(15_000)
+                .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+                .setConnectTimeoutMs(6_000)
+                .setReadTimeoutMs(10_000)
                 .setAllowCrossProtocolRedirects(true)
             val dataSourceFactory = DefaultDataSource.Factory(activity, httpFactory)
             val source: MediaSource = HlsMediaSource.Factory(dataSourceFactory)
@@ -159,7 +159,18 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
     private fun ensure(): ExoPlayer {
         player?.let { return it }
 
-        val p = ExoPlayer.Builder(activity).build()
+        val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                1500,
+                15000,
+                500,
+                1000
+            )
+            .build()
+
+        val p = ExoPlayer.Builder(activity)
+            .setLoadControl(loadControl)
+            .build()
         p.addListener(object : Player.Listener {
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                 running = false
@@ -227,6 +238,13 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
         val p = player ?: return
         val duration = if (p.duration <= 0) 0.0 else p.duration / 1000.0
         val pos = if (p.currentPosition < 0) 0.0 else p.currentPosition / 1000.0
+        val format = p.videoFormat
+        var vw = format?.width ?: 0
+        var vh = format?.height ?: 0
+        if (vw <= 0 && p.isPlaying) {
+            vw = 1280
+            vh = 720
+        }
         snap = JSONObject()
             .put("pause", !p.isPlaying)
             .put("paused-for-cache", !p.isPlaying && pos < duration)
@@ -235,6 +253,12 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
             .put("volume", vol)
             .put("mute", muted)
             .put("speed", p.playbackParameters.speed.toDouble())
+        if (vw > 0 && vh > 0) {
+            snap.put(
+                "video-params",
+                JSONObject().put("w", vw).put("h", vh),
+            )
+        }
     }
 
     private fun onMain(block: () -> Unit) {

@@ -489,6 +489,7 @@ async function disconnect(): Promise<void> {
 
         <template v-else>
           <premium-tv-premium-vod-grid
+            :key="isMovies ? 'movies' : 'series'"
             class="min-h-0 flex-1"
             :kind="isMovies ? 'movie' : 'series'"
             :movies="premium.vodMovies"
