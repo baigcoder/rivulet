@@ -5,6 +5,7 @@
  * case it stays on the caller's stream.
  */
 import type { Media, MediaType } from '~/utils/tmdb'
+import { isTauri } from '@tauri-apps/api/core'
 import { mdiAlertCircleOutline, mdiBookmark, mdiBookmarkOutline, mdiClose, mdiEye, mdiEyeOutline, mdiHeart, mdiHeartOutline, mdiOpenInNew, mdiPlay, mdiShieldLockOutline, mdiStar, mdiVolumeHigh, mdiVolumeOff, mdiYoutube } from '@mdi/js'
 import { useTitleImages } from '~/utils/titleImages'
 
@@ -203,6 +204,7 @@ const heroSrc = computed(() => {
   const key = trailerKey.value
   if (!key || videoHidden.value || !heroIdle.value)
     return ''
+  if (isDesktop) return ''
   return youtubeEmbedSrc(key, { mute: true, loop: true })
 })
 
@@ -348,6 +350,7 @@ const credits = computed(() => {
 
 const trailer = ref(false)
 const torrentPickerRef = ref<{ open: () => void } | null>(null)
+const isDesktop = import.meta.client && isTauri()
 
 async function openTrailer() {
   const url = `https://www.youtube.com/watch?v=${trailerKey.value || media.value?.trailer}`
@@ -359,12 +362,21 @@ async function openTrailer() {
   }
 }
 
-async function showTrailer() {
-  const url = `https://www.youtube.com/watch?v=${trailerKey.value || media.value?.trailer}`
-  try {
-    await useTauriShellOpen(url)
+function showTrailer() {
+  const key = trailerKey.value || media.value?.trailer
+  if (!key) return
+  if (isDesktop) {
+    navigateTo({
+      path: localePath('/watch'),
+      query: {
+        type: props.type,
+        id: props.id,
+        url: `https://www.youtube.com/watch?v=${key}`,
+        title: cover.value?.title ?? '',
+      },
+    })
   }
-  catch {
+  else {
     trailer.value = true
   }
 }

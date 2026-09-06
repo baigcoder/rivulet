@@ -532,6 +532,7 @@ pub fn player_start(
 	let rf = referer.filter(|s| !s.is_empty());
 	let url = player_direct::play_url(&url, ua.as_deref(), rf.as_deref());
 	let engine = player_direct::is_engine_stream(&url);
+	let is_youtube = url.contains("youtube.com/watch") || url.contains("youtu.be/") || url.contains("youtube.com/shorts/");
 
 	let parent = parent_window(&window)?;
 
@@ -560,7 +561,8 @@ pub fn player_start(
 		.arg("--hwdec=auto-safe")
 		// The source is always a local librqbit URL, so mpv's youtube-dl hook can
 		// only ever fail (it spawns yt-dlp three times and logs errors).
-		.arg("--no-ytdl")
+		// YouTube trailer URLs need ytdl enabled so yt-dlp resolves the stream.
+		.arg(if is_youtube { "--ytdl" } else { "--no-ytdl" })
 		// Torrent streams stall (a piece isn't in yet) and librqbit sometimes
 		// drops the connection outright. Cache what we have and reconnect
 		// instead of ending playback.

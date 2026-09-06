@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { TmdbPage } from '~/utils/tmdb'
+import { isTauri } from '@tauri-apps/api/core'
 import { mdiArrowRight, mdiArrowUp, mdiBookmark, mdiBookmarkOutline, mdiChevronLeft, mdiChevronRight, mdiClose, mdiHeart, mdiHeartOutline, mdiInformationOutline, mdiPlay, mdiStar, mdiTelevision } from '@mdi/js'
 
 const ui = useUiStore()
@@ -65,11 +66,21 @@ const trailerDialog = ref(false)
 const trailerKey = computed(() => featuredDetail.value?.trailer)
 
 async function openFeaturedTrailer() {
-  const url = `https://www.youtube.com/watch?v=${trailerKey.value}`
-  try {
-    await useTauriShellOpen(url)
+  const key = trailerKey.value
+  if (!key) return
+  const isDesktop = import.meta.client && isTauri()
+  if (isDesktop) {
+    await navigateTo({
+      path: localePath('/watch'),
+      query: {
+        type: 'movie',
+        id: String(featured.value?.id ?? ''),
+        url: `https://www.youtube.com/watch?v=${key}`,
+        title: featured.value?.title ?? '',
+      },
+    })
   }
-  catch {
+  else {
     trailerDialog.value = true
   }
 }
