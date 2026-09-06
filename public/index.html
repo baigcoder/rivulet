@@ -768,8 +768,8 @@
       .nav-inner {
         min-height: 60px;
       }
-      .hamburger { display: grid; place-items: center; position: relative; z-index: 1; }
-      a.nav-dl { min-height: 36px; padding: 0 14px; }
+      .hamburger { display: grid; place-items: center; position: relative; z-index: 201; }
+      a.nav-dl { display: none; }
       .nav-links { display: none; transform: none; left: auto; position: static; }
       .nav-links.open {
         display: flex;
@@ -790,8 +790,16 @@
         border-radius: 0;
         font-size: 1.0625rem;
       }
-      .ways, .yours, .swatches, .live-grid, .picture-lead, .plats, .foot-grid { grid-template-columns: 1fr; }
+      .ways, .yours, .swatches, .live-grid, .picture-lead, .plats { grid-template-columns: 1fr; }
       h1 { max-width: 100%; }
+      footer { padding: 36px 0 24px; }
+      .foot-grid {
+        grid-template-columns: 1fr;
+        gap: 28px;
+      }
+      .foot-grid p { max-width: 100%; }
+      .foot-col { display: flex; flex-direction: column; gap: 2px; }
+      .foot-bottom { margin-top: 28px; padding-top: 16px; line-height: 1.7; }
     }
   </style>
 </head>
