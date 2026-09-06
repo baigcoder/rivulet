@@ -1,5 +1,5 @@
 {
-  "buildCommand": "ls -la && find . -maxdepth 2 -type d && mkdir -p output && cp -r public/. output/ 2>/dev/null || echo 'no public dir'",
-  "outputDirectory": "output",
+  "buildCommand": "true",
+  "outputDirectory": ".",
   "rewrites": [{ "source": "/", "destination": "/landing.html" }]
 }
