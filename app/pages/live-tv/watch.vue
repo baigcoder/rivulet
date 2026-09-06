@@ -36,6 +36,8 @@ const playerRef = ref<{
   goLive: () => void | Promise<void>
   behindLive?: boolean
   videoWidth: number
+  videoHeight?: number
+  resolutionLabel?: string
   ipc: (command: unknown[]) => Promise<unknown>
 } | null>(null)
 
@@ -663,6 +665,7 @@ onUnmounted(() => {
       :chrome-up="playerChrome"
       :is-fullscreen="isFullscreen"
       :error="overlayError"
+      :resolution-label="typeof playerRef?.resolutionLabel === 'string' ? playerRef.resolutionLabel : ''"
       :aspect-ratio="aspectRatio"
       @back="goBack"
       @prev="zap(-1)"

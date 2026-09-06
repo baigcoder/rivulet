@@ -46,6 +46,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 /** Remembered, so the next episode comes up in the same language — Plex-style. */
 import { key } from '~/brand'
 import { applyAspect, cycleAspect } from '~/utils/aspectRatio'
+import { extractQualityHint } from '~/utils/channelName'
 import { inCredits, inIntro, progressKey, saveCredits, saveIntro } from '~/utils/library'
 import { friendlyPlaybackError } from '~/utils/playbackError'
 
@@ -685,22 +686,38 @@ let slateHandled = false
 /** Actual decoded video dimensions, read from mpv's video-params. */
 const videoWidth = ref(0)
 const videoHeight = ref(0)
-/** Human-readable resolution label derived from the decoded height. */
+/** Human-readable resolution label derived from the decoded height or title quality hint. */
 const resolutionLabel = computed(() => {
   const h = videoHeight.value
-  if (h <= 0)
-    return ''
+  const titleHint = extractQualityHint(props.quality || '') || extractQualityHint(props.title || '')
+
+  let measuredLabel = ''
   if (h >= 2160)
-    return '4K UHD'
-  if (h >= 1440)
-    return '1440p'
-  if (h >= 1080)
-    return '1080p'
-  if (h >= 720)
-    return '720p'
-  if (h >= 480)
-    return '480p'
-  return `${h}p`
+    measuredLabel = '4K UHD'
+  else if (h >= 1440)
+    measuredLabel = '1440p'
+  else if (h >= 1080)
+    measuredLabel = '1080p'
+  else if (h >= 720)
+    measuredLabel = '720p'
+  else if (h >= 480)
+    measuredLabel = '480p'
+  else if (h > 0)
+    measuredLabel = `${h}p`
+
+  if (!measuredLabel)
+    return titleHint
+
+  if (titleHint) {
+    const ranks: Record<string, number> = { '4K UHD': 5, '1440p': 4, '1080p': 3, '720p': 2, '480p': 1 }
+    const measuredRank = ranks[measuredLabel] || 0
+    const titleRank = ranks[titleHint] || 0
+    if (titleRank > measuredRank || (measuredLabel === '720p' && titleRank >= 2)) {
+      return titleHint
+    }
+  }
+
+  return measuredLabel
 })
 const cueText = computed(() => native
   ? ''

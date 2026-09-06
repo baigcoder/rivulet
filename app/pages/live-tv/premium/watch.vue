@@ -615,6 +615,7 @@ onUnmounted(() => {
         :src="playback.source.value.url"
         :status="statusLine"
         :title="channelName"
+        :quality="playback.source.value?.quality"
         :mode="playerMode"
         :aspect="aspectRatio"
         :fullscreen="isFullscreen"

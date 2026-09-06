@@ -53,6 +53,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { isAndroid, isTv } from '~/utils/platform'
 import { fmtHudTime, friendlyPlaybackError } from '~/utils/playbackError'
 import { proxyLogo } from '~/utils/premiumTv'
+import { extractQualityHint } from '~/utils/channelName'
 
 export interface ChannelEntry {
   id: string
@@ -150,8 +151,31 @@ const emit = defineEmits<{
 const overlay = hasVideoOverlay()
 
 // ── Quality display ──────────────────────────────────────────────────
+/** Quality hint extracted from channel title, program title, or source quality. */
+const titleQualityHint = computed(() => {
+  return extractQualityHint(props.sourceQuality || '') ||
+         extractQualityHint(props.channelName || '') ||
+         extractQualityHint(props.nowPlaying || '')
+})
+
 /** The decoded resolution from mpv, or the source quality label, for the badge. */
-const qualityBadge = computed(() => props.resolutionLabel || props.sourceQuality || '')
+const qualityBadge = computed(() => {
+  const res = props.resolutionLabel || ''
+  const titleHint = titleQualityHint.value
+
+  if (titleHint) {
+    if (!res)
+      return titleHint
+    const ranks: Record<string, number> = { '4K UHD': 5, '1440p': 4, '1080p': 3, '720p': 2, '480p': 1 }
+    const resRank = ranks[res] || 0
+    const titleRank = ranks[titleHint] || 0
+    if (titleRank > resRank || (res === '720p' && titleRank >= 2)) {
+      return titleHint
+    }
+  }
+
+  return res || props.sourceQuality || ''
+})
 /** Whether there are alternative quality variants to offer. */
 const hasQualityVariants = computed(() => props.qualityVariants.length > 0)
 /** User-facing label for the current aspect-ratio mode. */

@@ -37,3 +37,16 @@ export function channelInitials(name: string): string {
     return (first[0] + second[0]).toUpperCase()
   return (first || clean || 'TV').slice(0, 2).toUpperCase()
 }
+
+/** Standard quality display label derived from a raw title or quality string. */
+export function extractQualityHint(text: string): string {
+  if (!text) return ''
+  const clean = text.trim()
+  if (/\b(?:4K|UHD|2160p)\b/i.test(clean)) return '4K UHD'
+  if (/\b(?:1440p|2K)\b/i.test(clean)) return '1440p'
+  if (/\b(?:1080p|FHD)\b/i.test(clean)) return '1080p'
+  if (/\b(?:720p|HD)\b/i.test(clean)) return '720p'
+  if (/\b(?:480p|SD)\b/i.test(clean)) return '480p'
+  return ''
+}
+
