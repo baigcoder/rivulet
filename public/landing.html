@@ -147,6 +147,30 @@
       min-height: 68px;
       gap: 16px;
     }
+    .nav-mobile-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(var(--ground-rgb), .97);
+      z-index: 199;
+      padding: 68px var(--gutter) 28px;
+      overflow-y: auto;
+    }
+    .nav-mobile-overlay.is-open {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+    .nav-mobile-overlay a {
+      padding: 16px 4px;
+      border-bottom: 1px solid var(--line);
+      border-radius: 0;
+      font-size: 1.0625rem;
+      color: var(--on);
+    }
+    .nav-mobile-overlay a:hover, .nav-mobile-overlay a:focus-visible {
+      color: var(--accent);
+    }
 
     .brand {
       display: flex;
@@ -812,26 +836,7 @@
       }
       .hamburger { display: grid; place-items: center; position: relative; z-index: 201; }
       a.nav-dl { display: none; }
-      .nav-links { display: none; transform: none; left: auto; position: static; }
-      .nav-links.open {
-        display: flex;
-        flex-direction: column;
-        align-items: stretch;
-        justify-self: stretch;
-        position: fixed;
-        inset: 61px 0 0;
-        background: rgba(var(--ground-rgb), .97);
-        padding: 12px var(--gutter) 28px;
-        z-index: 199;
-        overflow-y: auto;
-        gap: 0;
-      }
-      .nav-links.open a {
-        padding: 16px 4px;
-        border-bottom: 1px solid var(--line);
-        border-radius: 0;
-        font-size: 1.0625rem;
-      }
+      .nav-links { display: none; }
       .ways, .yours, .swatches, .live-grid, .picture-lead, .plats { grid-template-columns: 1fr; }
       h1 { max-width: 100%; }
       footer { padding: 36px 0 24px; }
@@ -866,6 +871,13 @@
       </button>
     </div>
   </nav>
+
+  <div class="nav-mobile-overlay" id="nav-mobile-overlay">
+    <a href="#watch">Watch</a>
+    <a href="#live">Live</a>
+    <a href="#picture">Player</a>
+    <a href="#faq">FAQ</a>
+  </div>
 
   <section class="hero">
     <div class="wrap">
@@ -1223,15 +1235,16 @@
 
     var menuBtn = document.getElementById('menu-btn');
     var navLinks = document.getElementById('nav-links');
-    if (menuBtn && navLinks) {
+    var navOverlay = document.getElementById('nav-mobile-overlay');
+    if (menuBtn && navOverlay) {
       menuBtn.addEventListener('click', function () {
-        var open = navLinks.classList.toggle('open');
+        var open = navOverlay.classList.toggle('is-open');
         menuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
         menuBtn.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
       });
-      navLinks.querySelectorAll('a').forEach(function (a) {
+      navOverlay.querySelectorAll('a').forEach(function (a) {
         a.addEventListener('click', function () {
-          navLinks.classList.remove('open');
+          navOverlay.classList.remove('is-open');
           menuBtn.setAttribute('aria-expanded', 'false');
           menuBtn.setAttribute('aria-label', 'Open menu');
         });
