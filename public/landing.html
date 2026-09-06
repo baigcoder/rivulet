@@ -1273,8 +1273,10 @@
       var DL = 'https://github.com/baigcoder/rivulet/releases/latest/download/';
       var RELEASES = 'https://github.com/baigcoder/rivulet/releases/latest';
       var LINUX_FORMATS = [
-        { fmt: '.deb',     name: 'Debian / Ubuntu', href: DL + 'Rivulet_0.6.4_amd64.deb' },
-        { fmt: 'AUR',      name: 'Arch (AUR)',     href: 'https://aur.archlinux.org/packages/rivulet' }
+        { fmt: '.deb',      name: 'Debian / Ubuntu',  href: DL + 'Rivulet_0.6.4_amd64.deb' },
+        { fmt: '.AppImage', name: 'AppImage (universal)', href: RELEASES },
+        { fmt: '.rpm',      name: 'Fedora / RHEL',    href: RELEASES },
+        { fmt: 'AUR',       name: 'Arch (AUR)',       href: 'https://aur.archlinux.org/packages/rivulet' }
       ];
       var P = {
         linux:   { name: 'Linux',   href: DL + 'Rivulet_0.6.4_amd64.deb', hint: 'Debian/Ubuntu. Needs system mpv and ffmpeg.' },
