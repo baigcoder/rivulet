@@ -1137,10 +1137,11 @@
 
     try {
       var DL = 'https://github.com/baigcoder/rivulet/releases/latest/download/';
+      var RELEASES = 'https://github.com/baigcoder/rivulet/releases/latest';
       var P = {
-        linux:   { name: 'Linux',   href: DL + 'Rivulet.AppImage', hint: 'Linux needs system mpv and ffmpeg.' },
+        linux:   { name: 'Linux',   href: DL + 'Rivulet_0.6.4_amd64.deb', hint: 'Debian/Ubuntu. Needs system mpv and ffmpeg.' },
         windows: { name: 'Windows', href: DL + 'Rivulet_Setup.exe', hint: '' },
-        macos:   { name: 'macOS',   href: DL + 'Rivulet.dmg', hint: 'Gatekeeper may warn on first open — see FAQ.' },
+        macos:   { name: 'macOS',   href: RELEASES, hint: 'No build yet — see the releases page.' },
         android: { name: 'Android', href: DL + 'Rivulet.apk', hint: 'Sideload. Same APK for phone and Android TV.' }
       };
 
