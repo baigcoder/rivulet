@@ -145,7 +145,7 @@ features = [ "rust-tls", "http-api", "http-api-client", "tracing-subscriber-util
 
 [dependencies.tokio]
 version = "1"
-features = [ "rt-multi-thread", "fs", "io-util" ]
+features = [ "rt-multi-thread", "fs", "io-util", "process" ]
 
 [features]
 default = ["desktop"]

@@ -229,6 +229,14 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
         return Ok(());
     }
 
+    // YouTube direct stream — resolves a video ID via yt-dlp and proxies the
+    // actual video bytes. GTK WebKit can play a direct <video> stream but not
+    // a YouTube iframe embed.
+    if request.starts_with("GET /youtube-stream") {
+        serve_youtube_stream(stream, &request).await?;
+        return Ok(());
+    }
+
     // Parse the request line and the URL parameter. Bad input gets a 400
     // rather than a 500 — the page will then fall back to the raw URL.
     let (target_url, custom_ua, custom_referer) = match parse_target(&request) {
@@ -653,6 +661,55 @@ async fn serve_youtube_embed(
 </script></body></html>"#
     );
     write_response(stream, 200, "OK", "text/html; charset=utf-8", html.as_bytes()).await
+}
+
+async fn serve_youtube_stream(
+    stream: &mut tokio::net::TcpStream,
+    request: &str,
+) -> anyhow::Result<()> {
+    let id = match parse_youtube_embed(request) {
+        Some((id, _, _, _)) => id,
+        None => {
+            write_response(stream, 400, "Bad Request", "text/plain", b"invalid v").await?;
+            return Ok(());
+        }
+    };
+
+    // Use yt-dlp to resolve the direct video stream URL.
+    let url = format!("https://www.youtube.com/watch?v={id}");
+    let output = tokio::process::Command::new("yt-dlp")
+        .arg("--get-url")
+        .arg("--format")
+        .arg("best[height<=720]/best")
+        .arg(&url)
+        .output()
+        .await;
+
+    match output {
+        Ok(o) if o.status.success() => {
+            let resolved = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            if resolved.is_empty() {
+                write_response(stream, 502, "Bad Gateway", "text/plain", b"yt-dlp returned empty URL").await?;
+                return Ok(());
+            }
+            eprintln!("[iptv-proxy] yt-dlp resolved youtube-stream {id} → {resolved}");
+            // 302 redirect so the caller's <video> fetches the direct stream.
+            let header = format!(
+                "HTTP/1.1 302 Found\r\nLocation: {resolved}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            );
+            stream.write_all(header.as_bytes()).await?;
+        }
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            eprintln!("[iptv-proxy] yt-dlp failed for {id}: {stderr}");
+            write_response(stream, 502, "Bad Gateway", "text/plain", b"yt-dlp failed").await?;
+        }
+        Err(e) => {
+            eprintln!("[iptv-proxy] yt-dlp not found: {e}");
+            write_response(stream, 502, "Bad Gateway", "text/plain", b"yt-dlp not installed").await?;
+        }
+    }
+    Ok(())
 }
 
 fn parse_target(request: &str) -> Option<(String, Option<String>, Option<String>)> {
