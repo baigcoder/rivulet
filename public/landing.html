@@ -464,6 +464,7 @@
       overflow: hidden;
       aspect-ratio: 16 / 9;
       background: #000;
+      cursor: pointer;
     }
 
     .showcase-screen img, .showcase-screen video {
@@ -473,31 +474,114 @@
       transition: opacity 0.3s ease;
     }
 
-    /* Video Player Overlay Control */
-    .video-play-overlay {
+    /* Video Player HUD Overlay & Arrow Control Bar */
+    .video-hud-overlay {
       position: absolute;
-      bottom: 20px;
-      right: 20px;
-      z-index: 10;
+      inset: 0;
+      z-index: 20;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      padding: 16px;
+      background: linear-gradient(180deg, transparent 50%, rgba(0, 0, 0, 0.85) 100%);
+      opacity: 0;
+      transition: opacity 0.3s ease;
+      pointer-events: none;
+    }
+
+    .showcase-screen:hover .video-hud-overlay,
+    .video-hud-overlay.is-active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .vid-toast {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%) scale(0.8);
+      background: rgba(0, 0, 0, 0.85);
+      border: 1px solid var(--border-bright);
+      color: var(--accent);
+      padding: 12px 24px;
+      border-radius: 999px;
+      font-family: var(--mono);
+      font-weight: 700;
+      font-size: 1.1rem;
+      box-shadow: 0 0 30px var(--accent-glow);
+      opacity: 0;
+      pointer-events: none;
+      transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+
+    .vid-toast.show {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+    }
+
+    .vid-controls-bar {
       display: flex;
       align-items: center;
-      gap: 10px;
-      padding: 8px 16px;
+      gap: 12px;
+      background: rgba(18, 20, 24, 0.88);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border-bright);
       border-radius: 999px;
-      background: rgba(0, 0, 0, 0.7);
-      backdrop-filter: blur(10px);
-      border: 1px solid var(--border);
+      padding: 8px 16px;
+      pointer-events: auto;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+    }
+
+    .vid-btn {
+      background: none;
+      border: none;
       color: var(--on);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
       font-size: 0.8125rem;
       font-weight: 600;
-      cursor: pointer;
+      padding: 6px 10px;
+      border-radius: 999px;
       transition: all 0.2s ease;
     }
 
-    .video-play-overlay:hover {
-      background: rgba(var(--accent-rgb), 0.25);
-      border-color: var(--accent);
+    .vid-btn:hover {
+      background: rgba(255, 255, 255, 0.12);
       color: var(--accent);
+    }
+
+    .vid-audio-btn {
+      background: rgba(111, 227, 255, 0.15);
+      border: 1px solid rgba(111, 227, 255, 0.3);
+      color: var(--accent);
+    }
+
+    .vid-progress-container {
+      flex: 1;
+      height: 6px;
+      background: rgba(255, 255, 255, 0.18);
+      border-radius: 999px;
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .vid-progress-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--accent);
+      border-radius: 999px;
+      box-shadow: 0 0 10px var(--accent);
+      transition: width 0.1s linear;
+    }
+
+    .vid-time-display {
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      color: var(--muted);
+      white-space: nowrap;
     }
 
     /* Interactive Tab Buttons */
@@ -815,7 +899,6 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-
     }
 
     .faq-content {
@@ -982,17 +1065,38 @@
         </div>
       </div>
 
-      <!-- Interactive TV Showcase Bezel with hero.mp4 Embed -->
+      <!-- Interactive TV Showcase Bezel with hero.mp4 Interactive Player HUD -->
       <div class="showcase-container">
         <div class="showcase-bezel">
-          <div class="showcase-screen" id="showcase-screen">
+          <div class="showcase-screen" id="showcase-screen" tabindex="0">
             <img id="showcase-img" src="/landing-showcase.jpg" alt="Rivulet Application Interface Showcase" style="display:none;" />
             <video id="showcase-vid" src="/hero.mp4" autoplay loop muted playsinline poster="/landing-showcase.jpg"></video>
 
-            <button type="button" class="video-play-overlay" id="vid-toggle-btn">
-              <svg id="vid-icon" width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg>
-              <span id="vid-status-text">Muted • Click for Audio</span>
-            </button>
+            <!-- Video Player HUD & Keyboard Control Bar -->
+            <div class="video-hud-overlay" id="vid-hud">
+              <div class="vid-toast" id="vid-toast"></div>
+              <div class="vid-controls-bar">
+                <button type="button" class="vid-btn" id="vid-play-btn" title="Play / Pause (Space / Click)">
+                  <svg id="vid-play-icon" width="18" height="18" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+                </button>
+                <button type="button" class="vid-btn" id="vid-rewind-btn" title="Rewind 10s (Left Arrow / J)">
+                  <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 14l-4-4 4-4m-6 8l-4-4 4-4m14 4h-10"/></svg>
+                  <span>-10s</span>
+                </button>
+                <button type="button" class="vid-btn" id="vid-forward-btn" title="Forward 10s (Right Arrow / L)">
+                  <span>+10s</span>
+                  <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 14l4-4-4-4m6 8l4-4-4-4m-14 4h10"/></svg>
+                </button>
+                <div class="vid-progress-container" id="vid-progress-bar">
+                  <div class="vid-progress-fill" id="vid-progress-fill"></div>
+                </div>
+                <span class="vid-time-display" id="vid-time">0:00 / 0:00</span>
+                <button type="button" class="vid-btn vid-audio-btn" id="vid-audio-btn" title="Toggle Audio (M / Click)">
+                  <svg id="vid-audio-icon" width="18" height="18" fill="currentColor" viewBox="0 0 24 24"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77zM3 9v6h4l5 5V4L7 9H3z"/></svg>
+                  <span id="vid-audio-label">Muted • Click for Audio</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1484,7 +1588,7 @@
     </div>
   </footer>
 
-  <!-- Scripts -->
+  <!-- Interactive Scripts -->
   <script>
     // Platform Auto Detection
     (function detectOS() {
@@ -1528,13 +1632,133 @@
       });
     }
 
-    // Video & Media Showcase Switcher
+    // Interactive Hero Video Player Elements
+    const showcaseScreen = document.getElementById('showcase-screen');
     const showcaseImg = document.getElementById('showcase-img');
     const showcaseVid = document.getElementById('showcase-vid');
+    const vidHud = document.getElementById('vid-hud');
+    const vidToast = document.getElementById('vid-toast');
+    const vidPlayBtn = document.getElementById('vid-play-btn');
+    const vidPlayIcon = document.getElementById('vid-play-icon');
+    const vidRewindBtn = document.getElementById('vid-rewind-btn');
+    const vidForwardBtn = document.getElementById('vid-forward-btn');
+    const vidProgressBar = document.getElementById('vid-progress-bar');
+    const vidProgressFill = document.getElementById('vid-progress-fill');
+    const vidTime = document.getElementById('vid-time');
+    const vidAudioBtn = document.getElementById('vid-audio-btn');
+    const vidAudioIcon = document.getElementById('vid-audio-icon');
+    const vidAudioLabel = document.getElementById('vid-audio-label');
     const tabBtns = document.querySelectorAll('.tab-btn');
-    const vidToggleBtn = document.getElementById('vid-toggle-btn');
-    const vidStatusText = document.getElementById('vid-status-text');
 
+    const pauseSvg = '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>';
+    const playSvg = '<path d="M8 5v14l11-7z"/>';
+    const unmutedSvg = '<path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>';
+    const mutedSvg = '<path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73 4.27 3zM12 4L9.91 6.09 12 8.18V4z"/>';
+
+    function formatTime(s) {
+      if (isNaN(s) || s < 0) return '0:00';
+      const m = Math.floor(s / 60);
+      const sec = Math.floor(s % 60);
+      return `${m}:${sec < 10 ? '0' : ''}${sec}`;
+    }
+
+    function showToast(text) {
+      if (!vidToast) return;
+      vidToast.textContent = text;
+      vidToast.classList.add('show');
+      clearTimeout(window._toastTimer);
+      window._toastTimer = setTimeout(() => {
+        vidToast.classList.remove('show');
+      }, 700);
+    }
+
+    function togglePlayPause() {
+      if (!showcaseVid) return;
+      if (showcaseVid.paused) {
+        showcaseVid.play();
+        vidPlayIcon.innerHTML = pauseSvg;
+        showToast('▶ Playing');
+      } else {
+        showcaseVid.pause();
+        vidPlayIcon.innerHTML = playSvg;
+        showToast('⏸ Paused');
+      }
+    }
+
+    function seekVideo(seconds) {
+      if (!showcaseVid) return;
+      showcaseVid.currentTime = Math.max(0, Math.min(showcaseVid.duration || 0, showcaseVid.currentTime + seconds));
+      showToast(seconds > 0 ? `+${seconds}s ⏩` : `${seconds}s ⏪`);
+    }
+
+    function toggleAudio() {
+      if (!showcaseVid) return;
+      showcaseVid.muted = !showcaseVid.muted;
+      if (showcaseVid.muted) {
+        vidAudioIcon.innerHTML = mutedSvg;
+        vidAudioLabel.textContent = 'Muted • Click for Audio';
+        showToast('🔇 Muted');
+      } else {
+        vidAudioIcon.innerHTML = unmutedSvg;
+        vidAudioLabel.textContent = 'Unmuted';
+        showToast('🔊 Audio Enabled');
+      }
+    }
+
+    if (showcaseVid) {
+      showcaseVid.addEventListener('timeupdate', () => {
+        if (!showcaseVid.duration) return;
+        const pct = (showcaseVid.currentTime / showcaseVid.duration) * 100;
+        if (vidProgressFill) vidProgressFill.style.width = `${pct}%`;
+        if (vidTime) vidTime.textContent = `${formatTime(showcaseVid.currentTime)} / ${formatTime(showcaseVid.duration)}`;
+      });
+
+      if (showcaseScreen) {
+        showcaseScreen.addEventListener('click', (e) => {
+          if (e.target.closest('.vid-btn') || e.target.closest('.vid-progress-container')) return;
+          togglePlayPause();
+        });
+      }
+
+      if (vidPlayBtn) vidPlayBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePlayPause(); });
+      if (vidRewindBtn) vidRewindBtn.addEventListener('click', (e) => { e.stopPropagation(); seekVideo(-10); });
+      if (vidForwardBtn) vidForwardBtn.addEventListener('click', (e) => { e.stopPropagation(); seekVideo(10); });
+      if (vidAudioBtn) vidAudioBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleAudio(); });
+
+      if (vidProgressBar) {
+        vidProgressBar.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const rect = vidProgressBar.getBoundingClientRect();
+          const pos = (e.clientX - rect.left) / rect.width;
+          if (showcaseVid.duration) {
+            showcaseVid.currentTime = pos * showcaseVid.duration;
+          }
+        });
+      }
+
+      // Keyboard arrow shortcuts (Space: play/pause, Left: -10s, Right: +10s, M: Mute)
+      document.addEventListener('keydown', (e) => {
+        if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+        const vidVisible = showcaseVid.style.display !== 'none';
+        if (!vidVisible) return;
+
+        if (e.code === 'Space' || e.code === 'KeyK') {
+          e.preventDefault();
+          togglePlayPause();
+        } else if (e.code === 'ArrowLeft' || e.code === 'KeyJ') {
+          e.preventDefault();
+          seekVideo(-10);
+        } else if (e.code === 'ArrowRight' || e.code === 'KeyL') {
+          e.preventDefault();
+          seekVideo(10);
+        } else if (e.code === 'KeyM') {
+          e.preventDefault();
+          toggleAudio();
+        }
+      });
+    }
+
+    // Media Showcase Switcher
     tabBtns.forEach(btn => {
       btn.addEventListener('click', () => {
         tabBtns.forEach(b => b.classList.remove('active'));
@@ -1546,29 +1770,17 @@
         if (isVid) {
           showcaseImg.style.display = 'none';
           showcaseVid.style.display = 'block';
-          vidToggleBtn.style.display = 'flex';
+          if (vidHud) vidHud.style.display = 'flex';
           showcaseVid.play().catch(() => {});
         } else if (imgPath) {
           showcaseVid.pause();
           showcaseVid.style.display = 'none';
-          vidToggleBtn.style.display = 'none';
+          if (vidHud) vidHud.style.display = 'none';
           showcaseImg.src = imgPath;
           showcaseImg.style.display = 'block';
         }
       });
     });
-
-    if (vidToggleBtn && showcaseVid) {
-      vidToggleBtn.addEventListener('click', () => {
-        if (showcaseVid.muted) {
-          showcaseVid.muted = false;
-          vidStatusText.textContent = 'Unmuted • Click to Mute';
-        } else {
-          showcaseVid.muted = true;
-          vidStatusText.textContent = 'Muted • Click for Audio';
-        }
-      });
-    }
 
     // Theme Switcher Live Preview
     function setTheme(name) {
