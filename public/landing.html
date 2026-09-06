@@ -828,7 +828,6 @@
         </p>
         <div class="hero-cta reveal" style="--i:3">
           <a href="#download" class="btn btn-primary" id="hero-dl">Download Rivulet</a>
-          <p class="hero-alt" id="hero-alt"></p>
         </div>
       </div>
       <div class="reveal" style="--i:4">
@@ -1312,12 +1311,6 @@
       if (hero) {
         hero.href = P[det].href;
         hero.textContent = 'Download for ' + P[det].name;
-      }
-      var heroAlt = document.getElementById('hero-alt');
-      if (heroAlt) {
-        heroAlt.innerHTML = order.slice(1).map(function (k) {
-          return '<a href="' + P[k].href + '">' + P[k].name + '</a>';
-        }).join(' · ');
       }
 
       var hint = document.getElementById('dl-hint');
