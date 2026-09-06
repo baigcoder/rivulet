@@ -844,19 +844,36 @@
       border: 1px solid var(--border);
       border-radius: var(--radius);
       padding: clamp(20px, 4vw, 36px);
+    }
+
+    .matrix-scroll-wrap {
       overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: thin;
+      scrollbar-color: var(--accent) transparent;
+      padding-bottom: 6px;
+    }
+
+    .matrix-scroll-wrap::-webkit-scrollbar {
+      height: 6px;
+    }
+
+    .matrix-scroll-wrap::-webkit-scrollbar-thumb {
+      background: var(--accent-glow);
+      border-radius: 999px;
     }
 
     .matrix-table {
       width: 100%;
       border-collapse: collapse;
       text-align: left;
-      min-width: 540px;
+      min-width: 680px;
     }
 
     .matrix-table th, .matrix-table td {
       padding: 14px 16px;
       border-bottom: 1px solid var(--border);
+      vertical-align: middle;
     }
 
     .matrix-table th {
@@ -865,18 +882,36 @@
       color: var(--muted);
       text-transform: uppercase;
       letter-spacing: 0.05em;
+      white-space: nowrap;
     }
 
     .matrix-table td {
       font-size: 0.875rem;
+      white-space: nowrap;
+    }
+
+    .matrix-table td strong {
+      white-space: normal;
+    }
+
+    .scroll-hint-badge {
+      display: none;
+      font-family: var(--mono);
+      font-size: 0.725rem;
+      font-weight: 600;
+      color: var(--accent);
+      background: rgba(111, 227, 255, 0.12);
+      border: 1px solid rgba(111, 227, 255, 0.25);
+      padding: 4px 12px;
+      border-radius: 999px;
     }
 
     .matrix-table tbody tr:hover {
       background: rgba(255, 255, 255, 0.02);
     }
 
-    .check-icon { color: #34d399; font-weight: 700; }
-    .cross-icon { color: var(--dim); }
+    .check-icon { color: #34d399; font-weight: 700; display: inline-block; white-space: nowrap; }
+    .cross-icon { color: var(--dim); display: inline-block; white-space: nowrap; }
 
     /* Theme Swatches */
     .theme-grid {
@@ -1192,7 +1227,10 @@
       .footer-grid { grid-template-columns: 1fr; gap: 32px; margin-bottom: 32px; }
       .footer-links-group { grid-template-columns: repeat(3, 1fr); gap: 20px; }
       .footer-bottom { flex-direction: column; text-align: center; gap: 10px; font-size: 0.78125rem; }
-      .matrix-card { padding: 16px; }
+      .matrix-card { padding: 20px 16px; }
+      .scroll-hint-badge { display: inline-flex; align-items: center; gap: 4px; }
+      .matrix-table { min-width: 660px; }
+      .matrix-table th, .matrix-table td { padding: 11px 13px; font-size: 0.8125rem; }
     }
 
     @media (max-width: 540px) {
@@ -1558,43 +1596,48 @@
 
       <!-- Matrix Table -->
       <div class="matrix-card">
-        <h3 style="margin-bottom: 20px;">Backend Capability Comparison</h3>
-        <table class="matrix-table">
-          <thead>
-            <tr>
-              <th>Feature / Codec</th>
-              <th>Desktop mpv</th>
-              <th>Android libVLC</th>
-              <th>Browser &lt;video&gt;</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><strong>HEVC / AV1 10-bit Video</strong></td>
-              <td><span class="check-icon">✓ Native FFmpeg</span></td>
-              <td><span class="check-icon">✓ Hardware MediaCodec</span></td>
-              <td><span class="cross-icon">✗ Limited by WebView</span></td>
-            </tr>
-            <tr>
-              <td><strong>Dolby E-AC-3 / DTS Audio</strong></td>
-              <td><span class="check-icon">✓ Full Passthrough</span></td>
-              <td><span class="check-icon">✓ Bundled FFmpeg</span></td>
-              <td><span class="cross-icon">✗ Silent / Unsupported</span></td>
-            </tr>
-            <tr>
-              <td><strong>Seek Preview Thumbnails</strong></td>
-              <td><span class="check-icon">✓ Instant ffmpeg extract</span></td>
-              <td><span class="check-icon">✓ Supported</span></td>
-              <td><span class="cross-icon">✗ No demuxer access</span></td>
-            </tr>
-            <tr>
-              <td><strong>Subtitle Audio Auto-Sync</strong></td>
-              <td><span class="check-icon">✓ Silence Map Alignment</span></td>
-              <td><span class="check-icon">✓ Manual Delay</span></td>
-              <td><span class="cross-icon">✗ Unavailable</span></td>
-            </tr>
-          </tbody>
-        </table>
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 10px;">
+          <h3 style="margin: 0;">Backend Capability Comparison</h3>
+          <span class="scroll-hint-badge">Scroll Horizontally ➔</span>
+        </div>
+        <div class="matrix-scroll-wrap">
+          <table class="matrix-table">
+            <thead>
+              <tr>
+                <th style="min-width: 200px; width: 30%;">Feature / Codec</th>
+                <th style="min-width: 165px; width: 25%;">Desktop mpv</th>
+                <th style="min-width: 175px; width: 25%;">Android libVLC</th>
+                <th style="min-width: 140px; width: 20%;">Browser &lt;video&gt;</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>HEVC / AV1 10-bit Video</strong></td>
+                <td><span class="check-icon">✓ Native FFmpeg</span></td>
+                <td><span class="check-icon">✓ Hardware MediaCodec</span></td>
+                <td><span class="cross-icon">✗ Limited by WebView</span></td>
+              </tr>
+              <tr>
+                <td><strong>Dolby E-AC-3 / DTS Audio</strong></td>
+                <td><span class="check-icon">✓ Full Passthrough</span></td>
+                <td><span class="check-icon">✓ Bundled FFmpeg</span></td>
+                <td><span class="cross-icon">✗ Silent / Unsupported</span></td>
+              </tr>
+              <tr>
+                <td><strong>Seek Preview Thumbnails</strong></td>
+                <td><span class="check-icon">✓ Instant ffmpeg extract</span></td>
+                <td><span class="check-icon">✓ Supported</span></td>
+                <td><span class="cross-icon">✗ No demuxer access</span></td>
+              </tr>
+              <tr>
+                <td><strong>Subtitle Audio Auto-Sync</strong></td>
+                <td><span class="check-icon">✓ Silence Map Alignment</span></td>
+                <td><span class="check-icon">✓ Manual Delay</span></td>
+                <td><span class="cross-icon">✗ Unavailable</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   </section>
