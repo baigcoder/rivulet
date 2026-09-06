@@ -116,9 +116,9 @@ class RivuletPlayer(private val activity: MainActivity) {
       // Options have to be added before the media is handed to the player and
       // before it is released. Adding one afterwards calls into a freed native
       // object and is the release-build crash seen when opening a stream.
-      media.addOption(":network-caching=1500")
-      media.addOption(":file-caching=1500")
-      media.addOption(":live-caching=1500")
+      media.addOption(":network-caching=300")
+      media.addOption(":file-caching=300")
+      media.addOption(":live-caching=300")
       media.addOption(":http-continuous")
       media.addOption(":http-reconnect")
       media.addOption(":http-timeout=10000")

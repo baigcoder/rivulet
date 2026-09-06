@@ -693,14 +693,12 @@ export async function findReleasesFast(
     searchPath(imdbId, season, episode),
     {
       mode: 'first',
-      graceMs: options.graceMs ?? 600,
-      onBatch: options.needUrl
-        ? (added: Release[]) => {
-            landed.push(...added)
-            if (added.some(r => r.url))
-              urlLanded([...landed])
-          }
-        : undefined,
+      graceMs: options.graceMs ?? 50,
+      onBatch: (added: Release[]) => {
+        landed.push(...added)
+        if (added.length)
+          urlLanded([...landed])
+      },
     },
   )
   let out = releases
@@ -1423,7 +1421,7 @@ export async function startTorrent(options: {
                 // Engine on: start on the first magnet, don't wait 2s for a
                 // Direct URL. Engine off: first link plays at once — no extra
                 // grace for a second server that is still resolving.
-                graceMs: attempt === 1 ? (allowTorrents ? 250 : 0) : 100,
+                graceMs: attempt === 1 ? (allowTorrents ? 50 : 0) : 0,
                 needUrl: !allowTorrents,
                 onLate: late => {
                   const more = serverCandidates(late, options.maxBytes ?? MAX_BYTES, options.compatible ?? !hasNativePlayer(), allowTorrents)

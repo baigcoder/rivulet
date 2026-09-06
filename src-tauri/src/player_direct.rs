@@ -44,21 +44,21 @@ pub const STREAM_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebK
 pub fn cache_cli(engine: bool) -> &'static [&'static str] {
 	if engine {
 		&[
-			"--cache-pause-wait=0.2",
+			"--cache-pause-wait=0.1",
 			"--cache-secs=20",
 			"--demuxer-readahead-secs=5",
-			"--demuxer-lavf-analyzeduration=0.25",
-			"--demuxer-lavf-probesize=524288",
+			"--demuxer-lavf-analyzeduration=0.1",
+			"--demuxer-lavf-probesize=262144",
 		]
 	} else {
 		&[
 			"--cache-pause=no",
 			"--cache-pause-initial=no",
-			"--cache-pause-wait=0.1",
+			"--cache-pause-wait=0.05",
 			"--cache-secs=20",
 			"--demuxer-readahead-secs=10",
-			"--demuxer-lavf-analyzeduration=0.25",
-			"--demuxer-lavf-probesize=1048576",
+			"--demuxer-lavf-analyzeduration=0.1",
+			"--demuxer-lavf-probesize=262144",
 			// First byte can wait on a debrid unlock; ffmpeg's 30s default
 			// aborts that and the reconnect is the extra 10s people see.
 			"--network-timeout=90",
@@ -110,21 +110,21 @@ pub fn stream_lavf_o(engine: bool) -> &'static str {
 pub fn cache_kv(engine: bool) -> &'static [(&'static str, &'static str)] {
 	if engine {
 		&[
-			("cache-pause-wait", "0.2"),
+			("cache-pause-wait", "0.1"),
 			("cache-secs", "20"),
 			("demuxer-readahead-secs", "5"),
-			("demuxer-lavf-analyzeduration", "0.25"),
-			("demuxer-lavf-probesize", "524288"),
+			("demuxer-lavf-analyzeduration", "0.1"),
+			("demuxer-lavf-probesize", "262144"),
 		]
 	} else {
 		&[
 			("cache-pause", "no"),
 			("cache-pause-initial", "no"),
-			("cache-pause-wait", "0.1"),
+			("cache-pause-wait", "0.05"),
 			("cache-secs", "20"),
 			("demuxer-readahead-secs", "10"),
-			("demuxer-lavf-analyzeduration", "0.25"),
-			("demuxer-lavf-probesize", "1048576"),
+			("demuxer-lavf-analyzeduration", "0.1"),
+			("demuxer-lavf-probesize", "262144"),
 			("network-timeout", "90"),
 		]
 	}

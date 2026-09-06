@@ -44,12 +44,10 @@ fn stream_http() -> &'static Client {
     STREAM.get_or_init(|| {
         Client::builder()
             .connect_timeout(Duration::from_secs(8))
-            // Video must stay identity: gzip/br advertise Accept-Encoding, then
-            // reqwest strips Content-Length and mpv sees a chunked file — it
-            // cannot seek and Direct play sits on Buffering until a huge probe.
+            .pool_max_idle_per_host(10)
+            .pool_idle_timeout(Duration::from_secs(90))
             .gzip(false)
             .brotli(false)
-            .http1_only()
             .tcp_nodelay(true)
             .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
             .build()
