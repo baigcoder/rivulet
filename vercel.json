@@ -1,9 +1,5 @@
 {
-  "installCommand": "echo skip",
-  "buildCommand": "echo skip",
-  "outputDirectory": ".",
-  "rewrites": [
-    { "source": "/", "destination": "/public/landing.html" },
-    { "source": "/((?!public/).*)", "destination": "/public/$1" }
-  ]
+  "buildCommand": "cp -r public ./output",
+  "outputDirectory": "output",
+  "rewrites": [{ "source": "/", "destination": "/landing.html" }]
 }

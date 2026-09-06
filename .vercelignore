@@ -1,3 +1,14 @@
-*
-!public/
-!vercel.json
+nuxt.config.ts
+package.json
+bun.lockb
+node_modules
+src
+src-tauri
+app
+i18n
+scripts
+patches
+tsconfig.json
+.git
+.github
+.claude
