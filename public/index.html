@@ -150,11 +150,11 @@
       50% { transform: scale(1.3); opacity: 1; box-shadow: 0 0 20px var(--accent); }
     }
 
-    h1, h2, h3, .heading-font {
+    h1, h2, .heading-font {
       font-family: var(--display);
       font-weight: 800;
-      letter-spacing: -0.03em;
-      line-height: 1.08;
+      letter-spacing: -0.035em;
+      line-height: 1.05;
     }
 
     h1 {
@@ -166,22 +166,28 @@
     }
 
     h3 {
-      font-size: clamp(1.25rem, 2vw, 1.75rem);
+      font-family: var(--font);
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      font-size: clamp(1.2rem, 2vw, 1.65rem);
+      line-height: 1.25;
     }
 
     .lede {
-      color: var(--muted);
+      color: #a8b0c0;
       font-size: clamp(1.05rem, 1.8vw, 1.25rem);
-      line-height: 1.6;
-      max-width: 48ch;
+      line-height: 1.65;
+      max-width: 50ch;
+      font-weight: 450;
     }
 
-    /* Hero Text Animated Gradient Shimmer */
+    /* Hero Text Animated Gradient Shimmer & Aura Glow */
     .text-gradient {
-      background: linear-gradient(135deg, #ffffff 0%, var(--accent) 50%, var(--warm) 80%, var(--pink) 100%);
+      background: linear-gradient(135deg, #ffffff 0%, var(--accent) 45%, var(--warm) 80%, var(--pink) 100%);
       background-size: 250% 250%;
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
+      filter: drop-shadow(0 0 35px var(--accent-glow));
       animation: gradientShimmer 6s infinite ease-in-out alternate;
     }
 
