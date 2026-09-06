@@ -214,6 +214,19 @@
       to { opacity: 1; transform: translateY(0); }
     }
 
+    /* Scroll Reveal Entrance Animations */
+    .reveal-on-scroll {
+      opacity: 0;
+      transform: translateY(28px);
+      transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1), transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+      will-change: opacity, transform;
+    }
+
+    .reveal-on-scroll.is-visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
     /* Buttons & Controls */
     .btn {
       display: inline-flex;
@@ -499,9 +512,9 @@
       z-index: 20;
       display: flex;
       flex-direction: column;
-      justify-content: flex-end;
+      justify-content: space-between;
       padding: 16px;
-      background: linear-gradient(180deg, transparent 50%, rgba(0, 0, 0, 0.85) 100%);
+      background: linear-gradient(180deg, rgba(0, 0, 0, 0.75) 0%, transparent 40%, transparent 60%, rgba(0, 0, 0, 0.85) 100%);
       opacity: 0;
       transition: opacity 0.3s ease;
       pointer-events: none;
@@ -511,6 +524,73 @@
     .video-hud-overlay.is-active {
       opacity: 1;
       pointer-events: auto;
+    }
+
+    /* Fullscreen Mode Top Bar & Back Button */
+    .vid-top-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      pointer-events: auto;
+    }
+
+    .vid-back-btn {
+      background: rgba(18, 20, 24, 0.92);
+      backdrop-filter: blur(14px);
+      border: 1px solid var(--border-bright);
+      color: var(--on);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      border-radius: 999px;
+      font-size: 0.875rem;
+      font-weight: 700;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+      transition: all 0.2s ease;
+    }
+
+    .vid-back-btn:hover {
+      background: var(--accent);
+      color: #031b24;
+      border-color: var(--accent);
+      box-shadow: 0 0 20px var(--accent-glow);
+    }
+
+    .vid-title-label {
+      font-family: var(--display);
+      font-size: 0.9375rem;
+      font-weight: 700;
+      color: var(--on);
+      text-shadow: 0 2px 10px rgba(0, 0, 0, 0.9);
+      background: rgba(0, 0, 0, 0.4);
+      padding: 4px 14px;
+      border-radius: 999px;
+      backdrop-filter: blur(8px);
+    }
+
+    /* Fullscreen Viewport Mode */
+    .showcase-screen.is-fullscreen {
+      position: fixed !important;
+      inset: 0 !important;
+      width: 100vw !important;
+      height: 100vh !important;
+      max-width: none !important;
+      max-height: none !important;
+      z-index: 99999 !important;
+      border-radius: 0 !important;
+      background: #000 !important;
+      aspect-ratio: auto !important;
+    }
+
+    .showcase-screen.is-fullscreen video {
+      object-fit: contain !important;
+    }
+
+    .showcase-screen.is-fullscreen .video-hud-overlay {
+      padding: 24px 20px;
     }
 
     .vid-toast {
@@ -930,15 +1010,29 @@
     /* Footer */
     footer {
       border-top: 1px solid var(--border);
-      padding: 50px 0 30px;
+      padding: 60px 0 32px;
       background: #050608;
     }
 
     .footer-grid {
       display: grid;
-      grid-template-columns: 2fr repeat(3, 1fr);
-      gap: 36px;
+      grid-template-columns: 1.8fr 3fr;
+      gap: 48px;
       margin-bottom: 40px;
+    }
+
+    .footer-brand-col p {
+      color: var(--muted);
+      font-size: 0.875rem;
+      max-width: 320px;
+      line-height: 1.6;
+      margin-top: 12px;
+    }
+
+    .footer-links-group {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
     }
 
     .footer-col h5 {
@@ -993,37 +1087,69 @@
     @media (max-width: 768px) {
       .wrap { padding: 0 16px; }
       .section-pad { padding: 48px 0; }
+      header.navbar {
+        position: sticky;
+        top: 0;
+        z-index: 1000;
+      }
       .nav-links {
         display: none;
-        position: absolute;
-        top: 100%;
+        position: fixed;
+        top: 72px;
         left: 0;
         right: 0;
-        background: rgba(18, 20, 24, 0.96);
-        backdrop-filter: blur(24px);
-        -webkit-backdrop-filter: blur(24px);
-        border-bottom: 1px solid var(--border-bright);
+        bottom: 0;
+        height: calc(100vh - 72px);
+        background: rgba(8, 9, 11, 0.98);
+        backdrop-filter: blur(30px);
+        -webkit-backdrop-filter: blur(30px);
+        border-top: 1px solid var(--border-bright);
         flex-direction: column;
-        padding: 20px 16px;
+        justify-content: flex-start;
+        padding: 24px 20px 40px;
         gap: 10px;
-        box-shadow: 0 20px 40px rgba(0,0,0,0.95);
+        box-shadow: 0 30px 60px rgba(0, 0, 0, 0.95);
         z-index: 999;
+        overflow-y: auto;
       }
       .nav-links.is-open {
         display: flex;
-        animation: navSlideDown 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        animation: navDrawerIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
       }
-      @keyframes navSlideDown {
-        from { opacity: 0; transform: translateY(-10px); }
+      @keyframes navDrawerIn {
+        from { opacity: 0; transform: translateY(-14px); }
         to { opacity: 1; transform: translateY(0); }
       }
       .nav-links a {
-        padding: 12px 18px;
-        font-size: 1rem;
+        padding: 14px 20px;
+        font-size: 1.05rem;
+        font-weight: 700;
         width: 100%;
-        border-radius: 12px;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        color: var(--on);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
       }
-      .hamburger { display: flex; align-items: center; justify-content: center; width: 42px; height: 42px; }
+      .nav-links a:hover, .nav-links a:active {
+        background: rgba(111, 227, 255, 0.12);
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      .nav-drawer-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        margin-top: 16px;
+        padding-top: 16px;
+        border-top: 1px solid var(--border);
+      }
+      .hamburger { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; }
+      .hamburger.is-active .icon-open { display: none !important; }
+      .hamburger.is-active .icon-close { display: block !important; }
+      .nav-actions .github-star-btn { display: none; }
       .desktop-only { display: none; }
       .hero { padding: 40px 0 32px; }
       .hero-actions { flex-direction: column; width: 100%; gap: 12px; }
@@ -1048,7 +1174,10 @@
       }
       .view-tabs::-webkit-scrollbar { display: none; }
       .tab-btn { flex-shrink: 0; white-space: nowrap; }
-      .footer-grid { grid-template-columns: 1fr; gap: 28px; }
+      footer { padding: 44px 0 28px; }
+      .footer-grid { grid-template-columns: 1fr; gap: 32px; margin-bottom: 32px; }
+      .footer-links-group { grid-template-columns: repeat(3, 1fr); gap: 20px; }
+      .footer-bottom { flex-direction: column; text-align: center; gap: 10px; font-size: 0.78125rem; }
       .matrix-card { padding: 16px; }
     }
 
@@ -1061,7 +1190,10 @@
       .tab-btn { font-size: 0.75rem; padding: 8px 14px; }
       .kicker { font-size: 0.75rem; }
       .lede { font-size: 0.95rem; }
-      .footer-bottom { flex-direction: column; text-align: center; gap: 8px; }
+      .footer-links-group { grid-template-columns: repeat(2, 1fr); gap: 24px 16px; }
+      .footer-brand-col { text-align: center; display: flex; flex-direction: column; align-items: center; }
+      .footer-brand-col p { max-width: 100%; text-align: center; }
+      .footer-bottom { font-size: 0.75rem; gap: 8px; text-align: center; }
     }
   </style>
 </head>
@@ -1166,7 +1298,17 @@
 
             <!-- Video Player HUD & Keyboard Control Bar -->
             <div class="video-hud-overlay" id="vid-hud">
+              <!-- Top Bar with Back Button & Title -->
+              <div class="vid-top-bar" id="vid-top-bar">
+                <button type="button" class="vid-back-btn" id="vid-back-btn" title="Exit Fullscreen (Esc / Back)">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                  <span>Back</span>
+                </button>
+                <span class="vid-title-label">Rivulet Showcase</span>
+              </div>
+
               <div class="vid-toast" id="vid-toast"></div>
+
               <div class="vid-controls-bar">
                 <button type="button" class="vid-btn" id="vid-play-btn" title="Play / Pause (Space / Click)">
                   <svg id="vid-play-icon" width="18" height="18" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
@@ -1186,6 +1328,9 @@
                 <button type="button" class="vid-btn vid-audio-btn" id="vid-audio-btn" title="Toggle Audio (M / Click)">
                   <svg id="vid-audio-icon" width="18" height="18" fill="currentColor" viewBox="0 0 24 24"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77zM3 9v6h4l5 5V4L7 9H3z"/></svg>
                   <span id="vid-audio-label">Muted • Click for Audio</span>
+                </button>
+                <button type="button" class="vid-btn" id="vid-fullscreen-btn" title="Toggle Fullscreen Mode (F / Tap)">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 8V4h4M20 8V4h-4M4 16v4h4M20 16v4h-4"/></svg>
                 </button>
               </div>
             </div>
@@ -1342,21 +1487,23 @@
         </p>
       </div>
 
-      <div class="grid-2" style="margin-bottom: 40px;">
+      <div class="grid-3" style="margin-bottom: 40px;">
         <div class="card">
-          <h3>Native Player Window</h3>
+          <span class="card-badge cyan">Native Window</span>
+          <h3>Native Player Engine</h3>
           <p>
             Chromium's browser <code>&lt;video&gt;</code> tag strips Dolby (AC-3, E-AC-3, TrueHD) and DTS codecs by default.
-            Rivulet's native backends decode every audio format and container natively on your device.
+            Rivulet's native backends decode every audio format natively on your device.
           </p>
           <ul class="feature-list">
             <li>Seek-preview thumbnails warmed while hovering progress</li>
-            <li>Unified track menu for file subs, audio tracks, and OpenSubtitles</li>
-            <li>Audio-driven auto-sync aligns subtitles via silence mapping</li>
+            <li>Unified track menu for file subs, audio tracks & languages</li>
+            <li>Zero transcode CPU load via direct GPU passthrough</li>
           </ul>
         </div>
 
         <div class="card" id="codecs">
+          <span class="card-badge pink">Hardware Codecs</span>
           <h3>Hardware Codec Support</h3>
           <p>
             Whether playing high-bitrate 4K REMUXes or anime encodes, Rivulet leverages your device's GPU decoders with zero transcode overhead.
@@ -1366,6 +1513,20 @@
             <li>10-bit HDR & Dolby Vision passthrough</li>
             <li>E-AC-3 (Dolby Digital Plus), DTS-HD & TrueHD Audio</li>
             <li>MKV, MP4, TS & Partial Download file playback</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <span class="card-badge warm">Smart Features</span>
+          <h3>Subtitle Auto-Sync & TV Remote</h3>
+          <p>
+            Never spend minutes tweaking subtitle delay offsets again. Rivulet analyzes video audio waveforms to align subtitles automatically.
+          </p>
+          <ul class="feature-list">
+            <li>Audio-driven auto-sync via silence mapping</li>
+            <li>1-click OpenSubtitles.org hash search</li>
+            <li>10-foot D-Pad remote navigation for Android TV</li>
+            <li>Custom subtitle fonts, size & background styling</li>
           </ul>
         </div>
       </div>
@@ -1694,43 +1855,46 @@
   <footer>
     <div class="wrap">
       <div class="footer-grid">
-        <div>
-          <a href="#" class="brand" style="margin-bottom: 16px;">
-            <img src="/logo.svg" alt="Rivulet" />
+        <div class="footer-brand-col">
+          <a href="#" class="brand" style="margin-bottom: 12px;">
+            <img src="/logo.svg" alt="Rivulet Logo" />
             <span>Rivulet</span>
           </a>
-          <p style="color: var(--muted); font-size: 0.875rem; max-width: 320px; line-height: 1.6;">
-            A media library and BitTorrent player for Desktop and Android TV. Built with Nuxt & Tauri. MIT-licensed.
+          <p>
+            A local media library and BitTorrent player for Desktop and Android TV. Built with Nuxt & Tauri. MIT-licensed.
           </p>
         </div>
 
-        <div class="footer-col">
-          <h5>Get Rivulet</h5>
-          <ul>
-            <li><a href="#download">Linux (.AppImage, .deb, .rpm)</a></li>
-            <li><a href="#download">Windows (.exe Setup)</a></li>
-            <li><a href="#download">Android APK (Phone & TV)</a></li>
-            <li><a href="https://github.com/baigcoder/rivulet/releases">All GitHub Releases</a></li>
-          </ul>
-        </div>
+        <div class="footer-links-group">
+          <div class="footer-col">
+            <h5>Get Rivulet</h5>
+            <ul>
+              <li><a href="#download">Linux (.AppImage, .deb)</a></li>
+              <li><a href="#download">Windows (.exe Setup)</a></li>
+              <li><a href="#download">Android APK (Phone & TV)</a></li>
+              <li><a href="https://github.com/baigcoder/rivulet/releases" target="_blank" rel="noreferrer">All GitHub Releases</a></li>
+            </ul>
+          </div>
 
-        <div class="footer-col">
-          <h5>Features</h5>
-          <ul>
-            <li><a href="#watch">Torrent Engine</a></li>
-            <li><a href="#player">Native mpv Player</a></li>
-            <li><a href="#live">Live TV & EPG</a></li>
-            <li><a href="#themes">Theme Customizer</a></li>
-          </ul>
-        </div>
+          <div class="footer-col">
+            <h5>Features</h5>
+            <ul>
+              <li><a href="#watch">Torrent Engine</a></li>
+              <li><a href="#dual-mode">Dual-Mode</a></li>
+              <li><a href="#player">Native Player</a></li>
+              <li><a href="#live">Live TV & EPG</a></li>
+              <li><a href="#themes">26 Themes</a></li>
+            </ul>
+          </div>
 
-        <div class="footer-col">
-          <h5>Project</h5>
-          <ul>
-            <li><a href="https://github.com/baigcoder/rivulet" target="_blank" rel="noreferrer">GitHub Repository</a></li>
-            <li><a href="https://github.com/baigcoder/rivulet/issues" target="_blank" rel="noreferrer">Report an Issue</a></li>
-            <li><a href="https://github.com/baigcoder/rivulet/blob/main/LICENSE" target="_blank" rel="noreferrer">MIT License</a></li>
-          </ul>
+          <div class="footer-col">
+            <h5>Project</h5>
+            <ul>
+              <li><a href="https://github.com/baigcoder/rivulet" target="_blank" rel="noreferrer">GitHub Repo</a></li>
+              <li><a href="https://github.com/baigcoder/rivulet/issues" target="_blank" rel="noreferrer">Report Issue</a></li>
+              <li><a href="https://github.com/baigcoder/rivulet/blob/main/LICENSE" target="_blank" rel="noreferrer">MIT License</a></li>
+            </ul>
+          </div>
         </div>
       </div>
 
@@ -1776,17 +1940,29 @@
     const navMenu = document.getElementById('nav-menu');
 
     if (navToggle && navMenu) {
+      const closeMenu = () => {
+        navMenu.classList.remove('is-open');
+        navToggle.classList.remove('is-active');
+        navToggle.setAttribute('aria-expanded', 'false');
+        document.body.classList.remove('menu-open');
+      };
+
       navToggle.addEventListener('click', (e) => {
         e.stopPropagation();
-        navMenu.classList.toggle('is-open');
+        const isOpen = navMenu.classList.toggle('is-open');
+        navToggle.classList.toggle('is-active', isOpen);
+        navToggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+        document.body.classList.toggle('menu-open', isOpen);
       });
+
       document.addEventListener('click', (e) => {
-        if (!navMenu.contains(e.target) && e.target !== navToggle) {
-          navMenu.classList.remove('is-open');
+        if (!navMenu.contains(e.target) && !navToggle.contains(e.target)) {
+          closeMenu();
         }
       });
+
       navMenu.querySelectorAll('a').forEach(link => {
-        link.addEventListener('click', () => navMenu.classList.remove('is-open'));
+        link.addEventListener('click', closeMenu);
       });
     }
 
@@ -1820,11 +1996,13 @@
     const vidAudioBtn = document.getElementById('vid-audio-btn');
     const vidAudioIcon = document.getElementById('vid-audio-icon');
     const vidAudioLabel = document.getElementById('vid-audio-label');
+    const vidBackBtn = document.getElementById('vid-back-btn');
+    const vidFullscreenBtn = document.getElementById('vid-fullscreen-btn');
     const tabBtns = document.querySelectorAll('.tab-btn');
 
     const pauseSvg = '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>';
     const playSvg = '<path d="M8 5v14l11-7z"/>';
-    const unmutedSvg = '<path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>';
+    const unmutedSvg = '<path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77zM3 9v6h4l5 5V4L7 9H3z"/>';
     const mutedSvg = '<path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73 4.27 3zM12 4L9.91 6.09 12 8.18V4z"/>';
 
     function formatTime(s) {
@@ -1877,6 +2055,32 @@
       }
     }
 
+    function toggleFullscreen() {
+      if (!showcaseScreen) return;
+      const isFs = showcaseScreen.classList.contains('is-fullscreen') ||
+                   !!(document.fullscreenElement || document.webkitFullscreenElement);
+
+      if (!isFs) {
+        if (showcaseScreen.requestFullscreen) {
+          showcaseScreen.requestFullscreen().catch(() => {});
+        } else if (showcaseScreen.webkitRequestFullscreen) {
+          showcaseScreen.webkitRequestFullscreen();
+        }
+        showcaseScreen.classList.add('is-fullscreen');
+        document.body.classList.add('menu-open');
+        showToast('⛶ Fullscreen');
+      } else {
+        if (document.exitFullscreen) {
+          document.exitFullscreen().catch(() => {});
+        } else if (document.webkitExitFullscreen) {
+          document.webkitExitFullscreen();
+        }
+        showcaseScreen.classList.remove('is-fullscreen');
+        document.body.classList.remove('menu-open');
+        showToast('Exit Fullscreen');
+      }
+    }
+
     if (showcaseVid) {
       showcaseVid.addEventListener('timeupdate', () => {
         if (!showcaseVid.duration) return;
@@ -1912,6 +2116,15 @@
       if (vidRewindBtn) vidRewindBtn.addEventListener('click', (e) => { e.stopPropagation(); seekVideo(-10); });
       if (vidForwardBtn) vidForwardBtn.addEventListener('click', (e) => { e.stopPropagation(); seekVideo(10); });
       if (vidAudioBtn) vidAudioBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleAudio(); });
+      if (vidFullscreenBtn) vidFullscreenBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleFullscreen(); });
+      if (vidBackBtn) vidBackBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleFullscreen(); });
+
+      document.addEventListener('fullscreenchange', () => {
+        if (!document.fullscreenElement) {
+          showcaseScreen.classList.remove('is-fullscreen');
+          document.body.classList.remove('menu-open');
+        }
+      });
 
       if (vidProgressBar) {
         vidProgressBar.addEventListener('click', (e) => {
@@ -1924,10 +2137,10 @@
         });
       }
 
-      // Keyboard arrow shortcuts (Space: play/pause, Left: -10s, Right: +10s, M: Mute)
+      // Keyboard arrow shortcuts (Space: play/pause, Left: -10s, Right: +10s, M: Mute, F: Fullscreen, Esc: Exit)
       document.addEventListener('keydown', (e) => {
         if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
-        const vidVisible = showcaseVid.style.display !== 'none';
+        const vidVisible = showcaseVid && showcaseVid.style.display !== 'none';
         if (!vidVisible) return;
 
         if (e.code === 'Space' || e.code === 'KeyK') {
@@ -1942,6 +2155,11 @@
         } else if (e.code === 'KeyM') {
           e.preventDefault();
           toggleAudio();
+        } else if (e.code === 'KeyF') {
+          e.preventDefault();
+          toggleFullscreen();
+        } else if (e.code === 'Escape' && showcaseScreen.classList.contains('is-fullscreen')) {
+          toggleFullscreen();
         }
       });
     }
@@ -1976,6 +2194,23 @@
       document.querySelectorAll('.theme-swatch').forEach(sw => sw.classList.remove('active'));
       const activeSwatch = Array.from(document.querySelectorAll('.theme-swatch')).find(sw => sw.getAttribute('onclick').includes(name));
       if (activeSwatch) activeSwatch.classList.add('active');
+    }
+
+    // Intersection Observer for Scroll Reveal Animations
+    if ('IntersectionObserver' in window) {
+      const revealObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('is-visible');
+            revealObserver.unobserve(entry.target);
+          }
+        });
+      }, { threshold: 0.08, rootMargin: '0px 0px -40px 0px' });
+
+      document.querySelectorAll('.card, .matrix-card, .stat-item, .faq-item, .dl-card').forEach(el => {
+        el.classList.add('reveal-on-scroll');
+        revealObserver.observe(el);
+      });
     }
   </script>
 </body>
