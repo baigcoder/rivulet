@@ -191,9 +191,8 @@ const chapterTitle = computed(() => {
       class="pointer-events-none absolute bottom-5 z-10 flex w-60 flex-col overflow-hidden rounded-lg bg-black shadow-lg -translate-x-1/2"
       :style="{ left: `clamp(7.5rem, ${pct(hover)}, calc(100% - 7.5rem))` }"
     >
-      <div class="relative aspect-video w-full bg-white/10">
+      <div v-if="thumb" class="relative aspect-video w-full bg-white/10">
         <img
-          v-if="thumb"
           :src="thumb"
           alt=""
           class="absolute inset-0 h-full w-full object-cover transition-opacity duration-100"

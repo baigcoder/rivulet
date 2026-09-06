@@ -412,19 +412,15 @@ async fn thumbnail(
         let out = ffmpeg_command(exe)
             .args(["-hide_banner", "-nostats", "-nostdin", "-v", "error"])
             .args(["-user_agent", crate::player_direct::STREAM_UA])
-            .args(["-rw_timeout", "5000000"])
+            .args(["-rw_timeout", "15000000"])
             // Before -i: seek by keyframe and start decoding there, rather than
             // reading the file from the top to reach one frame.
             .args(["-ss", &at.to_string()])
             .args(["-i", &url])
             .args(["-an", "-frames:v", "1"])
-            // yuvj420p because mjpeg has no 10-bit: an HDR release encodes to
-            // nothing at all without it.
             .args([
                 "-vf",
-                "scale=320:-2",
-                "-pix_fmt",
-                "yuvj420p",
+                "format=yuv420p,scale=320:-1",
                 "-f",
                 "mjpeg",
                 "-",
@@ -440,15 +436,13 @@ async fn thumbnail(
         let out_fallback = ffmpeg_command(exe)
             .args(["-hide_banner", "-nostats", "-nostdin", "-v", "error"])
             .args(["-user_agent", crate::player_direct::STREAM_UA])
-            .args(["-rw_timeout", "5000000"])
+            .args(["-rw_timeout", "15000000"])
             .args(["-i", &url])
             .args(["-ss", &at.to_string()])
             .args(["-an", "-frames:v", "1"])
             .args([
                 "-vf",
-                "scale=320:-2",
-                "-pix_fmt",
-                "yuvj420p",
+                "format=yuv420p,scale=320:-1",
                 "-f",
                 "mjpeg",
                 "-",

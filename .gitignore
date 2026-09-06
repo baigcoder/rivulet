@@ -33,3 +33,12 @@ src-tauri/*.db
 # in the flathub repo rather than this one. The generated manifest also has the
 # TMDB token substituted into it.
 packaging/flatpak/generated
+
+# Build artifacts
+*.apk
+*.AppImage
+*.deb
+*.msi
+*.dmg
+*.exe
+landing.html
