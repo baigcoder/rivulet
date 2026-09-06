@@ -74,6 +74,7 @@ const props = withDefaults(
     /** `MpvPlayer`'s own chrome flag — the only reveal signal the overlay path has. */
     chromeUp?: boolean
     busy?: boolean
+    busyText?: string
     channelName?: string
     /** What's on right now, when the page has a guide for this channel. */
     nowPlaying?: string
@@ -110,6 +111,7 @@ const props = withDefaults(
   {
     chromeUp: false,
     busy: false,
+    busyText: '',
     channelName: '',
     nowPlaying: '',
     channelLogo: '',
@@ -616,7 +618,39 @@ defineExpose({ show, hide, visible })
       </transition>
     </div>
 
-    <player-edge-hud v-if="edgeHud" :kind="edgeHud.kind" :level="edgeHud.level" :caption="edgeHud.caption" />
+    <!-- CENTER PLAYER LOADING / BUFFERING MODAL -->
+    <transition
+      enter-active-class="transition ease-out duration-200"
+      enter-from-class="opacity-0 scale-95"
+      enter-to-class="opacity-100 scale-100"
+      leave-active-class="transition ease-in duration-150"
+      leave-from-class="opacity-100 scale-100"
+      leave-to-class="opacity-0 scale-95"
+    >
+      <div
+        v-if="busy && !error"
+        data-cut
+        class="pointer-events-auto absolute inset-0 z-30 grid place-items-center p-6"
+        :class="overlay ? 'bg-black' : 'bg-black/80 backdrop-blur-xl'"
+      >
+        <div class="flex flex-col items-center space-y-4 p-6 text-center">
+          <div class="relative grid size-16 place-items-center">
+            <div class="absolute inset-0 rounded-full border-4 border-red-500/20" />
+            <div class="absolute inset-0 animate-spin rounded-full border-4 border-red-500 border-t-transparent" />
+            <div class="size-2 rounded-full bg-red-500 animate-pulse" />
+          </div>
+
+          <div class="space-y-1 max-w-sm">
+            <p class="text-title-small font-semibold text-white">
+              {{ busyText || $t('Connecting to live stream…') }}
+            </p>
+            <p v-if="channelName" class="text-body-small text-white/60 truncate">
+              {{ channelName }}
+            </p>
+          </div>
+        </div>
+      </div>
+    </transition>
 
     <!-- CENTER PLAYER ERROR MODAL -->
     <transition

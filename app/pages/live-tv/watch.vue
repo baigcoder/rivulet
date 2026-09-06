@@ -236,6 +236,18 @@ const autoSkipping = computed<boolean>(() =>
 const waiting = computed(() =>
   !hasPicture.value && (resolving.value || autoSkipping.value || (!!streamUrl.value && !overlayError.value)))
 
+const statusLine = computed(() => {
+  if (resolving.value)
+    return $t('Connecting to live stream…')
+  if (autoSkipping.value) {
+    return $t('Channel unavailable, trying next channel ({attempt} of {total})…', {
+      attempt: autoSkips.value,
+      total: MAX_AUTO_SKIPS,
+    })
+  }
+  return $t('Connecting to live stream…')
+})
+
 /**
  * The player must get the loopback proxy URL, not the raw M3U link.
  * `liveResolveStream` wraps the channel through 127.0.0.1:3031 and
@@ -655,6 +667,8 @@ onUnmounted(() => {
       :muted="playerMuted"
       :has-prev="hasPrev"
       :has-next="hasNext"
+      :busy="waiting"
+      :busy-text="statusLine"
       :channel-name="channelName"
       :now-playing="nowPlaying"
       :channel-logo="channelLogo"

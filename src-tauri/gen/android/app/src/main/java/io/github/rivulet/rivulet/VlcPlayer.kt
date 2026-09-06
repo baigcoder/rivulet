@@ -543,8 +543,8 @@ class RivuletPlayer(private val activity: MainActivity) {
     } else {
       val tracks = p.videoTracks
       if (tracks != null && tracks.isNotEmpty()) {
-        val t = tracks.firstOrNull { it.width > 0 && it.height > 0 } ?: tracks[0]
-        if (t.width > 0 && t.height > 0) {
+        val t = tracks.filterNotNull().firstOrNull { it.width > 0 && it.height > 0 } ?: tracks.firstOrNull()
+        if (t != null && t.width > 0 && t.height > 0) {
           vw = t.width
           vh = t.height
         }

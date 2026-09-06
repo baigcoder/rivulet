@@ -201,7 +201,17 @@ const overlayError = computed(() => {
 
 // ── Loading a channel ────────────────────────────────────────────
 
+let loadTimeoutTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearLoadTimeout(): void {
+  if (loadTimeoutTimer) {
+    clearTimeout(loadTimeoutTimer)
+    loadTimeoutTimer = null
+  }
+}
+
 function clearReconnect(): void {
+  clearLoadTimeout()
   if (reconnectTimer) {
     clearTimeout(reconnectTimer)
     reconnectTimer = null
@@ -316,6 +326,13 @@ async function load({ fresh } = { fresh: true }): Promise<void> {
     return
   }
 
+  clearLoadTimeout()
+  loadTimeoutTimer = setTimeout(() => {
+    if (!playerPlaying.value && (premium.player === 'loading' || premium.player === 'reconnecting' || premium.player === 'buffering')) {
+      void onPlaybackFailed('dead')
+    }
+  }, 15000)
+
   if (fresh && !isVod.value) {
     const ch = await resolveChannel(id)
     if (id !== channelId.value)
@@ -424,6 +441,7 @@ function syncPlayerState(): void {
   // reconnect attempt. Otherwise a dead-token error sits forever under a
   // perfectly good picture.
   if (playerPlaying.value && !wasPlaying) {
+    clearLoadTimeout()
     premium.resetPlayer()
     premium.setPlayer('playing')
     playerCatchError.value = ''
@@ -639,6 +657,7 @@ onUnmounted(() => {
       :has-prev="isVod ? false : hasPrev"
       :has-next="isVod ? false : hasNext"
       :busy="busy"
+      :busy-text="statusLine"
       :channel-name="channelName"
       :now-playing="isVod ? '' : nowTitle"
       :channel-logo="isVod ? '' : channelLogo"
