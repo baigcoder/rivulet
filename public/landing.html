@@ -613,6 +613,74 @@
       flex-wrap: wrap;
       gap: 10px;
     }
+    .dl-wrap {
+      position: relative;
+      display: inline-block;
+    }
+    .dl-wrap .dl-menu {
+      position: absolute;
+      top: calc(100% + 8px);
+      left: 50%;
+      transform: translateX(-50%) translateY(-4px);
+      min-width: 260px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 6px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, .5), 0 0 0 1px rgba(var(--accent-rgb), .12);
+      z-index: 50;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .15s, transform .15s;
+    }
+    .dl-wrap.is-open .dl-menu {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateX(-50%) translateY(0);
+    }
+    .dl-menu a {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      color: var(--on);
+      font-size: .9375rem;
+      font-weight: 600;
+      transition: background .12s, color .12s;
+    }
+    .dl-menu a:hover, .dl-menu a:focus-visible {
+      background: rgba(var(--accent-rgb), .12);
+      color: var(--accent);
+      outline: none;
+    }
+    .dl-menu a .dl-fmt {
+      font-family: var(--mono);
+      font-size: .6875rem;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--dim);
+      background: rgba(255,255,255,.06);
+      padding: 3px 6px;
+      border-radius: 4px;
+    }
+    .dl-menu a:hover .dl-fmt, .dl-menu a:focus-visible .dl-fmt {
+      color: var(--accent);
+      background: rgba(var(--accent-rgb), .15);
+    }
+    .dl-caret {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-right: 2px solid currentColor;
+      border-bottom: 2px solid currentColor;
+      transform: rotate(45deg) translate(-2px, -2px);
+      transition: transform .15s;
+    }
+    .dl-wrap.is-open .dl-caret {
+      transform: rotate(-135deg) translate(-2px, -2px);
+    }
     .hint { margin-top: 14px; font-size: .8125rem; color: var(--faint); }
 
     /* ── FAQ ────────────────────────────────────────────────────────────── */
@@ -1138,6 +1206,12 @@
     try {
       var DL = 'https://github.com/baigcoder/rivulet/releases/latest/download/';
       var RELEASES = 'https://github.com/baigcoder/rivulet/releases/latest';
+      var LINUX_FORMATS = [
+        { fmt: '.deb',     name: 'Debian / Ubuntu', href: DL + 'Rivulet_0.6.4_amd64.deb' },
+        { fmt: '.AppImage', name: 'AppImage (universal)', href: DL + 'Rivulet.AppImage' },
+        { fmt: '.rpm',     name: 'Fedora / RHEL',  href: DL + 'Rivulet-0.6.4.x86_64.rpm' },
+        { fmt: 'AUR',      name: 'Arch (AUR)',     href: 'https://aur.archlinux.org/packages/rivulet' }
+      ];
       var P = {
         linux:   { name: 'Linux',   href: DL + 'Rivulet_0.6.4_amd64.deb', hint: 'Debian/Ubuntu. Needs system mpv and ffmpeg.' },
         windows: { name: 'Windows', href: DL + 'Rivulet_Setup.exe', hint: '' },
@@ -1158,11 +1232,79 @@
       var btnBox = document.getElementById('dl-buttons');
       if (btnBox) {
         order.forEach(function (k, i) {
-          var a = document.createElement('a');
-          a.href = P[k].href;
-          a.className = i === 0 ? 'btn btn-primary' : 'btn btn-ghost';
-          a.textContent = (i === 0 ? 'Download for ' : '') + P[k].name;
-          btnBox.appendChild(a);
+          if (k === 'linux') {
+            var wrap = document.createElement('div');
+            wrap.className = 'dl-wrap';
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = i === 0 ? 'btn btn-primary' : 'btn btn-ghost';
+            btn.setAttribute('aria-haspopup', 'true');
+            btn.setAttribute('aria-expanded', 'false');
+            btn.innerHTML = (i === 0 ? 'Download for ' : '') + P[k].name + ' <span class="dl-caret" aria-hidden="true"></span>';
+            var menu = document.createElement('div');
+            menu.className = 'dl-menu';
+            menu.setAttribute('role', 'menu');
+            LINUX_FORMATS.forEach(function (f) {
+              var a = document.createElement('a');
+              a.href = f.href;
+              a.setAttribute('role', 'menuitem');
+              a.innerHTML = '<span>' + f.name + '</span><span class="dl-fmt">' + f.fmt + '</span>';
+              menu.appendChild(a);
+            });
+            wrap.appendChild(btn);
+            wrap.appendChild(menu);
+            btn.addEventListener('click', function (e) {
+              e.stopPropagation();
+              var open = wrap.classList.toggle('is-open');
+              btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+            });
+            document.addEventListener('click', function (e) {
+              if (!wrap.contains(e.target)) {
+                wrap.classList.remove('is-open');
+                btn.setAttribute('aria-expanded', 'false');
+              }
+            });
+            btn.addEventListener('keydown', function (e) {
+              if (e.key === 'Escape') {
+                wrap.classList.remove('is-open');
+                btn.setAttribute('aria-expanded', 'false');
+                btn.focus();
+              } else if (e.key === 'ArrowDown' || (e.key === 'Enter' || e.key === ' ') && wrap.classList.contains('is-open')) {
+                e.preventDefault();
+                if (!wrap.classList.contains('is-open')) {
+                  wrap.classList.add('is-open');
+                  btn.setAttribute('aria-expanded', 'true');
+                }
+                var items = menu.querySelectorAll('a');
+                if (items.length) items[0].focus();
+              }
+            });
+            menu.addEventListener('keydown', function (e) {
+              var items = Array.prototype.slice.call(menu.querySelectorAll('a'));
+              var idx = items.indexOf(document.activeElement);
+              if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                items[(idx + 1) % items.length].focus();
+              } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                items[(idx - 1 + items.length) % items.length].focus();
+              } else if (e.key === 'Escape') {
+                wrap.classList.remove('is-open');
+                btn.setAttribute('aria-expanded', 'false');
+                btn.focus();
+              } else if (e.key === 'Tab') {
+                wrap.classList.remove('is-open');
+                btn.setAttribute('aria-expanded', 'false');
+              }
+            });
+            btnBox.appendChild(wrap);
+          } else {
+            var a = document.createElement('a');
+            a.href = P[k].href;
+            a.className = i === 0 ? 'btn btn-primary' : 'btn btn-ghost';
+            a.textContent = (i === 0 ? 'Download for ' : '') + P[k].name;
+            btnBox.appendChild(a);
+          }
         });
       }
 
