@@ -64,6 +64,16 @@ watch(featured, (_m, _old, onCleanup) => {
 const trailerDialog = ref(false)
 const trailerKey = computed(() => featuredDetail.value?.trailer)
 
+async function openFeaturedTrailer() {
+  const url = `https://www.youtube.com/watch?v=${trailerKey.value}`
+  try {
+    await useTauriShellOpen(url)
+  }
+  catch {
+    trailerDialog.value = true
+  }
+}
+
 function runtimeText(min?: number) {
   if (!min)
     return ''
@@ -317,7 +327,7 @@ const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
               <v-btn :prepend-icon="mdiInformationOutline" size="large" variant="tonal" class="bg-white/10 hover:bg-white/20" :to="mediaLink(featured)" @click="ui.open(featured); prefetchMediaDetail(featured)">
                 {{ $t('Details') }}
               </v-btn>
-              <v-btn v-if="trailerKey" size="large" variant="tonal" class="bg-white/10 hover:bg-white/20" @click="trailerDialog = true">
+              <v-btn v-if="trailerKey" size="large" variant="tonal" class="bg-white/10 hover:bg-white/20" @click="openFeaturedTrailer">
                 <v-icon :icon="mdiPlay" size="18" class="mr-1" />
                 {{ $t('Watch Trailer') }}
               </v-btn>

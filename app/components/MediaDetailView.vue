@@ -359,6 +359,16 @@ async function openTrailer() {
   }
 }
 
+async function showTrailer() {
+  const url = `https://www.youtube.com/watch?v=${trailerKey.value || media.value?.trailer}`
+  try {
+    await useTauriShellOpen(url)
+  }
+  catch {
+    trailer.value = true
+  }
+}
+
 const firstSeason = computed(() => media.value?.seasons[0]?.number ?? 1)
 
 const target = computed(() => {
@@ -670,7 +680,7 @@ watch(() => props.id, () => {
                 :prepend-icon="mdiYoutube"
                 :size="btnSize"
                 variant="tonal"
-                @click="trailer = true"
+                @click="showTrailer"
               >
                 {{ $t('Trailer') }}
               </v-btn>
