@@ -541,12 +541,19 @@ class RivuletPlayer(private val activity: MainActivity) {
       vw = track.width
       vh = track.height
     } else {
+      // currentVideoTrack already failed; try the first track via VideoTrack list
+      // which exposes width/height as public fields.
       val tracks = p.videoTracks
       if (tracks != null && tracks.isNotEmpty()) {
-        val t = tracks.filterNotNull().firstOrNull { it.width > 0 && it.height > 0 } ?: tracks.firstOrNull()
-        if (t != null && t.width > 0 && t.height > 0) {
-          vw = t.width
-          vh = t.height
+        val t = tracks.filterNotNull().firstOrNull()
+        if (t != null) {
+          // MediaPlayer.VideoTrack fields: width, height
+          val tw = t.javaClass.getField("width").getInt(t)
+          val th = t.javaClass.getField("height").getInt(t)
+          if (tw > 0 && th > 0) {
+            vw = tw
+            vh = th
+          }
         }
       }
       // Fallback: once we have ANY cache data or the player is playing,
