@@ -140,7 +140,7 @@ tauri-plugin-process = "2"
 # That is why .cargo/config.toml exists — see the comment there before removing
 # it, a Windows box has no nasm and the build script panics rather than cope.
 [dependencies.librqbit]
-version = "9.0.0-rc.0"
+version = "9.0.1"
 default-features = false
 features = [ "rust-tls", "http-api", "http-api-client", "tracing-subscriber-utils" ]
 
