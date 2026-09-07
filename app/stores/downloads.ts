@@ -162,11 +162,15 @@ export const useDownloadsStore = defineStore('downloads', () => {
         console.warn('[rivulet] torrentAction start failed, retrying:', startErr)
         await torrentAction(started.id, 'start')
       }
-      // `waitForEngineHash` polls the engine list itself, so once it says yes one
-      // refresh is enough — the retry loop that used to follow it only ever cost
-      // the button another two seconds of spinning.
-      await waitForEngineHash(started.hash, 8000)
-      await refresh()
+      // `start` returning successfully is the engine's acknowledgement: do not
+      // hold the player route on a list poll after that. In particular, a fresh
+      // magnet can take a few seconds to appear in `with_stats` while peers and
+      // metadata are coming up; waiting for that made playback look stuck at
+      // 0% even though the stream endpoint was already the thing that should
+      // drive piece priority. `focus()` refreshes before it manages bandwidth,
+      // and this refresh keeps the downloads page current without delaying the
+      // first frame.
+      void refresh()
     }
     return started
   }

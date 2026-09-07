@@ -48,7 +48,7 @@ pub fn cache_cli(engine: bool) -> &'static [&'static str] {
 			"--cache-secs=20",
 			"--demuxer-readahead-secs=5",
 			"--demuxer-lavf-analyzeduration=0.1",
-			"--demuxer-lavf-probesize=262144",
+			"--demuxer-lavf-probesize=1048576",
 		]
 	} else {
 		&[
@@ -58,7 +58,7 @@ pub fn cache_cli(engine: bool) -> &'static [&'static str] {
 			"--cache-secs=20",
 			"--demuxer-readahead-secs=10",
 			"--demuxer-lavf-analyzeduration=0.1",
-			"--demuxer-lavf-probesize=262144",
+			"--demuxer-lavf-probesize=1048576",
 			// First byte can wait on a debrid unlock; ffmpeg's 30s default
 			// aborts that and the reconnect is the extra 10s people see.
 			"--network-timeout=90",
@@ -114,7 +114,7 @@ pub fn cache_kv(engine: bool) -> &'static [(&'static str, &'static str)] {
 			("cache-secs", "20"),
 			("demuxer-readahead-secs", "5"),
 			("demuxer-lavf-analyzeduration", "0.1"),
-			("demuxer-lavf-probesize", "262144"),
+			("demuxer-lavf-probesize", "1048576"),
 		]
 	} else {
 		&[
@@ -124,7 +124,7 @@ pub fn cache_kv(engine: bool) -> &'static [(&'static str, &'static str)] {
 			("cache-secs", "20"),
 			("demuxer-readahead-secs", "10"),
 			("demuxer-lavf-analyzeduration", "0.1"),
-			("demuxer-lavf-probesize", "262144"),
+			("demuxer-lavf-probesize", "1048576"),
 			("network-timeout", "90"),
 		]
 	}

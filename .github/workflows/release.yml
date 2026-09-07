@@ -127,8 +127,11 @@ jobs:
           # links `releases/latest/download/Rivulet.AppImage`, which only ever
           # resolves if the asset name never changes between releases.
           cp src-tauri/target/release/bundle/appimage/*.AppImage Rivulet.AppImage
+          cp src-tauri/target/release/bundle/deb/*.deb Rivulet.deb
+          cp src-tauri/target/release/bundle/rpm/*.rpm Rivulet.rpm
           gh release upload "${{ github.ref_name }}" \
-            src-tauri/target/release/bundle/appimage/*.AppImage Rivulet.AppImage --clobber
+            src-tauri/target/release/bundle/appimage/*.AppImage \
+            Rivulet.AppImage Rivulet.deb Rivulet.rpm --clobber
           if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
             echo "::warning::No TAURI_SIGNING_PRIVATE_KEY secret — this release ships without in-app updates. The app will point people at the release page instead."
           fi

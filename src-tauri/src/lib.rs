@@ -10,8 +10,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use librqbit::{
-    api::Api, dht::DhtPersistenceConfig, http_api::HttpApi, DhtSessionConfig, Session,
-    SessionOptions, SessionPersistenceConfig,
+    api::Api, dht::DhtPersistenceConfig, http_api::HttpApi, DhtSessionConfig, ListenerMode,
+    ListenerOptions, Session, SessionOptions, SessionPersistenceConfig,
 };
 use librqbit_dualstack_sockets::TcpListener;
 use tokio_util::sync::CancellationToken;
@@ -790,6 +790,17 @@ async fn run_torrent_server(
         // Films are routinely bigger than 2 GiB and a TV box is 32-bit. Boxed
         // here rather than through `.boxed()` — see LargeFileStorageFactory.
         default_storage_factory: Some(Box::new(LargeFileStorageFactory::default())),
+        listen: Some(ListenerOptions {
+            mode: ListenerMode::TcpAndUtp,
+            listen_addr: std::net::SocketAddr::from((
+                std::net::Ipv4Addr::UNSPECIFIED,
+                6881,
+            )),
+            enable_upnp_port_forwarding: true,
+            ipv4_only: true,
+            ..Default::default()
+        }),
+        ipv4_only: true,
         dht: with_dht.then(|| DhtSessionConfig {
             // Ask for a fresh port every launch. librqbit otherwise persists
             // whichever ephemeral port the OS handed it and re-binds that exact
