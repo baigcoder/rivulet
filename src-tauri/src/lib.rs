@@ -513,9 +513,9 @@ fn disk_space(app: tauri::AppHandle, path: Option<String>) -> Result<DiskSpace, 
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
-        let mut free_avail: i64 = 0;
-        let mut total_bytes: i64 = 0;
-        let mut _total_free: i64 = 0;
+        let mut free_avail: u64 = 0;
+        let mut total_bytes: u64 = 0;
+        let mut _total_free: u64 = 0;
         let ok = unsafe {
             windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(
                 wide.as_ptr(),
@@ -528,8 +528,8 @@ fn disk_space(app: tauri::AppHandle, path: Option<String>) -> Result<DiskSpace, 
             return Err(format!("GetDiskFreeSpaceExW({}) failed", root.display()));
         }
         Ok(DiskSpace {
-            free: free_avail as u64,
-            total: total_bytes as u64,
+            free: free_avail,
+            total: total_bytes,
         })
     }
 }
