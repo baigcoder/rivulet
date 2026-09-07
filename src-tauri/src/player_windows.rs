@@ -480,11 +480,15 @@ fn parent_window(window: &tauri::WebviewWindow) -> Result<isize, String> {
 	}
 }
 
-/// Which mpv to run. Windows has none of its own, so the build downloads one and
-/// Tauri ships it as a resource; PATH is only a fallback for a machine that
-/// happens to have its own install.
+/// Which mpv to run. Windows has none of its own, so the build embeds one
+/// into the binary and extracts it to `<app-local-data>/mpv/mpv.exe` on
+/// launch. That wins over the Tauri's bundle-resources path (what an
+/// installer-built copy would set up) and a system `mpv.exe` on PATH.
 fn mpv_binary(app: &tauri::AppHandle) -> std::ffi::OsString {
 	use tauri::Manager;
+	if let Some(p) = crate::embedded_binaries::extracted_mpv_path(app) {
+		return p.into_os_string();
+	}
 	app.path()
 		.resolve("mpv/mpv.exe", tauri::path::BaseDirectory::Resource)
 		.ok()

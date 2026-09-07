@@ -61,6 +61,10 @@ mod player_socket;
 #[cfg(target_os = "macos")]
 mod player_render_mac;
 
+/// Embeds the Windows mpv/ffmpeg binaries into the .exe itself, so a single
+/// `rivulet.exe` works without an `mpv/` folder beside it.
+mod embedded_binaries;
+
 /// Drops the quotes `tauri-plugin-deep-link` puts around the binary path in the
 /// `Exec=` line it writes.
 ///
@@ -248,6 +252,14 @@ const ENVELOPE_FLOOR: f32 = -91.0;
 fn ffmpeg(app: &tauri::AppHandle) -> &'static std::ffi::OsStr {
     static FOUND: std::sync::OnceLock<std::ffi::OsString> = std::sync::OnceLock::new();
     FOUND.get_or_init(|| {
+        // The Windows binary embeds ffmpeg alongside mpv and extracts it to
+        // the same place at startup; that wins over the bundle-resources
+        // path an installer-built copy would use, and a system ffmpeg
+        // after that.
+        if let Some(p) = embedded_binaries::extracted_ffmpeg_path(app) {
+            return p.into_os_string();
+        }
+
         // Resolves to nothing on the platforms that declare no such resource, so
         // this needs no cfg of its own.
         if let Some(bundled) = app
@@ -943,6 +955,12 @@ pub fn run() {
             api::commands::premium_entitlement,
         ])
         .setup(|app| {
+            // The Windows binary embeds mpv/ffmpeg — write them out to the
+            // app-local-data-dir before anything tries to launch them. The
+            // writes are idempotent (skipped if the file already has the
+            // expected size) so this is a no-op on subsequent launches.
+            embedded_binaries::ensure_extracted(&app.handle());
+
             // WebKitGTK's default user agent looks like Safari's, so YouTube
             // serves an embed the Safari player config — which WebKitGTK then
             // fails to run, and every trailer on a detail page dies with
