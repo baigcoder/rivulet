@@ -140,8 +140,13 @@ assert.match(
 )
 assert.match(
   playerSrc,
-  /res\.body\?\.cancel/,
-  'if the probe does run, it must not read a live body into an arrayBuffer',
+  /if \(local\) \{[\s\S]*reader\.read\(\)/,
+  'a torrent probe waits for a real first byte, not merely its HTTP headers',
+)
+assert.match(
+  playerSrc,
+  /else \{[\s\S]*res\.body\?\.cancel/,
+  'a live-stream probe still releases its never-ending body instead of reading it',
 )
 assert.match(
   playerSrc,

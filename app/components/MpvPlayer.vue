@@ -1856,11 +1856,27 @@ async function waitForStream(url: string, timeoutMs = 60000): Promise<{ ok: bool
         ? { signal: ctrl.signal, cache: 'no-store' }
         : { signal: ctrl.signal, cache: 'no-store', headers: { Range: 'bytes=0-0' } })
       status = res.status
-      // A live MPEG-TS has no end. `arrayBuffer()` waited for it, so Free TV
-      // hung in the probe and mpv never started. Cancel the body: the status
-      // is the verdict, and librqbit is not left holding a reader either.
-      void res.body?.cancel().catch(() => {})
       if (res.ok || res.status === 206) {
+        if (local) {
+          // librqbit sends the HTTP headers as soon as it creates a stream,
+          // before it has the piece at byte zero. The old status-only probe
+          // immediately cancelled that stream, which also removed librqbit's
+          // priority for the beginning of the file. mpv then commonly seeks
+          // for an MKV index first and both readers wait forever while the
+          // engine downloads unrelated pieces. Hold this one-byte request
+          // until the first piece arrives, then mpv inherits a file whose
+          // beginning is really readable.
+          const reader = res.body?.getReader()
+          const first = reader ? await reader.read() : null
+          await reader?.cancel().catch(() => {})
+          if (!first || first.done || !first.value.byteLength)
+            continue
+        }
+        else {
+          // A live MPEG-TS has no end. Reading it would wait forever, so its
+          // status is the verdict and the reader must be released at once.
+          void res.body?.cancel().catch(() => {})
+        }
         // Some debrid resolvers answer a dead quota with a tiny placeholder
         // clip ("limits_exceeded.mp4") — valid video bytes, wrong movie. The
         // final URL after redirects and the full size from Content-Range give
