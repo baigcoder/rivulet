@@ -92,7 +92,7 @@ function syncPlayerState() {
   const paused = asBool(p.paused)
   const videoW = typeof p.videoWidth === 'number' ? p.videoWidth : 0
   const pos = typeof p.position === 'number' ? p.position : 0
-  
+
   hasPicture.value = (videoW > 0) || (started && (!paused || pos > 0))
   playerPlaying.value = started && (!paused || pos > 0) && hasPicture.value
   playerBehindLive.value = asBool(p.behindLive)

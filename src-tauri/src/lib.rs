@@ -504,8 +504,48 @@ fn disk_space(app: tauri::AppHandle, path: Option<String>) -> Result<DiskSpace, 
     }
     #[cfg(not(unix))]
     {
-        let _ = dir;
-        Err("disk space is only implemented for unix targets".into())
+        use std::os::windows::ffi::OsStrExt;
+        // GetDiskFreeSpaceExW needs a root path (drive letter or UNC share),
+        // not a deep subdirectory. Walk up until we find one that exists.
+        let root = find_drive_root(&dir);
+        let wide: Vec<u16> = root
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let mut free_avail: i64 = 0;
+        let mut total_bytes: i64 = 0;
+        let mut _total_free: i64 = 0;
+        let ok = unsafe {
+            windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(
+                wide.as_ptr(),
+                &mut free_avail,
+                &mut total_bytes,
+                &mut _total_free,
+            )
+        };
+        if ok == 0 {
+            return Err(format!("GetDiskFreeSpaceExW({}) failed", root.display()));
+        }
+        Ok(DiskSpace {
+            free: free_avail as u64,
+            total: total_bytes as u64,
+        })
+    }
+}
+
+/// Walk up from a deep path until we find a root (drive letter or UNC share)
+/// that `GetDiskFreeSpaceExW` can measure. The API requires a volume root —
+/// passing `C:\Users\foo\bar` fails if the path does not exist yet, but
+/// `C:\` always does.
+#[cfg(not(unix))]
+fn find_drive_root(path: &std::path::Path) -> PathBuf {
+    let mut cur = path.to_path_buf();
+    loop {
+        if cur.exists() || cur.parent().is_none() {
+            return cur;
+        }
+        cur.pop();
     }
 }
 

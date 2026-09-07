@@ -50,10 +50,10 @@ import {
 } from '@mdi/js'
 import { invoke } from '@tauri-apps/api/core'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { extractQualityHint } from '~/utils/channelName'
 import { isAndroid, isTv } from '~/utils/platform'
 import { fmtHudTime, friendlyPlaybackError } from '~/utils/playbackError'
 import { proxyLogo } from '~/utils/premiumTv'
-import { extractQualityHint } from '~/utils/channelName'
 
 export interface ChannelEntry {
   id: string
@@ -155,9 +155,9 @@ const overlay = hasVideoOverlay()
 // ── Quality display ──────────────────────────────────────────────────
 /** Quality hint extracted from channel title, program title, or source quality. */
 const titleQualityHint = computed(() => {
-  return extractQualityHint(props.sourceQuality || '') ||
-         extractQualityHint(props.channelName || '') ||
-         extractQualityHint(props.nowPlaying || '')
+  return extractQualityHint(props.sourceQuality || '')
+    || extractQualityHint(props.channelName || '')
+    || extractQualityHint(props.nowPlaying || '')
 })
 
 /** The decoded resolution from mpv, or the source quality label, for the badge. */

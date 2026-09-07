@@ -151,7 +151,17 @@ export const useDownloadsStore = defineStore('downloads', () => {
       // Before the start, so the very first eviction poll already sees this as
       // something the user just asked for rather than the coldest thing here.
       touched.value[started.hash] = Date.now()
-      await torrentAction(started.id, 'start').catch(() => {})
+      try {
+        await torrentAction(started.id, 'start')
+      }
+      catch (startErr) {
+        // A start that fails leaves the torrent in the engine but paused: the
+        // downloads page shows it at 0% with no explanation. Surface the error
+        // so the caller can report it, and retry once — the engine may not have
+        // finished registering the torrent from the add above.
+        console.warn('[rivulet] torrentAction start failed, retrying:', startErr)
+        await torrentAction(started.id, 'start')
+      }
       // `waitForEngineHash` polls the engine list itself, so once it says yes one
       // refresh is enough — the retry loop that used to follow it only ever cost
       // the button another two seconds of spinning.
@@ -311,7 +321,13 @@ export const useDownloadsStore = defineStore('downloads', () => {
     await Promise.all(paused.map(other => torrentAction(other, 'pause').catch(() => {})))
     // Always try to start the torrent - it may not be in local cache yet but exists in engine.
     // Calling start on already-started torrent is idempotent.
-    await torrentAction(id, 'start').catch(() => {})
+    try {
+      await torrentAction(id, 'start')
+    }
+    catch {
+      // Best effort: the torrent may already be running or the engine is
+      // temporarily busy. Playback continues from the stream URL either way.
+    }
   }
 
   /**

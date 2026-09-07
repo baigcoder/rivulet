@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import type { TmdbPage } from '~/utils/tmdb'
-import { isTauri } from '@tauri-apps/api/core'
 import { mdiArrowRight, mdiArrowUp, mdiBookmark, mdiBookmarkOutline, mdiChevronLeft, mdiChevronRight, mdiClose, mdiHeart, mdiHeartOutline, mdiInformationOutline, mdiPlay, mdiStar, mdiTelevision } from '@mdi/js'
 
 const ui = useUiStore()
@@ -67,7 +66,8 @@ const trailerKey = computed(() => featuredDetail.value?.trailer)
 
 function openFeaturedTrailer() {
   const key = trailerKey.value
-  if (!key) return
+  if (!key)
+    return
   trailerDialog.value = true
 }
 

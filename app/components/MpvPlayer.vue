@@ -2386,7 +2386,8 @@ async function poll() {
   if (vp && typeof vp.w === 'number' && typeof vp.h === 'number' && vp.w > 0) {
     videoWidth.value = vp.w
     videoHeight.value = vp.h
-  } else if (!p.pause && (isLive.value || (typeof p['time-pos'] === 'number' && p['time-pos'] > 0))) {
+  }
+  else if (!p.pause && (isLive.value || (typeof p['time-pos'] === 'number' && p['time-pos'] > 0))) {
     videoWidth.value ||= 1280
     videoHeight.value ||= 720
   }

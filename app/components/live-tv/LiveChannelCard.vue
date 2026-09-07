@@ -5,12 +5,12 @@
 import type { LiveChannel } from '~/utils/iptv'
 import { mdiPlay, mdiStar } from '@mdi/js'
 import { computed, onUnmounted, ref, watch } from 'vue'
+import { useLiveTvStore } from '~/stores/liveTv'
 import { categoryLabel } from '~/utils/categoryLabel'
 import { channelTileStyle, isPlaceholderLogoUrl, isTinyLogo } from '~/utils/channelLogo'
 import { channelInitials, parseChannelName } from '~/utils/channelName'
-import { proxyLogo } from '~/utils/premiumTv'
 
-import { useLiveTvStore } from '~/stores/liveTv'
+import { proxyLogo } from '~/utils/premiumTv'
 
 const props = defineProps<{
   channel: LiveChannel

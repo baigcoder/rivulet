@@ -5,8 +5,8 @@
  * case it stays on the caller's stream.
  */
 import type { Media, MediaType } from '~/utils/tmdb'
-import { isTauri } from '@tauri-apps/api/core'
 import { mdiAlertCircleOutline, mdiBookmark, mdiBookmarkOutline, mdiClose, mdiEye, mdiEyeOutline, mdiHeart, mdiHeartOutline, mdiOpenInNew, mdiPlay, mdiShieldLockOutline, mdiStar, mdiVolumeHigh, mdiVolumeOff, mdiYoutube } from '@mdi/js'
+import { isTauri } from '@tauri-apps/api/core'
 import { useTitleImages } from '~/utils/titleImages'
 
 const props = defineProps<{
@@ -361,7 +361,8 @@ async function openTrailer() {
 
 function showTrailer() {
   const key = trailerKey.value || media.value?.trailer
-  if (!key) return
+  if (!key)
+    return
   trailer.value = true
 }
 

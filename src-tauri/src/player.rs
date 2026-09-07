@@ -511,7 +511,7 @@ pub fn player_status(state: tauri::State<'_, PlayerState>) -> PlayerStatus {
 		None => false,
 	};
 
-	let log_tail = if running { None } else { player.log.as_deref().and_then(player_socket::log_tail) };
+	let log_tail = player.log.as_deref().and_then(player_socket::log_tail);
 	PlayerStatus { running, log_tail }
 }
 

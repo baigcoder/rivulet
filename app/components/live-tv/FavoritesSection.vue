@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import type { LiveChannel } from '~/utils/iptv'
 import { mdiPlay, mdiTelevision } from '@mdi/js'
-import { proxyLogo } from '~/utils/premiumTv'
-
 import { useLiveTvStore } from '~/stores/liveTv'
+
+import { proxyLogo } from '~/utils/premiumTv'
 
 defineProps<{
   channels: LiveChannel[]

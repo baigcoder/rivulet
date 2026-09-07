@@ -1,0 +1,6 @@
+# aws-lc-sys hashes pieces with NASM-assembled x86_64 fast paths. Windows has
+# no NASM, so the build script panics. This tells it to use the prebuilt
+# objects the crate ships for that target instead. The flag is scoped to
+# Windows x86_64 by aws-lc-sys itself — it changes nothing on any other host.
+[env]
+AWS_LC_SYS_PREBUILT_NASM = "1"
