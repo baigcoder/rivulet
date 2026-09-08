@@ -134,6 +134,58 @@ fn forget_redirect(from: &str) {
         .remove(from);
 }
 
+// --- yt-dlp resolution cache ---------------------------------------------
+// A YouTube trailer's <video> element issues several requests for one file —
+// the initial GET, then Range seeks as it plays. Resolving the ID through
+// yt-dlp each time respawns a ~40 MB self-extracting process per request, and
+// the first cold run on an AppImage can take many seconds (or hang on
+// YouTube's anti-bot throttling), which blocks the webview's media pipeline and
+// appears as the detail page freezing. Cache the resolved direct URL per ID so
+// only the first request pays the cost, and bound how long we ever wait.
+
+const YTDLP_TTL: Duration = Duration::from_secs(60 * 60);
+const YTDLP_TIMEOUT: Duration = Duration::from_secs(12);
+
+struct YtResolved {
+    url: String,
+    at: Instant,
+}
+
+static YT_RESOLVED: OnceLock<Mutex<HashMap<String, YtResolved>>> = OnceLock::new();
+
+fn yt_resolved() -> &'static Mutex<HashMap<String, YtResolved>> {
+    YT_RESOLVED.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cached_youtube(id: &str) -> Option<String> {
+    let mut map = yt_resolved().lock().unwrap_or_else(|e| e.into_inner());
+    match map.get(id) {
+        Some(c) if c.at.elapsed() < YTDLP_TTL => Some(c.url.clone()),
+        Some(_) => {
+            map.remove(id);
+            None
+        }
+        None => None,
+    }
+}
+
+fn remember_youtube(id: &str, url: &str) {
+    let mut map = yt_resolved().lock().unwrap_or_else(|e| e.into_inner());
+    if map.len() > 128 {
+        map.retain(|_, c| c.at.elapsed() < YTDLP_TTL);
+        if map.len() > 128 {
+            map.clear();
+        }
+    }
+    map.insert(
+        id.to_string(),
+        YtResolved {
+            url: url.to_string(),
+            at: Instant::now(),
+        },
+    );
+}
+
 fn url_gate(url: &str) -> Arc<AsyncMutex<()>> {
     let mut g = GATES
         .get_or_init(|| Mutex::new(HashMap::new()))
@@ -700,64 +752,99 @@ async fn serve_youtube_stream(
     let range = extract_header(request, "Range")
         .or_else(|| is_head.then(|| "bytes=0-0".to_string()));
 
-    // Use yt-dlp to resolve the direct video stream URL at up to 1080p.
+    // Use yt-dlp to resolve the direct video stream URL at up to 1080p. The
+    // result is cached per ID so a <video>'s repeated Range requests don't each
+    // respawn yt-dlp, and the whole resolution is bounded by a timeout so a
+    // hung yt-dlp (AppImage cold run, YouTube throttling) returns a fast 502
+    // instead of blocking the media pipeline free.
+    if let Some(resolved) = cached_youtube(&id) {
+        eprintln!("[iptv-proxy] cached youtube-stream {id} → {resolved}");
+        return stream_resolved_youtube(stream, &id, &resolved, range.as_deref(), is_head).await;
+    }
+
     let url = format!("https://www.youtube.com/watch?v={id}");
     let ytdlp = ytdlp_path()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone()
         .unwrap_or_else(|| PathBuf::from("yt-dlp"));
-    let output = tokio::process::Command::new(&ytdlp)
+    let cmd = tokio::process::Command::new(&ytdlp)
         .arg("--get-url")
         .arg("--format")
         .arg("best[height<=1080]/best")
         .arg(&url)
-        .output()
-        .await;
+        .output();
+
+    let output = match tokio::time::timeout(YTDLP_TIMEOUT, cmd).await {
+        Ok(Ok(o)) => o,
+        Ok(Err(e)) => {
+            eprintln!("[iptv-proxy] yt-dlp not found: {e}");
+            write_response(stream, 502, "Bad Gateway", "text/plain", b"yt-dlp not installed").await?;
+            return Ok(());
+        }
+        Err(_) => {
+            eprintln!("[iptv-proxy] yt-dlp timed out after {YTDLP_TIMEOUT:?} for {id}");
+            write_response(stream, 502, "Bad Gateway", "text/plain", b"yt-dlp timed out").await?;
+            return Ok(());
+        }
+    };
 
     let resolved = match output {
-        Ok(o) if o.status.success() => {
+        o if o.status.success() => {
             let resolved = String::from_utf8_lossy(&o.stdout).trim().to_string();
             if resolved.is_empty() {
                 write_response(stream, 502, "Bad Gateway", "text/plain", b"yt-dlp returned empty URL").await?;
                 return Ok(());
             }
             eprintln!("[iptv-proxy] yt-dlp resolved youtube-stream {id} → {resolved}");
+            remember_youtube(&id, &resolved);
             resolved
         }
-        Ok(o) => {
+        o => {
             let stderr = String::from_utf8_lossy(&o.stderr);
             eprintln!("[iptv-proxy] yt-dlp failed for {id}: {stderr}");
             write_response(stream, 502, "Bad Gateway", "text/plain", b"yt-dlp failed").await?;
             return Ok(());
         }
-        Err(e) => {
-            eprintln!("[iptv-proxy] yt-dlp not found: {e}");
-            write_response(stream, 502, "Bad Gateway", "text/plain", b"yt-dlp not installed").await?;
-            return Ok(());
-        }
     };
 
+    stream_resolved_youtube(stream, &id, &resolved, range.as_deref(), is_head).await
+}
+
+/// Given an already-resolved direct stream URL, fetch its bytes and proxy them
+/// to the client. Separated so the cached path and the freshly-resolved path
+/// share the same upstream handling.
+async fn stream_resolved_youtube(
+    stream: &mut tokio::net::TcpStream,
+    id: &str,
+    resolved: &str,
+    range: Option<&str>,
+    is_head: bool,
+) -> anyhow::Result<()> {
     // Now stream the resolved CDN URL's bytes back through the loopback. A 302
     // to a cross-origin googlevideo URL is fragile — the webview <video> would
     // fetch it without our CORS headers or browser UA. Proxying means the
     // element only ever talks to 127.0.0.1:3031, and we control the headers.
-    // Forward the client's Range so seeks hit the right byte window.
-    let resp = match stream_get(&resolved, None, Some("https://www.youtube.com"), range.as_deref())
-        .send()
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => {
+    // Forward the client's Range so seeks hit the right byte window. Bound the
+    // resolve handshake so a stalled CDN can't block the caller indefinitely.
+    let send = stream_get(resolved, None, Some("https://www.youtube.com"), range).send();
+    let resp = match tokio::time::timeout(Duration::from_secs(15), send).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => {
             eprintln!("[iptv-proxy] upstream error for resolved youtube stream {id}: {e}");
             write_response(stream, 502, "Bad Gateway", "text/plain", e.to_string().as_bytes()).await?;
+            return Ok(());
+        }
+        Err(_) => {
+            eprintln!("[iptv-proxy] upstream timed out for resolved youtube stream {id}");
+            write_response(stream, 502, "Bad Gateway", "text/plain", b"upstream timed out").await?;
             return Ok(());
         }
     };
     let status = resp.status();
     if !status.is_success() && status.as_u16() != 206 {
         // Some CDNs reject Range outright; retry once without it.
-        let retry = stream_get(&resolved, None, Some("https://www.youtube.com"), None)
+        let retry = stream_get(resolved, None, Some("https://www.youtube.com"), None)
             .send()
             .await;
         if let Ok(r) = retry {

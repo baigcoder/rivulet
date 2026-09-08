@@ -560,10 +560,10 @@ watch(() => props.id, () => {
               class="absolute left-1/2 top-1/2 min-w-[177.78vh] min-h-[56.25vw] w-[130%] h-[130%] -translate-x-1/2 -translate-y-1/2 object-cover transition-opacity duration-500"
               :class="heroPlaying ? 'opacity-100' : 'opacity-0'"
               :muted="heroMuted"
-              autoplay
+              :autoplay="heroIdle"
               loop
               playsinline
-              preload="metadata"
+              preload="none"
               tabindex="-1"
               aria-hidden="true"
               @playing="onHeroVideoPlaying"
