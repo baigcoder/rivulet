@@ -63,6 +63,14 @@ jobs:
       - if: runner.os == 'Windows'
         run: bun scripts/build/mpv.ts
 
+      # Every desktop build ships its own yt-dlp so the trailer (a YouTube direct
+      # stream resolved by the /youtube-stream proxy) plays on machines without it.
+      # The Linux/macOS runners fetch their host binary; Windows its own .exe.
+      - if: runner.os == 'Windows'
+        run: bun scripts/build/ytdlp.ts windows
+      - if: runner.os != 'Windows'
+        run: bun scripts/build/ytdlp.ts
+
       # macOS links libmpv instead of launching mpv, so it is needed to build at
       # all. Carrying it — and the ffmpeg tree behind it — into the .app is then
       # scripts/build/macos/bundle-dylib.ts, via the beforeBundleCommand hook,

@@ -128,7 +128,7 @@ async function openFolder() {
       <v-text-field
         v-model="settings.downloadDir"
         :label="$t('Folder')"
-        :placeholder="$t('Default: the app\'s own cache folder')"
+        :placeholder="$t('Default: your Downloads folder (Rivulet)')"
         persistent-placeholder
         hide-details
         :readonly="!!volumes"

@@ -27,6 +27,7 @@ import { homedir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import process from 'node:process'
 import { ensureMpv, mpvVersion } from './mpv'
+import { ensureYtdlp, targetPlatform, ytdlpVersion } from './ytdlp'
 
 const HOST_BUNDLES: Record<string, string> = {
   linux: '.deb, .rpm and .AppImage',
@@ -213,6 +214,11 @@ async function buildDesktop(extra: string[]) {
   if (process.platform === 'win32')
     await bundleMpv()
 
+  // Every desktop build ships its own yt-dlp so the trailer (a YouTube direct
+  // stream resolved by the /youtube-stream proxy) plays even where yt-dlp is
+  // not installed. See scripts/build/ytdlp.ts.
+  await bundleYtdlp()
+
   const signing = updaterSigning()
 
   console.log(`\n→ Building for ${process.platform}: ${bundles}\n`)
@@ -266,6 +272,22 @@ async function bundleMpv() {
 }
 
 /**
+ * Fetch the yt-dlp binary the bundler is about to expect in the target
+ * platform's resource list. The build target platform may differ from the host
+ * (Linux cross-compiling for Windows), so pass the target through.
+ */
+async function bundleYtdlp(target?: 'linux' | 'windows' | 'macos') {
+  try {
+    const bin = ensureYtdlp(target ?? targetPlatform(process.platform))
+    const version = ytdlpVersion(bin)
+    console.log(`✓ Bundling yt-dlp ${version || bin}\n`)
+  }
+  catch (e) {
+    die(e instanceof Error ? e.message : String(e))
+  }
+}
+
+/**
  * Windows, cross-compiled. cargo-xwin supplies the MSVC headers and import
  * libraries and lld-link does the linking, so the whole tree — tauri, wry,
  * webview2-com, librqbit — builds here without a Windows machine.
@@ -284,6 +306,8 @@ async function buildWindows(extra: string[]) {
     die('cargo-xwin is missing — it provides the MSVC toolchain.\n  Install it: cargo install cargo-xwin --locked')
 
   await bundleMpv()
+  // Windows binary target: ship the Windows yt-dlp (the host here is Linux).
+  await bundleYtdlp('windows')
 
   // Without makensis the bundler dies *after* a full release compile, so decide
   // up front and just skip the installer step instead of wasting the build.

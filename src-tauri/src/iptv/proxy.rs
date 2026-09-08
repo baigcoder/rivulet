@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -158,7 +159,13 @@ fn url_gate(url: &str) -> Arc<AsyncMutex<()>> {
 ///
 /// `GET /health` returns 200 OK with the proxy version. The frontend polls
 /// this to know the proxy is alive before navigating to the player.
-pub async fn run_proxy() -> anyhow::Result<()> {
+pub async fn run_proxy(ytdlp: Option<PathBuf>) -> anyhow::Result<()> {
+    // Remember the bundled yt-dlp path (if any) so every request's handler can
+    // resolve a YouTube trailer to a direct stream without a PATH lookup.
+    if let Some(p) = ytdlp {
+        *ytdlp_path().lock().unwrap_or_else(|e| e.into_inner()) = Some(p);
+    }
+
     let listener = TcpListener::bind(PROXY_ADDR).await?;
     eprintln!("[iptv-proxy] listening on {PROXY_ADDR}");
 
@@ -171,6 +178,15 @@ pub async fn run_proxy() -> anyhow::Result<()> {
             }
         });
     }
+}
+
+/// The bundled yt-dlp binary, resolved once at proxy startup. Stored in a
+/// `Mutex<Option<PathBuf>>` rather than a plain `Option` so the handlers can
+/// read it concurrently while still letting `run_proxy` set it exactly once.
+static YTDLP: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
+
+fn ytdlp_path() -> &'static Mutex<Option<PathBuf>> {
+    YTDLP.get_or_init(|| Mutex::new(None))
 }
 
 async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result<()> {
@@ -404,15 +420,23 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
         return Ok(());
     }
 
-    // Stream the response through to the client in real-time. HLS segments
-    // and live video chunks are never-ending streams — buffering the whole
-    // body (the old approach) hangs forever waiting for EOF. Instead:
-    //   1. Write response headers (status, content-type, CORS, Content-Length
-    //      if the upstream told us).
-    //   2. Forward each chunk from reqwest to the TCP stream as it arrives.
-    //   3. When the upstream has no Content-Length, the response uses
-    //      Transfer-Encoding: chunked so the browser knows where each frame
-    //      ends.
+    relay_upstream(stream, status, &content_type, resp, is_head).await
+}
+
+/// Stream an upstream `reqwest` response through to the client in real-time.
+/// HLS segments and live video chunks are never-ending streams — buffering the
+/// whole body hangs forever waiting for EOF. Instead: (1) write response
+/// headers (status, content-type, CORS, Content-Length if the upstream told
+/// us), (2) forward each chunk as it arrives, (3) when the upstream has no
+/// Content-Length use Transfer-Encoding: chunked so the browser knows where
+/// each frame ends.
+async fn relay_upstream(
+    stream: &mut tokio::net::TcpStream,
+    status: reqwest::StatusCode,
+    content_type: &str,
+    mut resp: reqwest::Response,
+    is_head: bool,
+) -> anyhow::Result<()> {
     let upstream_length = resp
         .headers()
         .get("content-length")
@@ -463,7 +487,6 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
     // Content-Length is already set. For infinite (live) responses we
     // wrap each frame in chunked encoding so the browser knows where each
     // chunk ends.
-    let mut resp = resp;
     let use_chunked = upstream_length.is_none();
     loop {
         match resp.chunk().await {
@@ -609,7 +632,7 @@ async fn serve_youtube_embed(
         }
     };
     let mut params = String::from(
-        "rel=0&playsinline=1&enablejsapi=1&vq=hd720&origin=http%3A%2F%2F127.0.0.1%3A3031",
+        "rel=0&playsinline=1&enablejsapi=1&vq=hd1080&origin=http%3A%2F%2F127.0.0.1%3A3031",
     );
     if autoplay {
         params.push_str("&autoplay=1");
@@ -637,8 +660,8 @@ async fn serve_youtube_embed(
     if(f.contentWindow)f.contentWindow.postMessage(JSON.stringify({{event:"command",func:func,args:args||[]}}),yt);
   }}
   function lock(){{
-    send("setPlaybackQuality",["hd720"]);
-    send("setPlaybackQualityRange",["hd720","hd720"]);
+    send("setPlaybackQuality",["hd1080"]);
+    send("setPlaybackQualityRange",["hd1080","hd1080"]);
   }}
   addEventListener("message",function(e){{
     if(!f.contentWindow)return;
@@ -673,17 +696,26 @@ async fn serve_youtube_stream(
         }
     };
 
-    // Use yt-dlp to resolve the direct video stream URL.
+    let is_head = request.starts_with("HEAD ");
+    let range = extract_header(request, "Range")
+        .or_else(|| is_head.then(|| "bytes=0-0".to_string()));
+
+    // Use yt-dlp to resolve the direct video stream URL at up to 1080p.
     let url = format!("https://www.youtube.com/watch?v={id}");
-    let output = tokio::process::Command::new("yt-dlp")
+    let ytdlp = ytdlp_path()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("yt-dlp"));
+    let output = tokio::process::Command::new(&ytdlp)
         .arg("--get-url")
         .arg("--format")
-        .arg("best[height<=720]/best")
+        .arg("best[height<=1080]/best")
         .arg(&url)
         .output()
         .await;
 
-    match output {
+    let resolved = match output {
         Ok(o) if o.status.success() => {
             let resolved = String::from_utf8_lossy(&o.stdout).trim().to_string();
             if resolved.is_empty() {
@@ -691,23 +723,65 @@ async fn serve_youtube_stream(
                 return Ok(());
             }
             eprintln!("[iptv-proxy] yt-dlp resolved youtube-stream {id} → {resolved}");
-            // 302 redirect so the caller's <video> fetches the direct stream.
-            let header = format!(
-                "HTTP/1.1 302 Found\r\nLocation: {resolved}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-            );
-            stream.write_all(header.as_bytes()).await?;
+            resolved
         }
         Ok(o) => {
             let stderr = String::from_utf8_lossy(&o.stderr);
             eprintln!("[iptv-proxy] yt-dlp failed for {id}: {stderr}");
             write_response(stream, 502, "Bad Gateway", "text/plain", b"yt-dlp failed").await?;
+            return Ok(());
         }
         Err(e) => {
             eprintln!("[iptv-proxy] yt-dlp not found: {e}");
             write_response(stream, 502, "Bad Gateway", "text/plain", b"yt-dlp not installed").await?;
+            return Ok(());
         }
+    };
+
+    // Now stream the resolved CDN URL's bytes back through the loopback. A 302
+    // to a cross-origin googlevideo URL is fragile — the webview <video> would
+    // fetch it without our CORS headers or browser UA. Proxying means the
+    // element only ever talks to 127.0.0.1:3031, and we control the headers.
+    // Forward the client's Range so seeks hit the right byte window.
+    let resp = match stream_get(&resolved, None, Some("https://www.youtube.com"), range.as_deref())
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("[iptv-proxy] upstream error for resolved youtube stream {id}: {e}");
+            write_response(stream, 502, "Bad Gateway", "text/plain", e.to_string().as_bytes()).await?;
+            return Ok(());
+        }
+    };
+    let status = resp.status();
+    if !status.is_success() && status.as_u16() != 206 {
+        // Some CDNs reject Range outright; retry once without it.
+        let retry = stream_get(&resolved, None, Some("https://www.youtube.com"), None)
+            .send()
+            .await;
+        if let Ok(r) = retry {
+            if r.status().is_success() || r.status().as_u16() == 206 {
+                let content_type = r
+                    .headers()
+                    .get("content-type")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("application/octet-stream")
+                    .to_string();
+                return relay_upstream(stream, r.status(), &content_type, r, is_head).await;
+            }
+        }
+        eprintln!("[iptv-proxy] resolved youtube stream {id} failed with {status}");
+        write_response(stream, status.as_u16(), status.canonical_reason().unwrap_or("Bad Gateway"), "text/plain", b"upstream error").await?;
+        return Ok(());
     }
-    Ok(())
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+    relay_upstream(stream, status, &content_type, resp, is_head).await
 }
 
 fn parse_target(request: &str) -> Option<(String, Option<String>, Option<String>)> {

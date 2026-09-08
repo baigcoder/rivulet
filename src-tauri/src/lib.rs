@@ -475,6 +475,58 @@ fn cache_dir(app: &tauri::AppHandle) -> PathBuf {
         .unwrap_or_else(|_| std::env::temp_dir())
 }
 
+/// Where finished/partial torrent data lands by default.
+///
+/// Desktop writes into the OS's Downloads folder under a `Rivulet` subfolder so
+/// what the user downloads is easy to find in their file manager — the cache
+/// folder is hidden away and the point of the torrent mode is a copy you can
+/// keep. Falls back to the cache folder when the OS has no Downloads path (no
+/// home dir, or a platform that exposes none). Android keeps the cache folder:
+/// it offers a drive list instead of a Downloads directory.
+fn default_download_dir(app: &tauri::AppHandle) -> PathBuf {
+    #[cfg(desktop)]
+    {
+        if let Ok(dir) = app.path().download_dir() {
+            let with_sub = dir.join("Rivulet");
+            std::fs::create_dir_all(&with_sub).ok();
+            return with_sub;
+        }
+    }
+    cache_dir(app).join("rivulet-torrents")
+}
+
+/// Resolve the yt-dlp binary bundled as a Tauri resource, if the build shipped
+/// one. Desktop bundles declare `ytdlp/yt-dlp(.exe)` as a resource; the
+/// resource dir is where Tauri copies it at runtime. The binary needs the
+/// execute bit on unix (resources may not preserve it), so `chmod` it once.
+/// Falls back to `None`, which makes the proxy use `yt-dlp` from PATH.
+fn bundled_ytdlp(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let mut name = "yt-dlp";
+    #[cfg(target_os = "windows")]
+    {
+        name = "yt-dlp.exe";
+    }
+    let path = app
+        .path()
+        .resource_dir()
+        .ok()?
+        .join("ytdlp")
+        .join(name);
+    if !path.exists() {
+        return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = std::fs::metadata(&path) {
+            let mut perms = meta.permissions();
+            perms.set_mode(perms.mode() | 0o755);
+            let _ = std::fs::set_permissions(&path, perms);
+        }
+    }
+    Some(path)
+}
+
 #[derive(serde::Serialize)]
 struct DiskSpace {
     /// Bytes a normal process may still write.
@@ -494,7 +546,7 @@ struct DiskSpace {
 fn disk_space(app: tauri::AppHandle, path: Option<String>) -> Result<DiskSpace, String> {
     let dir = match path.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
         Some(p) => PathBuf::from(p),
-        None => cache_dir(&app).join("rivulet-torrents"),
+        None => default_download_dir(&app),
     };
     #[cfg(unix)]
     {
@@ -604,7 +656,7 @@ async fn download_url(
     }
     let folder = match dir.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
         Some(p) => PathBuf::from(p),
-        None => cache_dir(&app).join("rivulet-torrents"),
+        None => default_download_dir(&app),
     };
     tokio::fs::create_dir_all(&folder)
         .await
@@ -1058,7 +1110,7 @@ pub fn run() {
             // Where finished/partial torrent data lives on disk, and next to it
             // the engine's own state (which torrents exist, resume data).
             let cache_dir = cache_dir(app.handle());
-            let download_dir = cache_dir.join("rivulet-torrents");
+            let download_dir = default_download_dir(app.handle());
             let session_dir = cache_dir.join("rivulet-session");
             std::fs::create_dir_all(&download_dir).ok();
             std::fs::create_dir_all(&session_dir).ok();
@@ -1072,9 +1124,13 @@ pub fn run() {
             // The IPTV stream proxy lives on its own port (one above the
             // torrent engine). It fetches the upstream HLS/HTTP stream with
             // a browser UA and returns it with CORS headers so the webview's
-            // <video> element can load what it could not load directly.
+            // <video> element can load what it could not load directly. The
+            // bundled yt-dlp (desktop) lets its /youtube-stream route resolve
+            // a trailer to a direct 1080p stream on WebKit, which cannot play
+            // a YouTube iframe embed.
+            let ytdlp = bundled_ytdlp(app.handle());
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = iptv::proxy::run_proxy().await {
+                if let Err(e) = iptv::proxy::run_proxy(ytdlp).await {
                     eprintln!("[iptv] stream proxy exited with error: {e:#}");
                 }
             });

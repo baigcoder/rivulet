@@ -1,7 +1,11 @@
 import { isTauri } from '@tauri-apps/api/core'
+import { isDesktop } from './platform'
 
 /** Loopback shim on the IPTV proxy port — see iptv/proxy.rs `/youtube-embed`. */
 const RELAY = 'http://127.0.0.1:3031/youtube-embed'
+
+/** Direct-stream proxy — see iptv/proxy.rs `/youtube-stream`. */
+const STREAM = 'http://127.0.0.1:3031/youtube-stream'
 
 /**
  * Build a trailer iframe src.
@@ -19,7 +23,7 @@ export function youtubeEmbedSrc(key: string, opts: { mute?: boolean, loop?: bool
       q.set('loop', '1')
     return `${RELAY}?${q}`
   }
-  const q = new URLSearchParams({ autoplay: '1', rel: '0', playsinline: '1', enablejsapi: '1', vq: 'hd720' })
+  const q = new URLSearchParams({ autoplay: '1', rel: '0', playsinline: '1', enablejsapi: '1', vq: 'hd1080' })
   if (typeof location !== 'undefined')
     q.set('origin', location.origin)
   if (opts.mute)
@@ -29,6 +33,21 @@ export function youtubeEmbedSrc(key: string, opts: { mute?: boolean, loop?: bool
     q.set('playlist', key)
   }
   return `https://www.youtube.com/embed/${key}?${q}`
+}
+
+/**
+ * The native `<video>` src for a trailer. The loopback `/youtube-stream` route
+ * resolves the ID to a direct media file (via the bundled yt-dlp, at up to
+ * 1080p) and proxies the bytes back through the loopback, so a WebKit `<video>`
+ * can play what a YouTube iframe embed would refuse to (error 153). Empty
+ * outside desktop Tauri — Android keeps the iframe (no yt-dlp there), and
+ * browser dev has no proxy. Muted/loop/autoplay are element attributes, not
+ * here.
+ */
+export function youtubeStreamSrc(key: string): string {
+  if (!isTauri() || !isDesktop())
+    return ''
+  return `${STREAM}?${new URLSearchParams({ v: key })}`
 }
 
 /** YouTube IFrame command. Quality lock stops the player climbing to 1080/4K. */

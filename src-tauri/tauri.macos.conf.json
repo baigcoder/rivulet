@@ -1,7 +1,8 @@
 {
 	"bundle": {
 		"resources": [
-			"dylibs/*"
+			"dylibs/*",
+			"ytdlp/yt-dlp"
 		]
 	}
 }

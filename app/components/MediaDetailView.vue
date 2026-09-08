@@ -197,19 +197,36 @@ watch(() => trailerKeys.value.join(',') || media.value?.trailer || '', keys => {
   heroIdle.value = true
 }, { immediate: true })
 
-const heroSrc = computed(() => {
+/**
+ * On desktop (Tauri), the trailer is a native <video> fed by the loopback
+ * /youtube-stream proxy — a WebKit <video> plays the direct stream where a
+ * YouTube <iframe> embed refuses to (error 153, "browser not supported").
+ * Outside Tauri there is no proxy, so the browser dev build falls back to the
+ * iframe embed.
+ */
+const heroVideoSrc = computed(() => {
+  const key = trailerKey.value
+  if (!key || videoHidden.value || !heroIdle.value)
+    return ''
+  return youtubeStreamSrc(key)
+})
+const heroFrameSrc = computed(() => {
   const key = trailerKey.value
   if (!key || videoHidden.value || !heroIdle.value)
     return ''
   return youtubeEmbedSrc(key, { mute: true, loop: true })
 })
+/** Which branch the hero renders: native video on Tauri, iframe in browser dev. */
+const heroIsVideo = computed(() => !!heroVideoSrc.value)
 
+const heroVideo = ref<HTMLVideoElement | null>(null)
 const heroFrame = ref<HTMLIFrameElement | null>(null)
 const heroPlaying = ref(false)
 let showHero = 0
-watch(heroSrc, src => {
+watch([heroVideoSrc, heroFrameSrc], () => {
   heroPlaying.value = false
   clearTimeout(showHero)
+  const src = heroVideoSrc.value || heroFrameSrc.value
   if (src) {
     showHero = window.setTimeout(() => {
       if (!heroPlaying.value)
@@ -218,19 +235,32 @@ watch(heroSrc, src => {
   }
 })
 
+function toggleHeroSound() {
+  heroIdle.value = true
+  heroMuted.value = !heroMuted.value
+  if (heroVideo.value)
+    heroVideo.value.muted = heroMuted.value
+  else
+    heroCommand(heroMuted.value ? 'mute' : 'unMute')
+}
+
 function heroCommand(func: string, args: unknown[] = []) {
   (heroFrame.value as HTMLIFrameElement | null)?.contentWindow?.postMessage(youtubeCommand(func, args), '*')
 }
 
 function lockHeroQuality() {
-  heroCommand('setPlaybackQuality', ['hd720'])
-  heroCommand('setPlaybackQualityRange', ['hd720', 'hd720'])
+  heroCommand('setPlaybackQuality', ['hd1080'])
+  heroCommand('setPlaybackQualityRange', ['hd1080', 'hd1080'])
 }
 
-function toggleHeroSound() {
-  heroIdle.value = true
-  heroMuted.value = !heroMuted.value
-  heroCommand(heroMuted.value ? 'mute' : 'unMute')
+function onHeroVideoPlaying() {
+  heroPlaying.value = true
+}
+
+function onHeroVideoError() {
+  // The proxy couldn't resolve (no yt-dlp) or the stream failed — advance to
+  // the next trailer, or hide the video when the list is exhausted.
+  nextTrailer()
 }
 
 function onHeroReady() {
@@ -254,7 +284,14 @@ function onHeroMessage(e: MessageEvent) {
 
 const heroBox = ref<HTMLElement | null>(null)
 useIntersectionObserver(heroBox, ([entry]) => {
-  if (!heroSrc.value)
+  if (heroVideo.value) {
+    if (entry?.isIntersecting)
+      void heroVideo.value?.play().catch(() => {})
+    else
+      heroVideo.value?.pause()
+    return
+  }
+  if (!heroFrameSrc.value)
     return
   heroCommand(entry?.isIntersecting ? 'playVideo' : 'pauseVideo')
 }, { threshold: 0.35 })
@@ -272,6 +309,9 @@ const trailerSrc = computed(() => {
     return ''
   return youtubeEmbedSrc(key)
 })
+
+/** Native <video> for the Trailer dialog (desktop); empty in browser dev. */
+const trailerVideoSrc = computed(() => trailerKey.value ? youtubeStreamSrc(trailerKey.value) : '')
 
 const RATING_ORDER = ['G', 'PG', 'PG-13', 'R', 'NC-17', '']
 const parentalBlocked = computed(() => {
@@ -508,12 +548,35 @@ watch(() => props.id, () => {
             @load="heroArtReady = true"
           >
           <div
-            v-if="heroSrc"
+            v-if="heroIsVideo"
+            class="absolute inset-0 overflow-hidden pointer-events-none"
+          >
+            <!-- Native video (Tauri desktop): the /youtube-stream proxy feeds a
+                 direct 1080p stream, which WebKit can play where a YouTube iframe
+                 embed shows "browser not supported". Autoplays muted + looped. -->
+            <video
+              ref="heroVideo"
+              :src="heroVideoSrc"
+              class="absolute left-1/2 top-1/2 min-w-[177.78vh] min-h-[56.25vw] w-[130%] h-[130%] -translate-x-1/2 -translate-y-1/2 object-cover transition-opacity duration-500"
+              :class="heroPlaying ? 'opacity-100' : 'opacity-0'"
+              :muted="heroMuted"
+              autoplay
+              loop
+              playsinline
+              preload="metadata"
+              tabindex="-1"
+              aria-hidden="true"
+              @playing="onHeroVideoPlaying"
+              @error="onHeroVideoError"
+            />
+          </div>
+          <div
+            v-else-if="heroFrameSrc"
             class="absolute inset-0 overflow-hidden pointer-events-none"
           >
             <iframe
               ref="heroFrame"
-              :src="heroSrc"
+              :src="heroFrameSrc"
               class="absolute left-1/2 top-1/2 min-w-[177.78vh] min-h-[56.25vw] w-[130%] h-[130%] -translate-x-1/2 -translate-y-1/2 transition-opacity duration-500 pointer-events-none"
               :class="heroPlaying ? 'opacity-100' : 'opacity-0'"
               frameborder="0"
@@ -775,8 +838,18 @@ watch(() => props.id, () => {
 
       <v-dialog v-model="trailer" max-width="1100">
         <v-card class="overflow-hidden">
+          <!-- Native <video> on desktop (Tauri) so the trailer plays reliably;
+               browser dev falls back to the YouTube iframe embed. -->
+          <video
+            v-if="trailerVideoSrc"
+            :src="trailerVideoSrc"
+            class="aspect-video w-full border-0 bg-black"
+            controls
+            autoplay
+            playsinline
+          />
           <iframe
-            v-if="trailer"
+            v-else-if="trailer"
             :src="trailerSrc"
             class="aspect-video w-full border-0"
             style="zoom: var(--frame-zoom, 1)"
