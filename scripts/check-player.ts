@@ -385,6 +385,7 @@ assert.match(mpvDirect, /fn live_cli/, '4K live probe/cache is not the Direct 51
 assert.match(mpvDirect, /probesize=8388608/, 'a 4K HEVC IDR does not fit in 512KiB')
 assert.match(mpvDirect, /fn live_cli\(\)[\s\S]*?cache-pause-wait=1/, 'live underruns wait a second, not Direct\'s 50ms flicker')
 assert.match(mpvDirect, /fn live_cli\(\)[\s\S]*?cache-secs=20/, 'live keeps 20s after the first frame so the proxy hop does not hitch')
+assert.match(mpvDirect, /fn live_cli\(\)[\s\S]*?hls-bitrate=max/, 'live HLS must take the top rung, not the 720p listed first')
 assert.match(mpvDirect, /fn live_cli\(\)[\s\S]*?analyzeduration=0\.5/, 'live must not sit 2s on Connecting before a frame')
 assert.match(mpvDirect, /fflags=\+genpts/, 'live must replace Direct nobuffer or the picture is the frames that got dropped')
 assert.match(mpvLinux, /player_direct::live_cli/, 'Linux live uses the live flags')
@@ -541,6 +542,7 @@ assert.match(mpvWin, /if !local_file/, 'Windows does not pass stream-lavf-o on f
 assert.match(playerSrc, /if \(isLive\.value\)\s*return ''/, 'live connecting/error UI is the overlay, not a second centre card')
 const htmlSrc = readFileSync(new URL('../app/utils/htmlvideo.ts', import.meta.url), 'utf8')
 assert.match(htmlSrc, /maxBufferLength: 4/, 'hls.js Direct play must not prefetch 30s before starting')
+assert.match(htmlSrc, /abrEwmaDefaultEstimate: 12_000_000/, 'hls.js must not open a 4K master on the 720p ABR guess')
 assert.match(htmlSrc, /127\.0\.0\.1:3031\/stream/, 'Android / <video> Direct path uses the same proxy wrap')
 assert.match(htmlSrc, /hasVlcPlayer\(\)/, 'Android wraps even if isTauri() is late — libVLC on the raw resolver is the 40s wait')
 assert.doesNotMatch(htmlSrc, /invoke<string>\('proxy_free_stream_url'/, 'the wrap is a string, not an IPC round-trip before start')
@@ -549,6 +551,7 @@ assert.match(proxySrc, /fn stream_http/, 'stream proxy must not inherit the 300s
 assert.match(proxySrc, /connect_timeout\(Duration::from_secs\(\d+\)\)/, 'dead hosts fail the connect, not a body deadline')
 assert.match(proxySrc, /\.gzip\(false\)/, 'gzip on a movie strips Content-Length and Direct play buffers as chunked')
 assert.match(proxySrc, /\.http1_only\(\)/, 'live IPTV over HTTP/2 is the slow start and the hitch')
+assert.match(proxySrc, /fn sort_hls_master/, 'a master that lists 720p first must not be left in that order')
 assert.match(proxySrc, /is_head/, 'lavf HEAD must not become a full GET of the file')
 assert.match(proxySrc, /no reachable streams in playlist/, 'a master of unresolvable hosts is 502, not Connecting forever')
 

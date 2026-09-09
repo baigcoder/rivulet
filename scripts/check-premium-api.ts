@@ -220,6 +220,12 @@ await check('the redirector 302s onto the IPTV proxy, not the provider host', ()
   assert.ok(!/Redirect::temporary\(&upstream\)/.test(HANDLERS), 'mpv must not be sent at the raw Xtream URL')
 })
 
+await check('Xtream live opens MPEG-TS, not the HLS transcode', () => {
+  const xtream = readFileSync(`${ROOT}src-tauri/src/premium/xtream.rs`, 'utf8')
+  assert.ok(xtream.includes('{}/live/{}/{}/{}.ts'), 'the original FHD/4K feed is .ts')
+  assert.ok(!xtream.includes('{}/live/{}/{}/{}.m3u8'), 'the .m3u8 ladder is what looks like 720p')
+})
+
 // ── Credentials never leave the Rust side ────────────────────────
 
 /**

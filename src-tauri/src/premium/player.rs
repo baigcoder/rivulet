@@ -89,12 +89,10 @@ pub fn build_source(
             crate::api::ADDR,
             redirect.token
         ),
-        // Both providers are asked for HLS: Xtream's `.m3u8` endpoint,
-        // and an M3U line that is overwhelmingly one. It is a hint for
-        // picking a player path, not a promise — a provider that
-        // redirects to MPEG-TS is mpv's and hls.js's problem to sniff,
-        // and both do.
-        mime_type: Some("application/x-mpegURL".to_string()),
+        // Xtream live is MPEG-TS (the original FHD/4K feed). The `.m3u8`
+        // sibling is often a transcoded ladder. M3U lines are whatever
+        // the playlist named. Hint only — sniffing is mpv's job.
+        mime_type: Some("video/mp2t".to_string()),
         expires_at: Some(redirect.expires_at),
         user_agent: row.user_agent,
         referer: row.referer,

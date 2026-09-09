@@ -309,6 +309,11 @@ export function videoEngine(video: HTMLVideoElement): PlayerEngine {
         maxBufferLength: 4,
         maxMaxBufferLength: 16,
         startFragPrefetch: true,
+        // Default ABR assumes a few Mbps and opens the 720p rung of a
+        // master that also has 1080p/4K. Start as if the link is fast
+        // enough for FHD; hls.js still drops if it cannot keep up.
+        abrEwmaDefaultEstimate: 12_000_000,
+        capLevelToPlayerSize: false,
       }) as unknown as HlsInstance
       hls.on('hlsError', (_e, data) => {
         // Only a fatal error is a failure. hls.js recovers from the rest on its

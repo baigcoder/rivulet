@@ -723,7 +723,7 @@ impl IPTVProvider for XtreamAdapter {
         }
     }
 
-    /// `{server}/live/{username}/{password}/{stream_id}.m3u8`.
+    /// `{server}/live/{username}/{password}/{stream_id}.ts`.
     ///
     /// This is the one string in the module that carries the account
     /// password, and it is built here rather than in the HTTP layer so
@@ -731,9 +731,12 @@ impl IPTVProvider for XtreamAdapter {
     /// puts it in a `Location` header, and drops it. Nothing stores it
     /// and nothing logs it.
     ///
-    /// `.m3u8` rather than `.ts` because HLS is what a browser, mpv and
-    /// hls.js can all open; a panel that only has MPEG-TS answers the
-    /// `.m3u8` request with a redirect to it.
+    /// MPEG-TS is the panel's original feed (FHD/4K). The `.m3u8` sibling
+    /// is often a transcoded HLS ladder that lists 720p first — lavf then
+    /// stays on that rendition, which is a channel named 4K that looks
+    /// like 720p. mpv and libVLC open TS directly. A panel that only has
+    /// HLS answers this with a redirect or 404, and the IPTV proxy swaps
+    /// to `.m3u8`.
     async fn resolve_stream_url(&self, channel_id: &str) -> Result<Option<String>, PremiumError> {
         // A stream id is a positive integer in every Xtream panel. The
         // check is not cosmetic: the id is interpolated into a URL
@@ -743,7 +746,7 @@ impl IPTVProvider for XtreamAdapter {
         }
         let creds = self.config().await?;
         Ok(Some(format!(
-            "{}/live/{}/{}/{}.m3u8",
+            "{}/live/{}/{}/{}.ts",
             creds.server_url.trim_end_matches('/'),
             urlencoding::encode(&creds.username),
             urlencoding::encode(&creds.password),

@@ -763,15 +763,14 @@ fn rewrite_m3u_filter(
         })
     });
 
-    let mut out = String::with_capacity(body.len());
+    let mut rewritten: Vec<String> = Vec::with_capacity(lines.len());
     for (i, line) in lines.iter().enumerate() {
         if skip[i] {
             continue;
         }
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
-            out.push_str(line);
-            out.push('\n');
+            rewritten.push((*line).to_string());
             continue;
         }
         let resolved = resolve_manifest_uri(trimmed, base);
@@ -781,18 +780,93 @@ fn rewrite_m3u_filter(
         // the CDN rejects each segment with 403 and the player can only say
         // "Playback failed". Keep the headers in the proxy URL so nested
         // manifests inherit them too.
-        out.push_str(&format!("/stream?url={}", urlencoding::encode(&resolved)));
+        let mut uri = format!("/stream?url={}", urlencoding::encode(&resolved));
         if let Some(ua) = user_agent {
-            out.push_str("&X-Rivulet-Ua=");
-            out.push_str(&urlencoding::encode(ua));
+            uri.push_str("&X-Rivulet-Ua=");
+            uri.push_str(&urlencoding::encode(ua));
         }
         if let Some(rf) = inherited_referer.as_deref() {
-            out.push_str("&X-Rivulet-Referer=");
-            out.push_str(&urlencoding::encode(rf));
+            uri.push_str("&X-Rivulet-Referer=");
+            uri.push_str(&urlencoding::encode(rf));
         }
+        rewritten.push(uri);
+    }
+    // ffmpeg/mpv pick the *first* EXT-X-STREAM-INF. IPTV masters list 720p
+    // first so a cheap client can start; a 4K channel then looks like 720p.
+    // Highest RESOLUTION / BANDWIDTH first is what TiviMate does.
+    sort_hls_master(&mut rewritten);
+    let mut out = String::with_capacity(body.len());
+    for line in rewritten {
+        out.push_str(&line);
         out.push('\n');
     }
     out
+}
+
+fn hls_attr_u64(tag: &str, key: &str) -> Option<u64> {
+    let needle = format!("{key}=");
+    let rest = tag.split(&needle).nth(1)?;
+    let token = rest.split([',', ' ', '\t']).next()?.trim();
+    token.parse().ok()
+}
+
+fn hls_resolution_height(tag: &str) -> u64 {
+    let rest = match tag.split("RESOLUTION=").nth(1) {
+        Some(s) => s,
+        None => return 0,
+    };
+    let token = rest.split([',', ' ', '\t']).next().unwrap_or("").trim();
+    token
+        .split('x')
+        .nth(1)
+        .and_then(|h| h.parse().ok())
+        .unwrap_or(0)
+}
+
+fn hls_variant_rank(stream_inf: &str) -> u64 {
+    let height = hls_resolution_height(stream_inf);
+    let bw = hls_attr_u64(stream_inf, "AVERAGE-BANDWIDTH")
+        .or_else(|| hls_attr_u64(stream_inf, "BANDWIDTH"))
+        .unwrap_or(0);
+    height.saturating_mul(1_000_000_000) + bw
+}
+
+/// Put the highest HLS rendition first. Leaves media playlists (no
+/// EXT-X-STREAM-INF) and the header tags above the first variant alone.
+fn sort_hls_master(lines: &mut Vec<String>) {
+    let Some(first) = lines
+        .iter()
+        .position(|l| l.trim().starts_with("#EXT-X-STREAM-INF"))
+    else {
+        return;
+    };
+    let header = lines[..first].to_vec();
+    let mut variants: Vec<(u64, Vec<String>)> = Vec::new();
+    let mut i = first;
+    while i < lines.len() {
+        if !lines[i].trim().starts_with("#EXT-X-STREAM-INF") {
+            break;
+        }
+        let rank = hls_variant_rank(&lines[i]);
+        let mut block = vec![lines[i].clone()];
+        i += 1;
+        while i < lines.len() && lines[i].trim().starts_with('#') {
+            block.push(lines[i].clone());
+            i += 1;
+        }
+        if i < lines.len() {
+            block.push(lines[i].clone());
+            i += 1;
+        }
+        variants.push((rank, block));
+    }
+    variants.sort_by(|a, b| b.0.cmp(&a.0));
+    let mut ordered = header;
+    for (_, block) in variants {
+        ordered.extend(block);
+    }
+    ordered.extend_from_slice(&lines[i..]);
+    *lines = ordered;
 }
 
 /// YouTube video ids are always 11 characters from this alphabet.
@@ -1192,6 +1266,17 @@ mod tests {
         assert!(out.contains("live.example"), "reachable variants stay");
         assert!(out.contains("X-Rivulet-Referer="), "nested fetches inherit the playlist origin");
         assert_eq!(out.matches("#EXT-X-STREAM-INF").count(), 1);
+    }
+
+    #[test]
+    fn master_playlist_puts_the_highest_rung_first() {
+        const LADDER: &str = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1500000,RESOLUTION=1280x720\nhttps://live.example/720.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=8000000,RESOLUTION=1920x1080\nhttps://live.example/1080.m3u8\n";
+        let out = rewrite_m3u_filter(LADDER, "https://live.example/master.m3u8", None, None, |_| {
+            true
+        });
+        let i1080 = out.find("1080.m3u8").expect("1080 variant");
+        let i720 = out.find("720.m3u8").expect("720 variant");
+        assert!(i1080 < i720, "ffmpeg/mpv pick the first STREAM-INF, so FHD must lead\n{out}");
     }
 
     #[test]
