@@ -217,8 +217,9 @@ export function isAndroid() {
  * Can this OS show a folder in a file manager?
  *
  * Android can't, twice over: downloads land in a folder only this app is
- * allowed to read, and `reveal_path` has no file manager to hand them to.
- * The buttons are hidden rather than left to error.
+ * allowed to read, and the shell plugin's `open` shells out to `xdg-open`/`gio`
+ * — binaries that don't exist there, so every call fails with ENOENT. The
+ * buttons are hidden rather than left to error.
  */
 export function canOpenFolder() {
   return isDesktop()

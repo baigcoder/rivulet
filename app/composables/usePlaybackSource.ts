@@ -21,55 +21,8 @@ import { premiumApi, PremiumApiError } from '~/utils/premiumTv'
  * Adjacent tokens are minted in the background after a channel plays, so
  * channel-up can start without waiting on the next HTTP round trip. The
  * token is good for about thirty seconds; anything older is dropped.
- *
- * The cache lives at module scope so browse can warm the token before
- * `/watch` mounts — a composable-local Map is a new empty one on the
- * player page and throws that work away.
  */
 const PREFETCH_MS = 25_000
-
-const prefetchCache = new Map<string, { source: PlaybackSource, at: number }>()
-const inflight = new Map<string, Promise<PlaybackSource>>()
-
-function takePrefetch(id: string): PlaybackSource | null {
-  const hit = prefetchCache.get(id)
-  prefetchCache.delete(id)
-  if (!hit || Date.now() - hit.at > PREFETCH_MS)
-    return null
-  return hit.source
-}
-
-function cacheFresh(id: string): boolean {
-  const hit = prefetchCache.get(id)
-  return !!hit && Date.now() - hit.at <= PREFETCH_MS
-}
-
-function remember(id: string, source: PlaybackSource): void {
-  prefetchCache.set(id, { source, at: Date.now() })
-}
-
-function mintChannel(id: string, signal?: AbortSignal): Promise<PlaybackSource> {
-  const pending = inflight.get(id)
-  if (pending)
-    return pending
-  const p = premiumApi.play(id, signal).then(next => {
-    remember(id, next)
-    return next
-  }).finally(() => {
-    inflight.delete(id)
-  })
-  inflight.set(id, p)
-  return p
-}
-
-/** Warm redirector tokens from browse so Play is not a mint on the player page. */
-export function prefetchPremiumPlay(ids: (string | undefined | null)[]): void {
-  for (const id of ids) {
-    if (!id || cacheFresh(id) || inflight.has(id))
-      continue
-    void mintChannel(id).catch(() => {})
-  }
-}
 
 export function usePlaybackSource() {
   const source = ref<PlaybackSource | null>(null)
@@ -79,6 +32,15 @@ export function usePlaybackSource() {
 
   let controller: AbortController | null = null
   let requestId = 0
+  const prefetchCache = new Map<string, { source: PlaybackSource, at: number }>()
+
+  function takePrefetch(id: string): PlaybackSource | null {
+    const hit = prefetchCache.get(id)
+    prefetchCache.delete(id)
+    if (!hit || Date.now() - hit.at > PREFETCH_MS)
+      return null
+    return hit.source
+  }
 
   async function load(id: string, opts: { kind?: 'channel' | 'movie' | 'episode', ext?: string } = {}): Promise<void> {
     if (controller)
@@ -106,10 +68,7 @@ export function usePlaybackSource() {
         ? await premiumApi.vodPlayMovie(id, opts.ext, own.signal)
         : kind === 'episode'
           ? await premiumApi.vodPlayEpisode(id, opts.ext, own.signal)
-          : await mintChannel(id, own.signal).then(src => {
-              takePrefetch(id)
-              return src
-            })
+          : await premiumApi.play(id, own.signal)
       if (reqId !== requestId)
         return
       source.value = next
@@ -134,12 +93,16 @@ export function usePlaybackSource() {
   }
 
   function prefetch(ids: (string | undefined | null)[]): void {
-    prefetchPremiumPlay(ids.filter(id => id && id !== channelId.value))
-  }
-
-  /** Drop a cached token so Refresh cannot replay the one that just 401'd. */
-  function forget(id: string): void {
-    prefetchCache.delete(id)
+    for (const id of ids) {
+      if (!id || id === channelId.value)
+        continue
+      const hit = prefetchCache.get(id)
+      if (hit && Date.now() - hit.at < PREFETCH_MS)
+        continue
+      void premiumApi.play(id).then(next => {
+        prefetchCache.set(id, { source: next, at: Date.now() })
+      }).catch(() => {})
+    }
   }
 
   function clear(): void {
@@ -151,6 +114,7 @@ export function usePlaybackSource() {
     loading.value = false
     error.value = ''
     channelId.value = null
+    prefetchCache.clear()
   }
 
   onBeforeUnmount(() => {
@@ -158,5 +122,5 @@ export function usePlaybackSource() {
       controller.abort()
   })
 
-  return { source, loading, error, channelId, load, prefetch, forget, clear }
+  return { source, loading, error, channelId, load, prefetch, clear }
 }

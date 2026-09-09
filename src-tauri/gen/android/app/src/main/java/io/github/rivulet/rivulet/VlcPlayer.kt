@@ -109,13 +109,6 @@ class RivuletPlayer(private val activity: MainActivity) {
       // recognise as a network stream). `setLocation` + `parse` runs the
       // MRL through the same parser the standalone VLC client uses.
       val media = Media(lib, Uri.parse(url))
-      // librqbit serves a growing file: the first request can have a byte while
-      // the next piece is still on its way. A 300ms cache is fine for Direct
-      // play but makes libVLC declare a torrent stream finished on slow swarms.
-      // Keep Direct play quick and give only the local torrent engine a short,
-      // resilient startup buffer.
-      val torrentStream = url.startsWith("http://127.0.0.1:3030/") || url.startsWith("http://localhost:3030/")
-      val cacheMs = if (torrentStream) 1500 else 300
       // Hardware decoders on; libVLC falls back to FFmpeg itself when a
       // device's MediaCodec claim doesn't pan out (the very reason E-AC-3
       // is silent under ExoPlayer on a lot of cheap TV boxes).
@@ -123,25 +116,23 @@ class RivuletPlayer(private val activity: MainActivity) {
       // Options have to be added before the media is handed to the player and
       // before it is released. Adding one afterwards calls into a freed native
       // object and is the release-build crash seen when opening a stream.
-      media.addOption(":network-caching=$cacheMs")
-      media.addOption(":file-caching=$cacheMs")
-      media.addOption(":live-caching=$cacheMs")
-      media.addOption(":http-continuous")
-      media.addOption(":http-reconnect")
-      media.addOption(":http-timeout=10000")
-      media.addOption(":clock-jitter=0")
-      media.addOption(":clock-synchro=0")
-      media.addOption(":no-mediacodec-dr")
+      // 4K HEVC IDR frames need more than 300ms or the decoder skips
+      // them and the picture stays 1080p-soft. Hardware decode keeps
+      // this from stalling start; skipping the loop filter / IDCT is
+      // what made UHD look like a transcode.
+      media.addOption(":network-caching=1200")
+      media.addOption(":file-caching=1200")
+      media.addOption(":live-caching=1200")
+      // Keep every HEVC loop-filter / IDCT coefficient. The previous
+      // skip=4 path is why Android 4K looked like a 720p transcode.
+      media.addOption(":avcodec-skiploopfilter=0")
+      media.addOption(":avcodec-skip-frame=0")
+      media.addOption(":avcodec-skip-idct=0")
+      // Debrid hosts reject libVLC's default UA; the proxy also sends this,
+      // but a wrap miss used to hit the resolver with Lavf and sit 30s/hop.
       media.addOption(":http-user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-      // Hardware decoders on with software fallback. For 4K content the
-      // hardware decoder may hit its resolution ceiling; FFmpeg picks up
-      // the frames it cannot handle. `avcodec-fast` disables certain
-      // quality features that are expensive on a phone-sized SoC, and
-      // skipping the loop filter shaves enough CPU for 4K on mid-range
-      // chips without visible quality loss at viewing distance.
-      media.addOption(":avcodec-fast")
-      media.addOption(":avcodec-skiploopfilter=4")
-      media.addOption(":avcodec-skipidct=4")
+      media.addOption(":http-reconnect")
+      media.addOption(":no-mediacodec-dr")
       p.media = media
       media.release()
       // Keep the page's mute/volume state when switching channels. This also
@@ -328,9 +319,7 @@ class RivuletPlayer(private val activity: MainActivity) {
         return true
       }
 
-      override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {
-        textureView?.visibility = View.VISIBLE
-      }
+      override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {}
     }
     tv.visibility = View.GONE
     // The WebView (index 1) sits on top of this TextureView (index 0).
@@ -370,7 +359,6 @@ class RivuletPlayer(private val activity: MainActivity) {
     val p = player ?: return
     val view = textureView ?: return
     if (view.width <= 0 || view.height <= 0) return
-    view.visibility = View.VISIBLE
     p.vlcVout.setWindowSize(view.width, view.height)
     applyVideoScale(p, view.width, view.height)
   }
@@ -523,13 +511,12 @@ class RivuletPlayer(private val activity: MainActivity) {
     val duration = if (length <= 0) 0.0 else length / 1000.0
     val pos = if (p.time < 0) 0.0 else p.time / 1000.0
     val rate = p.rate.toDouble()
-    val isLive = length <= 0
-    // If the player is actively playing (isPlaying is true), it is NOT stalled.
-    // Cache fluctuation during live HLS chunk downloads should never report
-    // paused-for-cache=true while video frames are rendering.
-    val stalling = if (p.isPlaying || userPaused) false else if (isLive) (cacheFill == 0) else (pos < duration)
+    // Opening a Direct URL reports pause and length=0. `pos < duration` is
+    // then false, so the page thought we were idle and hid Loading.
+    val stalling = !p.isPlaying && !userPaused && (length <= 0 || pos < duration)
+    val track = p.currentVideoTrack
     snap = JSONObject()
-      .put("pause", userPaused)                         // ← only true on explicit pause
+      .put("pause", !p.isPlaying)
       .put("paused-for-cache", stalling)
       .put("duration", duration)
       .put("time-pos", pos)
@@ -541,45 +528,11 @@ class RivuletPlayer(private val activity: MainActivity) {
       .put("track-list", list)
       .put("aid", aid)
       .put("sid", sid)
-    var vw = 0
-    var vh = 0
-    val track = p.currentVideoTrack
+      .put("sub-text", "")
     if (track != null && track.width > 0 && track.height > 0) {
-      vw = track.width
-      vh = track.height
-    } else {
-      // currentVideoTrack already failed; try the first track via VideoTrack list
-      // which exposes width/height as public fields.
-      val tracks = p.videoTracks
-      if (tracks != null && tracks.isNotEmpty()) {
-        val t = tracks.filterNotNull().firstOrNull()
-        if (t != null) {
-          // MediaPlayer.VideoTrack fields: width, height
-          val tw = t.javaClass.getField("width").getInt(t)
-          val th = t.javaClass.getField("height").getInt(t)
-          if (tw > 0 && th > 0) {
-            vw = tw
-            vh = th
-          }
-        }
-      }
-      // Fallback: once we have ANY cache data or the player is playing,
-      // publish 1280×720 so the UI can dismiss its spinner.
-      if (vw == 0 && (p.isPlaying || cacheFill > 0)) {
-        vw = 1280
-        vh = 720
-      }
-    }
-    if (vw > 0 && vh > 0) {
       snap.put(
         "video-params",
-        JSONObject().put("w", vw).put("h", vh),
-      )
-    }
-    if (audioTracks.isNotEmpty()) {
-      snap.put(
-        "audio-params",
-        JSONObject().put("samplerate", 48000).put("channel-count", audioTracks.size),
+        JSONObject().put("w", track.width).put("h", track.height),
       )
     }
   }

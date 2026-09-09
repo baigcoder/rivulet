@@ -41,7 +41,7 @@ const poster = computed(() => proxyLogo(props.posterUrl))
     @click="emit('open')"
   >
     <div
-      class="relative aspect-[2/3] w-full overflow-hidden rounded-2xl bg-surface-container-high ring-1 ring-white/10 shadow-md transition-all duration-300 group-hover:scale-[1.03] group-hover:shadow-xl group-hover:ring-2 group-hover:ring-inset group-hover:ring-primary/80 group-focus-visible:ring-2 group-focus-visible:ring-inset group-focus-visible:ring-primary"
+      class="relative aspect-[2/3] w-full overflow-hidden rounded-xl bg-surface-container-high ring-1 ring-white/8 transition-[box-shadow,transform] group-hover:ring-2 group-hover:ring-inset group-hover:ring-primary/80 group-focus-visible:ring-2 group-focus-visible:ring-inset group-focus-visible:ring-primary"
     >
       <img
         v-if="poster && !imgError"

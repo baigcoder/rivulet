@@ -5,8 +5,7 @@
  * case it stays on the caller's stream.
  */
 import type { Media, MediaType } from '~/utils/tmdb'
-import { mdiAlertCircleOutline, mdiBookmark, mdiBookmarkOutline, mdiEye, mdiEyeOutline, mdiHeart, mdiHeartOutline, mdiOpenInNew, mdiPlay, mdiShieldLockOutline, mdiStar, mdiVolumeHigh, mdiVolumeOff, mdiYoutube } from '@mdi/js'
-import { isTauri } from '@tauri-apps/api/core'
+import { mdiAlertCircleOutline, mdiBookmark, mdiBookmarkOutline, mdiClose, mdiEye, mdiEyeOutline, mdiHeart, mdiHeartOutline, mdiOpenInNew, mdiPlay, mdiShieldLockOutline, mdiStar, mdiVolumeHigh, mdiVolumeOff, mdiYoutube } from '@mdi/js'
 import { useTitleImages } from '~/utils/titleImages'
 
 const props = defineProps<{
@@ -31,27 +30,6 @@ const library = useLibraryStore()
 const premium = usePremiumTvStore()
 const { mobile } = useDisplay()
 const settings = useSettingsStore()
-
-/**
- * One size for the whole action row. Spelled out at each of the eight buttons it
- * only looked consistent — Releases was quietly rendering 8px shorter than the
- * rest for want of a prop, and nothing said the row was meant to match. `large`
- * is 44px, which is also what a d-pad needs; a TV asks for a 1280 viewport, so
- * it is never the `mobile` branch.
- */
-const btnSize = computed(() => mobile.value ? 'default' : 'large')
-
-/**
- * Vuetify pads an `icon` button a further 12px past its `size` (`$button-icon-
- * density`), so at `large` the three toggles came out 56px against the 44px pills
- * beside them and the row centred them in 6px of dead space. `comfortable` is the
- * density whose multiplier is 0, which lands them on 44px exactly.
- *
- * A phone keeps the padding. There Play is `:block` and a spacer splits the row,
- * so there is no common height to match — and 48px is the touch target Material
- * asks for, which 36px is not.
- */
-const iconDensity = computed(() => mobile.value ? 'default' : 'comfortable')
 
 /** Who is serving this title. Library pages have no provider. */
 const sourceLabel = computed(() => {
@@ -171,7 +149,14 @@ const trailerKeys = computed(() => media.value?.trailers?.length
   ? media.value.trailers
   : media.value?.trailer ? [media.value.trailer] : [])
 const trailerKey = computed(() => trailerKeys.value[trailerPick.value] ?? '')
-let heroOnScreen = false
+let idleHandle = 0
+
+function cancelHeroIdle() {
+  if (!idleHandle)
+    return
+  clearTimeout(idleHandle)
+  idleHandle = 0
+}
 
 function nextTrailer() {
   if (trailerPick.value + 1 < trailerKeys.value.length)
@@ -181,112 +166,65 @@ function nextTrailer() {
 }
 
 watch(() => trailerKeys.value.join(',') || media.value?.trailer || '', keys => {
+  cancelHeroIdle()
+  heroIdle.value = false
   videoHidden.value = false
   trailerPick.value = 0
-  heroOnScreen = false
-  heroIdle.value = Boolean(keys) && !import.meta.server
+  if (!keys || import.meta.server)
+    return
+  const go = () => {
+    heroIdle.value = true
+  }
+  idleHandle = window.setTimeout(go, 4000)
 }, { immediate: true })
 
-/**
- * On desktop (Tauri), the trailer is a native <video> fed by the loopback
- * /youtube-stream proxy — a WebKit <video> plays the direct stream where a
- * YouTube <iframe> embed refuses to (error 153, "browser not supported").
- * Outside Tauri there is no proxy, so the browser dev build falls back to the
- * iframe embed.
- */
-const heroVideoSrc = computed(() => {
+const heroSrc = computed(() => {
   const key = trailerKey.value
   if (!key || videoHidden.value || !heroIdle.value)
     return ''
-  return youtubeStreamSrc(key)
+  return youtubeEmbedSrc(key, { mute: true, loop: true })
 })
-const heroFrameSrc = computed(() => {
-  const key = trailerKey.value
-  if (!key || videoHidden.value || !heroIdle.value)
-    return ''
-  return youtubeEmbedSrc(key, { mute: true, loop: true, controls: false })
-})
-/** Which branch the hero renders: native video on Tauri, iframe in browser dev. */
-const heroIsVideo = computed(() => !!heroVideoSrc.value)
 
-const heroVideo = ref<HTMLVideoElement | null>(null)
 const heroFrame = ref<HTMLIFrameElement | null>(null)
 const heroPlaying = ref(false)
 let showHero = 0
-watch([heroVideoSrc, heroFrameSrc], () => {
+watch(heroSrc, src => {
   heroPlaying.value = false
   clearTimeout(showHero)
-  const src = heroVideoSrc.value || heroFrameSrc.value
   if (src) {
     showHero = window.setTimeout(() => {
       if (!heroPlaying.value)
         nextTrailer()
-    }, 12000)
+    }, 5000)
   }
 })
+
+function heroCommand(func: string, args: unknown[] = []) {
+  heroFrame.value?.contentWindow?.postMessage(youtubeCommand(func, args), '*')
+}
+
+function lockHeroQuality() {
+  heroCommand('setPlaybackQuality', ['hd720'])
+  heroCommand('setPlaybackQualityRange', ['hd720', 'hd720'])
+}
 
 function toggleHeroSound() {
   heroIdle.value = true
   heroMuted.value = !heroMuted.value
-  if (heroVideo.value)
-    heroVideo.value.muted = heroMuted.value
-  else
-    heroCommand(heroMuted.value ? 'mute' : 'unMute')
-}
-
-function heroCommand(func: string, args: unknown[] = []) {
-  (heroFrame.value as HTMLIFrameElement | null)?.contentWindow?.postMessage(youtubeCommand(func, args), '*')
-}
-
-function lockHeroQuality() {
-  heroCommand('setPlaybackQuality', ['hd1080'])
-  heroCommand('setPlaybackQualityRange', ['hd1080', 'hd1080'])
-}
-
-function playHeroVideo() {
-  const el = heroVideo.value
-  if (!el)
-    return
-  el.muted = heroMuted.value
-  el.loop = true
-  void el.play().catch(() => {})
-}
-
-function loopHeroVideo() {
-  const el = heroVideo.value
-  if (!el)
-    return
-  el.currentTime = 0
-  void el.play().catch(() => {})
-}
-
-function onHeroVideoPlaying() {
-  heroPlaying.value = true
-}
-
-function onHeroVideoError() {
-  // The proxy couldn't resolve (no yt-dlp) or the stream failed — advance to
-  // the next trailer, or hide the video when the list is exhausted.
-  nextTrailer()
+  heroCommand(heroMuted.value ? 'mute' : 'unMute')
 }
 
 function onHeroReady() {
-  (heroFrame.value as HTMLIFrameElement | null)?.contentWindow?.postMessage(JSON.stringify({ event: 'listening' }), '*')
+  heroFrame.value?.contentWindow?.postMessage(JSON.stringify({ event: 'listening' }), '*')
   heroCommand(heroMuted.value ? 'mute' : 'unMute')
   lockHeroQuality()
-  heroCommand('playVideo')
 }
 
 function onHeroMessage(e: MessageEvent) {
-  if (e.source !== (heroFrame.value as HTMLIFrameElement | null)?.contentWindow)
+  if (e.source !== heroFrame.value?.contentWindow)
     return
   if (youtubeError(e.data)) {
     nextTrailer()
-    return
-  }
-  if (youtubeEnded(e.data)) {
-    heroCommand('seekTo', [0, true])
-    heroCommand('playVideo')
     return
   }
   if (!youtubePlaying(e.data))
@@ -295,41 +233,15 @@ function onHeroMessage(e: MessageEvent) {
 }
 
 const heroBox = ref<HTMLElement | null>(null)
-function resumeHero() {
-  if (heroVideo.value)
-    void heroVideo.value.play().catch(() => {})
-  else if (heroFrameSrc.value)
-    heroCommand('playVideo')
-}
-function pauseHero() {
-  if (heroVideo.value)
-    heroVideo.value.pause()
-  else if (heroFrameSrc.value)
-    heroCommand('pauseVideo')
-}
 useIntersectionObserver(heroBox, ([entry]) => {
-  const on = (entry?.intersectionRatio ?? 0) > 0
-  if (on) {
-    heroOnScreen = true
-    resumeHero()
+  if (!heroSrc.value)
     return
-  }
-  // The first callback often lands before layout (ratio 0). Pausing then
-  // cancels muted autoplay and the cover sits on the poster until scroll.
-  if (!heroOnScreen)
-    return
-  pauseHero()
-}, { threshold: [0, 0.35] })
-
-watch(heroVideoSrc, async src => {
-  if (!src)
-    return
-  await nextTick()
-  playHeroVideo()
-})
+  heroCommand(entry?.isIntersecting ? 'playVideo' : 'pauseVideo')
+}, { threshold: 0.35 })
 
 onMounted(() => window.addEventListener('message', onHeroMessage))
 onUnmounted(() => {
+  cancelHeroIdle()
   clearTimeout(showHero)
   window.removeEventListener('message', onHeroMessage)
 })
@@ -340,15 +252,6 @@ const trailerSrc = computed(() => {
     return ''
   return youtubeEmbedSrc(key)
 })
-
-/** Native <video> for the Trailer dialog (desktop); empty in browser dev. */
-const trailerVideoSrc = computed(() => trailerKey.value ? youtubeStreamSrc(trailerKey.value) : '')
-
-/** True when the native <video> failed — fall back to the iframe embed. */
-const trailerVideoFailed = ref(false)
-function onTrailerVideoError() {
-  trailerVideoFailed.value = true
-}
 
 const RATING_ORDER = ['G', 'PG', 'PG-13', 'R', 'NC-17', '']
 const parentalBlocked = computed(() => {
@@ -424,62 +327,6 @@ const credits = computed(() => {
 
 const trailer = ref(false)
 const torrentPickerRef = ref<{ open: () => void } | null>(null)
-const isDesktop = import.meta.client && isTauri()
-
-/**
- * WebKitGTK (Linux iframe) and the native <video> path both hold the
- * media pipeline while the cover trailer plays. Play used to navigate
- * away with that still running, so the first torrent mpv opened a black
- * `--wid` window; Back then Play worked because the trailer was already
- * gone. Vue Router waits on this promise, so mpv does not spawn until
- * the decoder is actually released.
- */
-let heroStop: Promise<void> | null = null
-
-function stopHeroTrailer(): Promise<void> {
-  if (heroStop)
-    return heroStop
-  heroStop = unloadHeroTrailer()
-  return heroStop
-}
-
-function waitBrief(el: HTMLElement, event: string, ms: number) {
-  return new Promise<void>(resolve => {
-    const done = () => {
-      el.removeEventListener(event, done)
-      resolve()
-    }
-    el.addEventListener(event, done)
-    window.setTimeout(done, ms)
-  })
-}
-
-async function unloadHeroTrailer() {
-  videoHidden.value = true
-  heroIdle.value = false
-  trailer.value = false
-  const video = heroVideo.value
-  if (video) {
-    const emptied = waitBrief(video, 'emptied', 150)
-    video.pause()
-    video.removeAttribute('src')
-    video.load()
-    await emptied
-  }
-  const frame = heroFrame.value
-  if (frame) {
-    heroCommand('pauseVideo')
-    heroCommand('stopVideo')
-    const blanked = waitBrief(frame, 'load', 150)
-    frame.src = 'about:blank'
-    await blanked
-  }
-  await nextTick()
-  // GStreamer / WebKit drop the decoder a beat after the element is empty.
-  await new Promise<void>(resolve => window.setTimeout(resolve, 60))
-}
-
-onBeforeRouteLeave(() => stopHeroTrailer())
 
 async function openTrailer() {
   const url = `https://www.youtube.com/watch?v=${trailerKey.value || media.value?.trailer}`
@@ -489,14 +336,6 @@ async function openTrailer() {
   catch {
     window.open(url, '_blank')
   }
-}
-
-function showTrailer() {
-  const key = trailerKey.value || media.value?.trailer
-  if (!key)
-    return
-  trailerVideoFailed.value = false
-  trailer.value = true
 }
 
 const firstSeason = computed(() => media.value?.seasons[0]?.number ?? 1)
@@ -570,9 +409,7 @@ watch(() => props.id, () => {
       <p class="max-w-md text-body-medium opacity-70">
         {{ $t('This content is rated {rating} and exceeds your parental control settings.', { rating: media?.certification }) }}
       </p>
-      <!-- The only thing on this screen a remote can reach, so it gets the same
-           44px the action row's buttons do rather than the 36px default. -->
-      <v-btn v-if="settings.parentalPin" size="large" variant="tonal" @click="pinDialog = true">
+      <v-btn v-if="settings.parentalPin" variant="tonal" @click="pinDialog = true">
         {{ $t('Enter PIN to unlock') }}
       </v-btn>
 
@@ -641,67 +478,49 @@ watch(() => props.id, () => {
             @load="heroArtReady = true"
           >
           <div
-            v-if="heroIsVideo"
-            class="absolute inset-0 overflow-hidden pointer-events-none"
-          >
-            <!-- Native video (Tauri desktop): the /youtube-stream proxy feeds a
-                 direct 1080p stream, which WebKit can play where a YouTube iframe
-                 embed shows "browser not supported". Autoplays muted + looped. -->
-            <video
-              ref="heroVideo"
-              :src="heroVideoSrc"
-              class="rivulet-cover-video absolute left-1/2 top-1/2 min-w-[177.78vh] min-h-[56.25vw] w-[130%] h-[130%] -translate-x-1/2 -translate-y-1/2 object-cover transition-opacity duration-500"
-              :class="heroPlaying ? 'opacity-100' : 'opacity-0'"
-              :muted="heroMuted"
-              autoplay
-              loop
-              playsinline
-              preload="auto"
-              controlslist="nodownload nofullscreen noremoteplayback noplaybackrate"
-              disablepictureinpicture
-              tabindex="-1"
-              aria-hidden="true"
-              @loadeddata="playHeroVideo"
-              @ended="loopHeroVideo"
-              @playing="onHeroVideoPlaying"
-              @error="onHeroVideoError"
-            />
-          </div>
-          <div
-            v-else-if="heroFrameSrc"
-            class="absolute inset-0 overflow-hidden pointer-events-none"
+            v-if="heroSrc"
+            class="absolute inset-0 overflow-hidden"
           >
             <iframe
               ref="heroFrame"
-              :src="heroFrameSrc"
-              class="absolute left-1/2 top-1/2 min-w-[177.78vh] min-h-[56.25vw] w-[130%] h-[130%] -translate-x-1/2 -translate-y-1/2 transition-opacity duration-500 pointer-events-none"
+              :src="heroSrc"
+              class="absolute left-1/2 top-1/2 h-full w-full -translate-x-1/2 -translate-y-1/2 scale-[1.45] transition-opacity duration-300"
               :class="heroPlaying ? 'opacity-100' : 'opacity-0'"
               frameborder="0"
-              allow="autoplay; encrypted-media"
+              allow="autoplay; encrypted-media; gyroscope; picture-in-picture; web-share"
               referrerpolicy="strict-origin-when-cross-origin"
+              allowfullscreen
               tabindex="-1"
               aria-hidden="true"
               @load="onHeroReady"
             />
           </div>
-          <div class="absolute inset-0 bg-gradient-to-t from-background via-black/50 to-black/20" />
-          <div class="absolute inset-0 bg-gradient-to-r from-background/90 via-black/30 to-transparent" />
+          <div class="absolute inset-0 bg-gradient-to-t from-black/95 via-black/40 to-black/20" />
+          <div class="absolute inset-0 bg-gradient-to-r from-black/80 via-transparent to-transparent" />
 
           <p
             v-if="sourceLabel"
-            class="absolute start-4 top-4 z-10 max-w-[min(70%,18rem)] truncate rounded-full border border-white/20 bg-black/75 px-3.5 py-1 text-label-small font-semibold tracking-wide text-white shadow-lg backdrop-blur-md"
+            class="absolute start-4 top-4 z-10 max-w-[min(70%,18rem)] truncate rounded-full border border-white/20 bg-black/70 px-3 py-1 text-label-small font-semibold tracking-wide text-white"
           >
             {{ sourceLabel }}
           </p>
 
-          <div v-if="trailerKey && !videoHidden" class="absolute right-4 top-4 z-10">
+          <div v-if="trailerKey" class="absolute right-4 top-4 z-10 flex items-center gap-2">
             <button
               v-tooltip:bottom="heroMuted ? $t('Sound on') : $t('Sound off')"
-              class="grid size-10 place-items-center rounded-full border border-white/20 bg-black/60 text-white opacity-95 transition-[transform,background-color] hover:scale-110 hover:bg-black/80 focus-visible:scale-110 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary backdrop-blur-md"
+              class="grid size-10 place-items-center rounded-full border border-white/20 bg-black/60 text-white opacity-95 transition-[transform,background-color] hover:scale-110 hover:bg-black/80 focus-visible:scale-110 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary"
               :aria-label="heroMuted ? $t('Sound on') : $t('Sound off')"
               @click="toggleHeroSound"
             >
               <v-icon :icon="heroMuted ? mdiVolumeOff : mdiVolumeHigh" size="18" />
+            </button>
+            <button
+              v-tooltip:bottom="$t('Hide video')"
+              class="grid size-10 place-items-center rounded-full border border-white/20 bg-black/60 text-white opacity-95 transition-[transform,background-color] hover:scale-110 hover:bg-black/80 focus-visible:scale-110 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary"
+              :aria-label="$t('Hide video')"
+              @click="videoHidden = true"
+            >
+              <v-icon :icon="mdiClose" size="18" />
             </button>
           </div>
 
@@ -710,12 +529,12 @@ watch(() => props.id, () => {
               v-if="coverLogo"
               :src="logoUrl(coverLogo)!"
               :alt="cover!.title"
-              class="h-16 w-auto max-w-md object-contain drop-shadow-[0_4px_28px_rgba(0,0,0,0.9)] md:h-24 md:max-w-lg"
+              class="h-16 w-auto max-w-md object-contain drop-shadow-[0_2px_24px_rgba(0,0,0,0.8)] md:h-24 md:max-w-lg"
             >
-            <h1 v-else class="text-headline-large font-extrabold text-white drop-shadow-[0_4px_28px_rgba(0,0,0,0.85)] tracking-tight">
+            <h1 v-else class="text-headline-large font-bold text-white drop-shadow-[0_2px_24px_rgba(0,0,0,0.7)]">
               {{ cover!.title }}
             </h1>
-            <p v-if="media?.tagline" class="mt-1.5 max-w-3xl text-body-medium italic text-white/80 font-medium drop-shadow-sm">
+            <p v-if="media?.tagline" class="mt-1 max-w-3xl text-body-medium italic text-white/70">
               {{ media.tagline }}
             </p>
           </div>
@@ -724,12 +543,12 @@ watch(() => props.id, () => {
 
       <section class="px-4 pb-8 pt-4 md:px-6">
         <div class="flex flex-col gap-6 sm:flex-row sm:items-end">
-          <div class="aspect-2/3 w-32 shrink-0 overflow-hidden rounded-2xl shadow-2xl ring-1 ring-white/10 sm:w-44 lg:w-52">
+          <div class="aspect-2/3 w-32 shrink-0 overflow-hidden rounded-2xl shadow-2xl sm:w-44 lg:w-52">
             <media-poster eager :src="posterUrl(cover?.poster, ui.posterSize) || fallbackPoster" :alt="cover?.title" />
           </div>
 
           <div v-if="cover && !heroPending" class="flex min-w-0 flex-1 flex-col gap-3">
-            <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-body-small font-medium text-on-surface-variant">
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-body-small opacity-75">
               <media-reviews
                 v-if="id"
                 :id="id"
@@ -737,31 +556,23 @@ watch(() => props.id, () => {
                 :rating="cover.rating"
                 :votes="media?.votes"
               />
-              <span v-else-if="cover.rating" class="flex items-center gap-1 bg-amber-400/10 px-2 py-0.5 rounded-full border border-amber-400/20">
-                <v-icon :icon="mdiStar" size="15" class="text-amber-400" />
-                <span class="font-bold text-amber-300 text-body-medium">{{ cover.rating.toFixed(1) }}</span>
+              <span v-else-if="cover.rating" class="flex items-center gap-1">
+                <v-icon :icon="mdiStar" size="14" class="text-amber-400" />
+                <span class="font-medium">{{ cover.rating.toFixed(1) }}</span>
               </span>
-              <span v-if="media?.certification" class="rounded-md border border-primary/30 bg-primary/10 px-2 py-0.5 text-label-small font-semibold text-primary">
+              <span v-if="media?.certification" class="rounded border border-outline-variant px-1.5 py-0.5 text-label-small">
                 {{ media.certification }}
               </span>
-              <span v-for="part in meta" :key="part" class="flex items-center gap-2">
-                <span class="opacity-30">•</span>
-                <span>{{ part }}</span>
-              </span>
-              <span v-if="!media && cover.year" class="flex items-center gap-2">
-                <span class="opacity-30">•</span>
-                <span>{{ cover.year }}</span>
-              </span>
+              <span v-for="part in meta" :key="part">{{ part }}</span>
+              <span v-if="!media && cover.year">{{ cover.year }}</span>
             </div>
 
             <div v-if="media" class="flex flex-wrap gap-1.5">
-              <v-chip v-for="genre in media.genres" :key="genre.id" size="small" class="font-medium" :text="genre.name" />
+              <v-chip v-for="genre in media.genres" :key="genre.id" size="small" :text="genre.name" />
               <v-chip
                 v-if="media.collection"
                 size="small"
                 variant="tonal"
-                color="primary"
-                class="font-medium"
                 :text="media.collection.name"
                 :to="collectionLink(media.collection.id)"
               />
@@ -770,16 +581,16 @@ watch(() => props.id, () => {
               <div v-for="n in 3" :key="n" class="h-7 w-16 animate-pulse rounded-full bg-surface-container/60" />
             </div>
 
-            <p class="max-w-3xl text-body-medium leading-relaxed text-on-surface opacity-90">
+            <p class="max-w-3xl text-body-medium opacity-85">
               {{ cover.overview || $t('No overview.') }}
             </p>
 
-            <dl v-if="credits.length" class="grid grid-cols-1 gap-x-8 gap-y-1.5 text-body-small sm:grid-cols-2 lg:max-w-2xl pt-1">
+            <dl v-if="credits.length" class="grid grid-cols-1 gap-x-6 gap-y-1 text-body-small sm:grid-cols-2 lg:max-w-2xl">
               <div v-for="row in credits" :key="row.label" class="flex gap-2">
-                <dt class="shrink-0 font-medium text-on-surface-variant opacity-80">
-                  {{ row.label }}:
+                <dt class="shrink-0 opacity-50">
+                  {{ row.label }}
                 </dt>
-                <dd class="truncate font-medium text-on-surface opacity-95">
+                <dd class="truncate opacity-85">
                   {{ row.value }}
                 </dd>
               </div>
@@ -789,7 +600,7 @@ watch(() => props.id, () => {
               <v-btn
                 v-if="showPlay && providerPlay"
                 :prepend-icon="mdiPlay"
-                :size="btnSize"
+                :size="mobile ? 'default' : 'large'"
                 :block="mobile"
                 @click="emit('play')"
               >
@@ -798,10 +609,9 @@ watch(() => props.id, () => {
               <v-btn
                 v-else-if="showPlay"
                 :prepend-icon="mdiPlay"
-                :size="btnSize"
+                :size="mobile ? 'default' : 'large'"
                 :block="mobile"
                 :to="playLink"
-                @pointerdown="stopHeroTrailer"
               >
                 {{ playLabel }}
               </v-btn>
@@ -812,14 +622,12 @@ watch(() => props.id, () => {
                 :imdb-id="media.imdbId"
                 :season="target?.season"
                 :episode="target?.episode"
-                :size="btnSize"
+                :size="mobile ? 'default' : 'large'"
+                @pick="torrentPickerRef?.open()"
               />
               <template v-else-if="!providerPlay && status === 'pending' && (type === 'movie' || target)">
-                <!-- The buttons these stand in for are `btnSize` tall (44px, or
-                     36px on a phone). A placeholder of any other height moves the
-                     whole row the moment the request lands. -->
-                <div class="animate-pulse rounded-lg bg-surface-container/60" :class="mobile ? 'h-9 w-full' : 'h-11 w-28'" />
-                <div class="animate-pulse rounded-lg bg-surface-container/60" :class="mobile ? 'h-9 w-full' : 'h-11 w-28'" />
+                <div class="h-10 w-28 animate-pulse rounded-lg bg-surface-container/60" :class="mobile ? 'w-full' : ''" />
+                <div class="h-10 w-28 animate-pulse rounded-lg bg-surface-container/60" :class="mobile ? 'w-full' : ''" />
               </template>
               <torrent-picker
                 v-if="!providerPlay && media && (type === 'movie' || target)"
@@ -829,27 +637,24 @@ watch(() => props.id, () => {
                 :imdb-id="media.imdbId"
                 :season="target?.season"
                 :episode="target?.episode"
-                :size="btnSize"
+                :size="mobile ? 'default' : 'large'"
               />
               <v-btn
                 v-if="trailerKey"
                 :prepend-icon="mdiYoutube"
-                :size="btnSize"
+                :size="mobile ? 'default' : 'large'"
                 variant="tonal"
-                @click="showTrailer"
+                @click="trailer = true"
               >
                 {{ $t('Trailer') }}
               </v-btn>
               <v-spacer v-if="mobile" />
-              <!-- `iconDensity` is what keeps these level with the pills above,
-                   rather than 12px taller — see the computed. -->
               <v-btn
                 v-if="cover"
                 icon
                 variant="text"
                 color="on-surface"
-                :density="iconDensity"
-                :size="btnSize"
+                :size="mobile ? 'default' : 'large'"
                 @click="library.toggleWatched(cover)"
               >
                 <v-icon :icon="library.isWatched(cover) ? mdiEye : mdiEyeOutline" :color="library.isWatched(cover) ? 'primary' : undefined" />
@@ -860,8 +665,7 @@ watch(() => props.id, () => {
                 icon
                 variant="text"
                 color="on-surface"
-                :density="iconDensity"
-                :size="btnSize"
+                :size="mobile ? 'default' : 'large'"
                 @click="library.toggleWatchlist(cover)"
               >
                 <v-icon :icon="library.inWatchlist(cover) ? mdiBookmark : mdiBookmarkOutline" :color="library.inWatchlist(cover) ? 'primary' : undefined" />
@@ -872,8 +676,7 @@ watch(() => props.id, () => {
                 icon
                 variant="text"
                 color="on-surface"
-                :density="iconDensity"
-                :size="btnSize"
+                :size="mobile ? 'default' : 'large'"
                 @click="library.toggleFavourite(cover)"
               >
                 <v-icon :icon="library.isFavourite(cover) ? mdiHeart : mdiHeartOutline" :color="library.isFavourite(cover) ? 'primary' : undefined" />
@@ -926,19 +729,8 @@ watch(() => props.id, () => {
 
       <v-dialog v-model="trailer" max-width="1100">
         <v-card class="overflow-hidden">
-          <!-- Native <video> on desktop (Tauri) so the trailer plays reliably;
-               browser dev falls back to the YouTube iframe embed. -->
-          <video
-            v-if="trailerVideoSrc && !trailerVideoFailed"
-            :src="trailerVideoSrc"
-            class="aspect-video w-full border-0 bg-black"
-            controls
-            autoplay
-            playsinline
-            @error="onTrailerVideoError"
-          />
           <iframe
-            v-else-if="trailer"
+            v-if="trailer"
             :src="trailerSrc"
             class="aspect-video w-full border-0"
             style="zoom: var(--frame-zoom, 1)"

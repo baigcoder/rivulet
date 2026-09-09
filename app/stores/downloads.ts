@@ -74,29 +74,10 @@ export const useDownloadsStore = defineStore('downloads', () => {
     return (keyStr && cached.value[keyStr]) || null
   }
 
-  /**
-   * Which title a torrent was filed under, from the same map read the other
-   * way round. The downloads page knows a hash and a release name and nothing
-   * else, so a Play from there used to reach the player with no TMDB id at
-   * all — which is a raw filename where the title treatment belongs, and no
-   * artwork to draw. Anything played through `start` is in here.
-   */
-  function titleFor(hash: string) {
-    const want = canonHash(hash)
-    const found = Object.entries(cached.value).find(([, v]) => canonHash(v.hash) === want)
-    return found ? parseKey(found[0]) : null
-  }
-
   /** User's own ceiling on the cache, in bytes. 0 = whatever the disk allows. */
   const cap = useLocalStorage(key('storageCap'), 0)
 
   const disk = ref<DiskSpace | null>(null)
-  /**
-   * Folder the engine actually writes to. Empty in settings still means
-   * Downloads/Rivulet (or the cache dir) — Open folder has to know that
-   * path, or a Direct-mode download looks like it has nowhere to go.
-   */
-  const resolvedDir = ref('')
   const used = computed(() => usedBytes(torrents.value))
   const budget = computed(() => diskBudget(disk.value, used.value, cap.value))
 
@@ -167,31 +148,15 @@ export const useDownloadsStore = defineStore('downloads', () => {
     // The add can land paused (session restore, a metered poll). Download is
     // the ask to pull bytes, so start it and refresh so the list is not a lie.
     if (started.id >= 0 && started.hash) {
-      // Before the start, so the very first eviction poll already sees this as
-      // something the user just asked for rather than the coldest thing here.
       touched.value[started.hash] = Date.now()
-      try {
-        await torrentAction(started.id, 'start')
-      }
-      catch (startErr) {
-        // A start that fails leaves the torrent in the engine but paused: the
-        // downloads page shows it at 0% with no explanation. Retry once — the
-        // engine may not have finished registering the torrent from the add
-        // above. Do not throw: the magnet is already filed, and librqbit
-        // 400s "already live" when start is a no-op.
-        console.warn('[rivulet] torrentAction start failed, retrying:', startErr)
-        await torrentAction(started.id, 'start').catch(retryErr => {
-          console.warn('[rivulet] torrentAction start failed:', retryErr)
-        })
-      }
-      // Play must not wait on this list: a fresh magnet can take seconds to
-      // show in `with_stats`, and that wait was a black first frame. Download
-      // is the opposite — the button ticks "In downloads" off this list, so
-      // a fire-and-forget refresh left it throwing and opening Releases.
-      if (options.save)
+      await torrentAction(started.id, 'start').catch(() => {})
+      await waitForEngineHash(started.hash)
+      for (let attempt = 0; attempt < 4; attempt++) {
         await refresh()
-      else
-        void refresh()
+        if (torrents.value.some(t => t.info_hash.toLowerCase() === started.hash.toLowerCase()))
+          break
+        await new Promise(r => setTimeout(r, 500))
+      }
     }
     return started
   }
@@ -298,7 +263,6 @@ export const useDownloadsStore = defineStore('downloads', () => {
       if (dormant())
         return
       disk.value = await invoke<DiskSpace>('disk_space', { path: settings.downloadDir || null }).catch(() => null)
-      resolvedDir.value = await invoke<string>('download_dir', { path: settings.downloadDir || null }).catch(() => '')
       // Rides along with the free-space poll: the cap belongs to the drive, so
       // it has to follow the storage folder from one to the other exactly as
       // the budget does. Only Android reports one.
@@ -318,7 +282,7 @@ export const useDownloadsStore = defineStore('downloads', () => {
    * Playback owns the downlink: every other *download* pauses so the whole pipe
    * goes to the stream, and is put back on `release`. Finished torrents keep
    * seeding — they cost no download bandwidth, and `uploadLimit` already holds
-   * their upload down to half the line while anyone is watching.
+   * their upload down to a quarter of the line while anyone is watching.
    *
    * `id` is -1 while a direct link is playing. The engine has never heard of it,
    * but the downlink is just as busy, so everything else still gets out of the way.
@@ -347,23 +311,18 @@ export const useDownloadsStore = defineStore('downloads', () => {
     await Promise.all(paused.map(other => torrentAction(other, 'pause').catch(() => {})))
     // Always try to start the torrent - it may not be in local cache yet but exists in engine.
     // Calling start on already-started torrent is idempotent.
-    try {
-      await torrentAction(id, 'start')
-    }
-    catch {
-      // Best effort: the torrent may already be running or the engine is
-      // temporarily busy. Playback continues from the stream URL either way.
-    }
+    await torrentAction(id, 'start').catch(() => {})
   }
 
   /**
-   * Leaving the player puts back the downloads playback paused for the
-   * downlink. The film itself keeps pulling — Play started a download, and
-   * pausing it on Back is why a title sat at a few percent until someone
-   * opened Downloads and pressed start.
+   * Leaving the player stops the download it started — an unwatched torrent has
+   * no reason to keep pulling. A finished one is left seeding: it costs no
+   * download bandwidth and the downloads page can't resume it (its pause button
+   * is disabled once complete).
    *
-   * Wi-Fi-only on metered is the exception: playback was allowed to stream,
-   * but once it isn't on screen it's a background download again.
+   * A background download you also watched ends up paused too. One
+   * click on the downloads page fixes it; if that gets annoying, `focus` takes a
+   * flag for "was already running".
    */
   async function release() {
     const id = focused.value
@@ -373,15 +332,17 @@ export const useDownloadsStore = defineStore('downloads', () => {
     if (id == null)
       return
 
+    // Nothing to pause when a link was playing — only the restores below apply.
     const own = torrents.value.find(t => t.id === id)
-    if (settings.wifiOnly && metered.value) {
-      if (own && !own.stats?.finished)
-        await torrentAction(id, 'pause').catch(() => {})
-      held = [...new Set([...held, ...restore, ...(id >= 0 ? [id] : [])])]
-    }
-    else {
+    if (own && !own.stats?.finished)
+      await torrentAction(id, 'pause').catch(() => {})
+    // On mobile data with Wi-Fi only asked for, what playback paused stays
+    // paused — starting it here would spend the data the setting exists to save,
+    // and `meter` would stop it again two seconds later anyway.
+    if (settings.wifiOnly && metered.value)
+      held = [...new Set([...held, ...restore])]
+    else
       await Promise.all(restore.map(other => torrentAction(other, 'start').catch(() => {})))
-    }
     await refresh()
   }
 
@@ -440,18 +401,6 @@ export const useDownloadsStore = defineStore('downloads', () => {
     }
   })
 
-  /** Connected peers across every torrent — the usual reason a fast line looks like 3 MiB/s. */
-  const peers = computed(() =>
-    torrents.value.reduce((n, t) => n + (t.stats?.live?.snapshot.peer_stats.live ?? 0), 0),
-  )
-
-  const pulling = computed(() =>
-    torrents.value.some(t => {
-      const s = torrentStatus(t)
-      return s === 'downloading' || s === 'checking'
-    }),
-  )
-
   // --- Seeding -----------------------------------------------------------------
   // Downloading and never giving anything back is what gets swarms killed, so
   // finished torrents keep seeding — under a ceiling, because a saturated uplink
@@ -478,7 +427,7 @@ export const useDownloadsStore = defineStore('downloads', () => {
 
   watch(
     () => [
-      uploadLimit(peakUp.value, focused.value != null, probing.value, settings.upLimit * MB, pulling.value),
+      uploadLimit(peakUp.value, focused.value != null, probing.value, settings.upLimit * MB),
       settings.downLimit > 0 ? settings.downLimit * MB : null,
     ] as const,
     ([up, down]) => setLimits(up, down),
@@ -533,12 +482,10 @@ export const useDownloadsStore = defineStore('downloads', () => {
     counts,
     active,
     speed,
-    peers,
     list,
     act,
     clearAll,
     disk,
-    resolvedDir,
     used,
     budget,
     fileLimit,
@@ -548,7 +495,6 @@ export const useDownloadsStore = defineStore('downloads', () => {
     release,
     metered,
     cachedFor,
-    titleFor,
     start,
   }
 })

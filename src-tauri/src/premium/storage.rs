@@ -126,17 +126,11 @@ CREATE INDEX IF NOT EXISTS iptv_premium_epg_range
 /// name" pass. Any other error is a real one and is returned.
 const ADDED_COLUMNS: &[(&str, &str)] = &[
     ("iptv_premium_channels", "stream_url TEXT"),
-    (
-        "iptv_premium_channels",
-        "sort_key INTEGER NOT NULL DEFAULT 0",
-    ),
+    ("iptv_premium_channels", "sort_key INTEGER NOT NULL DEFAULT 0"),
     ("iptv_premium_connections", "catalog_synced_at INTEGER"),
     ("iptv_premium_connections", "epg_synced_at INTEGER"),
     ("iptv_premium_channels", "quality TEXT"),
-    (
-        "iptv_premium_channels",
-        "is_adult INTEGER NOT NULL DEFAULT 0",
-    ),
+    ("iptv_premium_channels", "is_adult INTEGER NOT NULL DEFAULT 0"),
 ];
 
 fn migrate(conn: &Connection) -> Result<(), PremiumError> {
@@ -318,13 +312,15 @@ pub fn get_secret(
     conn: &Connection,
     connection_id: &str,
 ) -> Result<Option<EncryptedBlob>, PremiumError> {
-    let mut stmt =
-        conn.prepare("SELECT encrypted_config FROM iptv_premium_secrets WHERE connection_id = ?1")?;
+    let mut stmt = conn.prepare(
+        "SELECT encrypted_config FROM iptv_premium_secrets WHERE connection_id = ?1",
+    )?;
     let mut rows = stmt.query([connection_id])?;
     if let Some(row) = rows.next()? {
         let bytes: Vec<u8> = row.get(0)?;
         Ok(Some(EncryptedBlob::decode(&bytes)?))
-    } else {
+    }
+    else {
         Ok(None)
     }
 }
@@ -338,7 +334,8 @@ pub fn active_connection(conn: &Connection) -> Result<Option<String>, PremiumErr
     let mut rows = stmt.query([])?;
     if let Some(row) = rows.next()? {
         Ok(Some(row.get(0)?))
-    } else {
+    }
+    else {
         Ok(None)
     }
 }
@@ -361,7 +358,8 @@ pub fn get_connection(conn: &Connection, id: &str) -> Result<Option<ConnectionRo
             max_connections: row.get(6)?,
             status: row.get(7)?,
         }))
-    } else {
+    }
+    else {
         Ok(None)
     }
 }
@@ -548,11 +546,7 @@ pub fn sync_times(
     }
 }
 
-pub fn set_status(
-    conn: &Connection,
-    connection_id: &str,
-    status: &str,
-) -> Result<(), PremiumError> {
+pub fn set_status(conn: &Connection, connection_id: &str, status: &str) -> Result<(), PremiumError> {
     conn.execute(
         "UPDATE iptv_premium_connections SET status = ?2 WHERE id = ?1",
         rusqlite::params![connection_id, status],

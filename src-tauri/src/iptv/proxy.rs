@@ -1,6 +1,4 @@
 use std::collections::HashMap;
-use std::net::ToSocketAddrs;
-use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -15,12 +13,19 @@ use reqwest::Client;
 const PROXY_ADDR: &str = "127.0.0.1:3031";
 
 /// Browser-like request headers, in case the upstream distinguishes by UA.
+/// Debrid hosts want this. Xtream live does not — see `IPTV_PLAYER_UA`.
 const BROWSER_HEADERS: &[(&str, &str)] = &[
     ("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"),
     ("Accept", "*/*"),
     ("Accept-Language", "en-US,en;q=0.9"),
     ("Connection", "keep-alive"),
 ];
+
+/// What TiviMate / IPTV Smarters send. Xtream panels inspect UA: a
+/// Chrome string gets the HTML5 HLS transcode (often 720p H.264); a
+/// player string gets the original MPEG-TS — the FHD/4K HEVC feed the
+/// channel is named for. Same string `streaming_m3u` already uses.
+pub const IPTV_PLAYER_UA: &str = "VLC/3.0.18 LibVLC/3.0.18";
 
 /// CORS headers added to every response. The webview's <video> element makes
 /// the request without credentials, so an `*` origin is fine and avoids
@@ -45,21 +50,55 @@ static STREAM: OnceLock<Client> = OnceLock::new();
 fn stream_http() -> &'static Client {
     STREAM.get_or_init(|| {
         Client::builder()
-            .connect_timeout(Duration::from_secs(8))
-            .pool_max_idle_per_host(10)
-            .pool_idle_timeout(Duration::from_secs(90))
+            .connect_timeout(Duration::from_secs(15))
+            // Video must stay identity: gzip/br advertise Accept-Encoding, then
+            // reqwest strips Content-Length and mpv sees a chunked file — it
+            // cannot seek and Direct play sits on Buffering until a huge probe.
             .gzip(false)
             .brotli(false)
-            // Xtream / HLS panels often advertise HTTP/2 and then stall
-            // or reset streams. That is a channel that takes ages to
-            // start and hitches every few seconds. HTTP/1.1 is what
-            // those servers actually serve, and mpv talks it too.
             .http1_only()
             .tcp_nodelay(true)
             .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
             .build()
             .expect("failed to build stream HTTP client")
     })
+}
+
+fn is_xtream_media_url(url: &str) -> bool {
+    let path = url.split(['?', '#']).next().unwrap_or(url);
+    path.contains("/live/")
+        || path.contains("/timeshift/")
+        || path.contains("/movie/")
+        || path.contains("/series/")
+}
+
+fn url_path(url: &str) -> &str {
+    url.split(['?', '#']).next().unwrap_or(url)
+}
+
+fn looks_like_ts(url: &str) -> bool {
+    url_path(url).ends_with(".ts")
+}
+
+fn looks_like_hls(url: &str) -> bool {
+    let path = url_path(url);
+    path.ends_with(".m3u8") || path.ends_with(".m3u")
+}
+
+/// A `.ts` request that 302'd onto a playlist is the transcode ladder,
+/// not the original 4K feed. Do not cache that hop.
+fn is_hls_downgrade(from: &str, to: &str) -> bool {
+    looks_like_ts(from) && looks_like_hls(to)
+}
+
+fn default_upstream_ua<'a>(url: &'a str, custom: Option<&'a str>) -> Option<&'a str> {
+    if let Some(ua) = custom.filter(|s| !s.is_empty()) {
+        return Some(ua);
+    }
+    if is_xtream_media_url(url) {
+        return Some(IPTV_PLAYER_UA);
+    }
+    None
 }
 
 fn stream_get(
@@ -114,7 +153,7 @@ fn cached_redirect(from: &str) -> Option<String> {
 }
 
 fn remember_redirect(from: &str, to: &str) {
-    if from == to {
+    if from == to || is_hls_downgrade(from, to) {
         return;
     }
     let mut map = redirs().lock().unwrap_or_else(|e| e.into_inner());
@@ -138,64 +177,6 @@ fn forget_redirect(from: &str) {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .remove(from);
-}
-
-// --- yt-dlp resolution cache ---------------------------------------------
-// A YouTube trailer's <video> element issues several requests for one file —
-// the initial GET, then Range seeks as it plays. Resolving the ID through
-// yt-dlp each time respawns a ~40 MB self-extracting process per request, and
-// the first cold run on an AppImage can take many seconds (or hang on
-// YouTube's anti-bot throttling), which blocks the webview's media pipeline and
-// appears as the detail page freezing. Cache the resolved direct URL per ID so
-// only the first request pays the cost, and bound how long we ever wait.
-
-const YTDLP_TTL: Duration = Duration::from_secs(60 * 60);
-const YTDLP_TIMEOUT: Duration = Duration::from_secs(12);
-/// One muxed file `<video src>` can play. `best` often prints a video URL and
-/// an audio URL, which WebKit then hangs on — that is why Linux used to skip
-/// this proxy entirely. Progressive AVC mp4 (format 18 as last resort) is
-/// the shape GStreamer will actually decode.
-const YTDLP_FORMAT: &str =
-    "b[ext=mp4][vcodec^=avc1][height<=1080]/b[ext=mp4][height<=1080]/18";
-
-struct YtResolved {
-    url: String,
-    at: Instant,
-}
-
-static YT_RESOLVED: OnceLock<Mutex<HashMap<String, YtResolved>>> = OnceLock::new();
-
-fn yt_resolved() -> &'static Mutex<HashMap<String, YtResolved>> {
-    YT_RESOLVED.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn cached_youtube(id: &str) -> Option<String> {
-    let mut map = yt_resolved().lock().unwrap_or_else(|e| e.into_inner());
-    match map.get(id) {
-        Some(c) if c.at.elapsed() < YTDLP_TTL => Some(c.url.clone()),
-        Some(_) => {
-            map.remove(id);
-            None
-        }
-        None => None,
-    }
-}
-
-fn remember_youtube(id: &str, url: &str) {
-    let mut map = yt_resolved().lock().unwrap_or_else(|e| e.into_inner());
-    if map.len() > 128 {
-        map.retain(|_, c| c.at.elapsed() < YTDLP_TTL);
-        if map.len() > 128 {
-            map.clear();
-        }
-    }
-    map.insert(
-        id.to_string(),
-        YtResolved {
-            url: url.to_string(),
-            at: Instant::now(),
-        },
-    );
 }
 
 fn url_gate(url: &str) -> Arc<AsyncMutex<()>> {
@@ -223,13 +204,7 @@ fn url_gate(url: &str) -> Arc<AsyncMutex<()>> {
 ///
 /// `GET /health` returns 200 OK with the proxy version. The frontend polls
 /// this to know the proxy is alive before navigating to the player.
-pub async fn run_proxy(ytdlp: Option<PathBuf>) -> anyhow::Result<()> {
-    // Remember the bundled yt-dlp path (if any) so every request's handler can
-    // resolve a YouTube trailer to a direct stream without a PATH lookup.
-    if let Some(p) = ytdlp {
-        *ytdlp_path().lock().unwrap_or_else(|e| e.into_inner()) = Some(p);
-    }
-
+pub async fn run_proxy() -> anyhow::Result<()> {
     let listener = TcpListener::bind(PROXY_ADDR).await?;
     eprintln!("[iptv-proxy] listening on {PROXY_ADDR}");
 
@@ -242,38 +217,6 @@ pub async fn run_proxy(ytdlp: Option<PathBuf>) -> anyhow::Result<()> {
             }
         });
     }
-}
-
-/// The bundled yt-dlp binary, resolved once at proxy startup. Stored in a
-/// `Mutex<Option<PathBuf>>` rather than a plain `Option` so the handlers can
-/// read it concurrently while still letting `run_proxy` set it exactly once.
-static YTDLP: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
-
-fn ytdlp_path() -> &'static Mutex<Option<PathBuf>> {
-    YTDLP.get_or_init(|| Mutex::new(None))
-}
-
-/// Spawn yt-dlp without the AppImage's library path. The bundled binary is
-/// self-extracting; inheriting Ubuntu 22.04's libs from LD_LIBRARY_PATH is
-/// how a trailer sat on "Starting…" until the 12s timeout.
-fn ytdlp_command(bin: &Path) -> tokio::process::Command {
-    let mut cmd = tokio::process::Command::new(bin);
-    if std::env::var_os("APPIMAGE").is_some() {
-        cmd.env_remove("LD_LIBRARY_PATH");
-        cmd.env_remove("APPDIR");
-        cmd.env_remove("PYTHONHOME");
-        cmd.env_remove("PYTHONPATH");
-    }
-    cmd
-}
-
-fn first_http_url(stdout: &str) -> Option<String> {
-    let urls: Vec<&str> = stdout
-        .lines()
-        .map(str::trim)
-        .filter(|l| l.starts_with("http://") || l.starts_with("https://"))
-        .collect();
-    (urls.len() == 1).then(|| urls[0].to_string())
 }
 
 async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result<()> {
@@ -330,14 +273,6 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
         return Ok(());
     }
 
-    // YouTube direct stream — resolves a video ID via yt-dlp and proxies the
-    // actual video bytes. GTK WebKit can play a direct <video> stream but not
-    // a YouTube iframe embed.
-    if request.starts_with("GET /youtube-stream") {
-        serve_youtube_stream(stream, &request).await?;
-        return Ok(());
-    }
-
     // Parse the request line and the URL parameter. Bad input gets a 400
     // rather than a 500 — the page will then fall back to the raw URL.
     let (target_url, custom_ua, custom_referer) = match parse_target(&request) {
@@ -360,37 +295,32 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
     // that we pass through verbatim. A HEAD from lavf must not become a
     // full GET: that starts the movie twice and is the long Buffering wait.
     let is_head = request.starts_with("HEAD ");
-    let range =
-        extract_header(&request, "Range").or_else(|| is_head.then(|| "bytes=0-0".to_string()));
-    eprintln!(
-        "[iptv-proxy] {} {target_url}",
-        if is_head { "HEAD" } else { "GET" }
-    );
+    let range = extract_header(&request, "Range")
+        .or_else(|| is_head.then(|| "bytes=0-0".to_string()));
+    eprintln!("[iptv-proxy] {} {target_url}", if is_head { "HEAD" } else { "GET" });
 
-    let ua = custom_ua.as_deref();
+    let ua = default_upstream_ua(&target_url, custom_ua.as_deref());
     let rf = custom_referer.as_deref();
     // Hold only while following the resolver 302 — not while the movie
     // body streams, or a Range seek would wait on the first connection.
     let gate = url_gate(&target_url);
     let _resolve = gate.lock().await;
     let mut fetch_url = cached_redirect(&target_url).unwrap_or_else(|| target_url.clone());
+    if is_hls_downgrade(&target_url, &fetch_url) {
+        forget_redirect(&target_url);
+        fetch_url = target_url.clone();
+    }
     if fetch_url != target_url {
         eprintln!("[iptv-proxy] cached {fetch_url}");
     }
 
-    let resp = match stream_get(&fetch_url, ua, rf, range.as_deref())
-        .send()
-        .await
-    {
+    let resp = match stream_get(&fetch_url, ua, rf, range.as_deref()).send().await {
         Ok(r) => r,
         Err(e) if fetch_url != target_url => {
             eprintln!("[iptv-proxy] cached upstream failed ({e}), retrying resolver");
             forget_redirect(&target_url);
             fetch_url = target_url.clone();
-            match stream_get(&fetch_url, ua, rf, range.as_deref())
-                .send()
-                .await
-            {
+            match stream_get(&fetch_url, ua, rf, range.as_deref()).send().await {
                 Ok(r) => r,
                 Err(e) => {
                     eprintln!("[iptv-proxy] upstream error for {target_url}: {e}");
@@ -426,10 +356,7 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
     if fetch_url != target_url && !status.is_success() && status.as_u16() != 206 {
         forget_redirect(&target_url);
         fetch_url = target_url.clone();
-        if let Ok(r) = stream_get(&fetch_url, ua, rf, range.as_deref())
-            .send()
-            .await
-        {
+        if let Ok(r) = stream_get(&fetch_url, ua, rf, range.as_deref()).send().await {
             resp = r;
             status = resp.status();
         }
@@ -489,31 +416,12 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
     if content_type.contains("mpegurl") || target_url.ends_with(".m3u8") {
         match resp.text().await {
             Ok(body) => {
-                let rewritten = rewrite_m3u(
+                let rewritten = prefer_highest_hls_rung(&rewrite_m3u(
                     &body,
                     &fetch_url,
                     custom_ua.as_deref(),
                     custom_referer.as_deref(),
-                );
-                // A master playlist that only names unresolvable hosts
-                // (CGTN's 2017 CloudFront file still lists live.cgtn.com)
-                // would otherwise 200, then mpv would sit on Connecting
-                // while every variant 502s. Fail the manifest instead so
-                // the player skips in one beat.
-                if playlist_has_uri(&body) && !playlist_has_uri(&rewritten) {
-                    eprintln!(
-                        "[iptv-proxy] no reachable streams in {fetch_url}"
-                    );
-                    write_response(
-                        stream,
-                        502,
-                        "Bad Gateway",
-                        "text/plain",
-                        b"no reachable streams in playlist",
-                    )
-                    .await?;
-                    return Ok(());
-                }
+                ));
                 write_response(
                     stream,
                     status.as_u16(),
@@ -538,23 +446,15 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
         return Ok(());
     }
 
-    relay_upstream(stream, status, &content_type, resp, is_head).await
-}
-
-/// Stream an upstream `reqwest` response through to the client in real-time.
-/// HLS segments and live video chunks are never-ending streams — buffering the
-/// whole body hangs forever waiting for EOF. Instead: (1) write response
-/// headers (status, content-type, CORS, Content-Length if the upstream told
-/// us), (2) forward each chunk as it arrives, (3) when the upstream has no
-/// Content-Length use Transfer-Encoding: chunked so the browser knows where
-/// each frame ends.
-async fn relay_upstream(
-    stream: &mut tokio::net::TcpStream,
-    status: reqwest::StatusCode,
-    content_type: &str,
-    mut resp: reqwest::Response,
-    is_head: bool,
-) -> anyhow::Result<()> {
+    // Stream the response through to the client in real-time. HLS segments
+    // and live video chunks are never-ending streams — buffering the whole
+    // body (the old approach) hangs forever waiting for EOF. Instead:
+    //   1. Write response headers (status, content-type, CORS, Content-Length
+    //      if the upstream told us).
+    //   2. Forward each chunk from reqwest to the TCP stream as it arrives.
+    //   3. When the upstream has no Content-Length, the response uses
+    //      Transfer-Encoding: chunked so the browser knows where each frame
+    //      ends.
     let upstream_length = resp
         .headers()
         .get("content-length")
@@ -605,6 +505,7 @@ async fn relay_upstream(
     // Content-Length is already set. For infinite (live) responses we
     // wrap each frame in chunked encoding so the browser knows where each
     // chunk ends.
+    let mut resp = resp;
     let use_chunked = upstream_length.is_none();
     loop {
         match resp.chunk().await {
@@ -637,78 +538,6 @@ async fn relay_upstream(
     Ok(())
 }
 
-fn playlist_has_uri(body: &str) -> bool {
-    body.lines().any(|line| {
-        let t = line.trim();
-        !t.is_empty() && !t.starts_with('#')
-    })
-}
-
-fn resolve_manifest_uri(trimmed: &str, base: &str) -> String {
-    let base_no_query = base.split('?').next().unwrap_or(base);
-    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-        trimmed.to_string()
-    } else if trimmed.starts_with('/') {
-        if let Ok(parsed) = url::Url::parse(base) {
-            format!(
-                "{}://{}{}",
-                parsed.scheme(),
-                parsed.host_str().unwrap_or(""),
-                trimmed
-            )
-        } else {
-            trimmed.to_string()
-        }
-    } else {
-        let base_dir = base_no_query.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
-        format!("{base_dir}/{trimmed}")
-    }
-}
-
-/// True when this URL's host has at least one DNS address. Relative
-/// playlist lines never reach here. Negative answers live 30s so a
-/// master with three variants on the same dead host is one lookup.
-fn host_has_address(url: &str) -> bool {
-    let Ok(parsed) = url::Url::parse(url) else {
-        return true;
-    };
-    let Some(host) = parsed.host_str() else {
-        return true;
-    };
-    if host.eq_ignore_ascii_case("localhost")
-        || host == "127.0.0.1"
-        || host == "::1"
-        || host.parse::<std::net::IpAddr>().is_ok()
-    {
-        return true;
-    }
-    let key = host.to_ascii_lowercase();
-    static CACHE: OnceLock<Mutex<HashMap<String, (bool, Instant)>>> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Ok(guard) = cache.lock() {
-        if let Some((ok, at)) = guard.get(&key) {
-            let ttl = if *ok {
-                Duration::from_secs(300)
-            } else {
-                Duration::from_secs(30)
-            };
-            if at.elapsed() < ttl {
-                return *ok;
-            }
-        }
-    }
-    let port = parsed.port_or_known_default().unwrap_or(443);
-    let ok = format!("{host}:{port}")
-        .to_socket_addrs()
-        .ok()
-        .and_then(|mut addrs| addrs.next())
-        .is_some();
-    if let Ok(mut guard) = cache.lock() {
-        guard.insert(key, (ok, Instant::now()));
-    }
-    ok
-}
-
 /// Rewrite every URL inside an HLS manifest so it points at the proxy. The
 /// manifest is a list of relative or absolute paths, and without this the
 /// <video> element fetches them from the origin, which is exactly what we
@@ -719,165 +548,189 @@ fn host_has_address(url: &str) -> bool {
 ///   - absolute path: `/path/to/seg.ts`
 ///   - relative: `seg.ts` or `subdir/seg.ts?token=abc`
 /// And preserves any query string on the base URL when resolving relatives.
-fn rewrite_m3u(body: &str, base: &str, user_agent: Option<&str>, referer: Option<&str>) -> String {
-    rewrite_m3u_filter(body, base, user_agent, referer, host_has_address)
-}
-
-fn rewrite_m3u_filter(
+fn rewrite_m3u(
     body: &str,
     base: &str,
     user_agent: Option<&str>,
     referer: Option<&str>,
-    reachable: impl Fn(&str) -> bool,
 ) -> String {
-    let lines: Vec<&str> = body.lines().collect();
-    let mut skip = vec![false; lines.len()];
-    for (i, line) in lines.iter().enumerate() {
+    let mut out = String::with_capacity(body.len());
+    // Split the base into scheme+host and path so query strings on `base`
+    // (rare on manifests, but possible) are preserved on relative resolves.
+    let base_no_query = base.split('?').next().unwrap_or(base);
+    for line in body.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
+            out.push_str(line);
+            out.push('\n');
             continue;
         }
-        let resolved = resolve_manifest_uri(trimmed, base);
-        if (resolved.starts_with("http://") || resolved.starts_with("https://"))
-            && !reachable(&resolved)
-        {
-            skip[i] = true;
-            let mut j = i;
-            while j > 0 {
-                j -= 1;
-                let prev = lines[j].trim();
-                if prev.is_empty() || !prev.starts_with('#') || prev.starts_with("#EXTM3U") {
-                    break;
-                }
-                skip[j] = true;
+        let resolved = if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+            // Some CDNs sign segments with per-request tokens; a manifest
+            // already has them baked in, so pass through unchanged.
+            trimmed.to_string()
+        } else if trimmed.starts_with('/') {
+            // Absolute path — keep the base's scheme+host, drop its path.
+            if let Ok(parsed) = url::Url::parse(base) {
+                format!(
+                    "{}://{}{}",
+                    parsed.scheme(),
+                    parsed.host_str().unwrap_or(""),
+                    trimmed
+                )
+            } else {
+                trimmed.to_string()
             }
-        }
-    }
-
-    // Nested manifests often require the page that linked them as Referer.
-    // Free-TV playlists rarely set EXTVLCOPT, so inherit the playlist origin.
-    let inherited_referer = referer.map(str::to_string).or_else(|| {
-        url::Url::parse(base).ok().and_then(|u| {
-            let host = u.host_str()?;
-            Some(format!("{}://{host}/", u.scheme()))
-        })
-    });
-
-    let mut rewritten: Vec<String> = Vec::with_capacity(lines.len());
-    for (i, line) in lines.iter().enumerate() {
-        if skip[i] {
-            continue;
-        }
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            rewritten.push((*line).to_string());
-            continue;
-        }
-        let resolved = resolve_manifest_uri(trimmed, base);
+        } else {
+            // Resolve relative to the manifest's directory.
+            let base_dir = base_no_query.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+            format!("{base_dir}/{trimmed}")
+        };
         // An `#EXTVLCOPT:http-user-agent` or `http-referrer` on the
         // playlist applies to every request in the HLS chain, not only the
         // initial .m3u8. Without propagating it here, the manifest loads but
         // the CDN rejects each segment with 403 and the player can only say
         // "Playback failed". Keep the headers in the proxy URL so nested
         // manifests inherit them too.
-        let mut uri = format!("/stream?url={}", urlencoding::encode(&resolved));
+        out.push_str(&format!("/stream?url={}", urlencoding::encode(&resolved)));
         if let Some(ua) = user_agent {
-            uri.push_str("&X-Rivulet-Ua=");
-            uri.push_str(&urlencoding::encode(ua));
+            out.push_str("&X-Rivulet-Ua=");
+            out.push_str(&urlencoding::encode(ua));
         }
-        if let Some(rf) = inherited_referer.as_deref() {
-            uri.push_str("&X-Rivulet-Referer=");
-            uri.push_str(&urlencoding::encode(rf));
+        if let Some(rf) = referer {
+            out.push_str("&X-Rivulet-Referer=");
+            out.push_str(&urlencoding::encode(rf));
         }
-        rewritten.push(uri);
-    }
-    // ffmpeg/mpv pick the *first* EXT-X-STREAM-INF. IPTV masters list 720p
-    // first so a cheap client can start; a 4K channel then looks like 720p.
-    // Highest RESOLUTION / BANDWIDTH first is what TiviMate does.
-    sort_hls_master(&mut rewritten);
-    let mut out = String::with_capacity(body.len());
-    for line in rewritten {
-        out.push_str(&line);
         out.push('\n');
     }
     out
 }
 
-fn hls_attr_u64(tag: &str, key: &str) -> Option<u64> {
-    let needle = format!("{key}=");
-    let rest = tag.split(&needle).nth(1)?;
-    let token = rest.split([',', ' ', '\t']).next()?.trim();
-    token.parse().ok()
+/// Master playlists often list the 720p rung first (the "default" a phone
+/// can play). mpv then stays on that variant even when a 4K one exists.
+/// Put the tallest / fattest rung first so `--hls-bitrate=max` has a real max.
+fn prefer_highest_hls_rung(body: &str) -> String {
+    if !body.contains("#EXT-X-STREAM-INF") {
+        return body.to_string();
+    }
+    let lines: Vec<&str> = body.lines().collect();
+    struct Variant {
+        start: usize,
+        end: usize,
+        bandwidth: u64,
+        height: u64,
+    }
+    let mut vars = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        if lines[i].starts_with("#EXT-X-STREAM-INF") {
+            let bandwidth = hls_bandwidth(lines[i]);
+            let height = hls_height(lines[i]);
+            let mut end = i + 1;
+            while end < lines.len() && (lines[end].starts_with('#') || lines[end].trim().is_empty())
+            {
+                end += 1;
+            }
+            if end < lines.len() {
+                vars.push(Variant {
+                    start: i,
+                    end: end + 1,
+                    bandwidth,
+                    height,
+                });
+                i = end + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    if vars.len() < 2 {
+        return body.to_string();
+    }
+    let first = vars[0].start;
+    let last = vars.last().unwrap().end;
+    // Only reorder a contiguous ladder — interleaved MEDIA tags stay put.
+    if vars.windows(2).any(|w| w[0].end != w[1].start) {
+        return body.to_string();
+    }
+    let mut order: Vec<usize> = (0..vars.len()).collect();
+    order.sort_by(|a, b| {
+        vars[*b]
+            .height
+            .cmp(&vars[*a].height)
+            .then(vars[*b].bandwidth.cmp(&vars[*a].bandwidth))
+    });
+    if order.iter().copied().eq(0..vars.len()) {
+        return body.to_string();
+    }
+    let mut out = String::with_capacity(body.len());
+    for line in &lines[..first] {
+        out.push_str(line);
+        out.push('\n');
+    }
+    for idx in order {
+        for line in &lines[vars[idx].start..vars[idx].end] {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    for line in &lines[last..] {
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
 }
 
-fn hls_resolution_height(tag: &str) -> u64 {
-    let rest = match tag.split("RESOLUTION=").nth(1) {
-        Some(s) => s,
-        None => return 0,
-    };
-    let token = rest.split([',', ' ', '\t']).next().unwrap_or("").trim();
-    token
-        .split('x')
-        .nth(1)
-        .and_then(|h| h.parse().ok())
+fn hls_stream_inf(tag: &str) -> &str {
+    tag.strip_prefix("#EXT-X-STREAM-INF:")
+        .or_else(|| tag.strip_prefix("#EXT-X-I-FRAME-STREAM-INF:"))
+        .unwrap_or(tag)
+}
+
+fn hls_attr(tag: &str, name: &str) -> Option<u64> {
+    hls_stream_inf(tag)
+        .split(',')
+        .filter_map(|part| {
+            let (k, v) = part.trim().split_once('=')?;
+            if k.eq_ignore_ascii_case(name) {
+                v.trim_matches('"').parse().ok()
+            } else {
+                None
+            }
+        })
+        .next()
+}
+
+fn hls_bandwidth(tag: &str) -> u64 {
+    hls_attr(tag, "BANDWIDTH")
+        .or_else(|| hls_attr(tag, "AVERAGE-BANDWIDTH"))
         .unwrap_or(0)
 }
 
-fn hls_variant_rank(stream_inf: &str) -> u64 {
-    let height = hls_resolution_height(stream_inf);
-    let bw = hls_attr_u64(stream_inf, "AVERAGE-BANDWIDTH")
-        .or_else(|| hls_attr_u64(stream_inf, "BANDWIDTH"))
-        .unwrap_or(0);
-    height.saturating_mul(1_000_000_000) + bw
-}
-
-/// Put the highest HLS rendition first. Leaves media playlists (no
-/// EXT-X-STREAM-INF) and the header tags above the first variant alone.
-fn sort_hls_master(lines: &mut Vec<String>) {
-    let Some(first) = lines
-        .iter()
-        .position(|l| l.trim().starts_with("#EXT-X-STREAM-INF"))
-    else {
-        return;
-    };
-    let header = lines[..first].to_vec();
-    let mut variants: Vec<(u64, Vec<String>)> = Vec::new();
-    let mut i = first;
-    while i < lines.len() {
-        if !lines[i].trim().starts_with("#EXT-X-STREAM-INF") {
-            break;
+fn hls_height(tag: &str) -> u64 {
+    let rest = hls_stream_inf(tag);
+    for part in rest.split(',') {
+        let Some((k, v)) = part.trim().split_once('=') else {
+            continue;
+        };
+        if k.eq_ignore_ascii_case("RESOLUTION") {
+            let v = v.trim_matches('"');
+            if let Some((_, h)) = v.split_once('x') {
+                return h.parse().unwrap_or(0);
+            }
         }
-        let rank = hls_variant_rank(&lines[i]);
-        let mut block = vec![lines[i].clone()];
-        i += 1;
-        while i < lines.len() && lines[i].trim().starts_with('#') {
-            block.push(lines[i].clone());
-            i += 1;
-        }
-        if i < lines.len() {
-            block.push(lines[i].clone());
-            i += 1;
-        }
-        variants.push((rank, block));
     }
-    variants.sort_by(|a, b| b.0.cmp(&a.0));
-    let mut ordered = header;
-    for (_, block) in variants {
-        ordered.extend(block);
-    }
-    ordered.extend_from_slice(&lines[i..]);
-    *lines = ordered;
+    0
 }
 
 /// YouTube video ids are always 11 characters from this alphabet.
 fn valid_youtube_id(id: &str) -> bool {
     id.len() == 11
-        && id
-            .bytes()
+        && id.bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
-fn parse_youtube_embed(request: &str) -> Option<(String, bool, bool, bool, bool)> {
+fn parse_youtube_embed(request: &str) -> Option<(String, bool, bool, bool)> {
     let first_line = request.lines().next()?;
     let path = first_line.split_whitespace().nth(1)?;
     let query = path.split_once('?')?.1;
@@ -885,7 +738,6 @@ fn parse_youtube_embed(request: &str) -> Option<(String, bool, bool, bool, bool)
     let mut autoplay = true;
     let mut mute = false;
     let mut looping = false;
-    let mut controls = true;
     for pair in query.split('&') {
         let (k, v) = pair.split_once('=')?;
         let decoded = urlencoding::decode(v).ok()?.into_owned();
@@ -894,7 +746,6 @@ fn parse_youtube_embed(request: &str) -> Option<(String, bool, bool, bool, bool)
             "autoplay" => autoplay = decoded != "0",
             "mute" => mute = decoded == "1",
             "loop" => looping = decoded == "1",
-            "controls" => controls = decoded != "0",
             _ => {}
         }
     }
@@ -902,14 +753,14 @@ fn parse_youtube_embed(request: &str) -> Option<(String, bool, bool, bool, bool)
     if !valid_youtube_id(&id) {
         return None;
     }
-    Some((id, autoplay, mute, looping, controls))
+    Some((id, autoplay, mute, looping))
 }
 
 async fn serve_youtube_embed(
     stream: &mut tokio::net::TcpStream,
     request: &str,
 ) -> anyhow::Result<()> {
-    let (id, autoplay, mute, looping, controls) = match parse_youtube_embed(request) {
+    let (id, autoplay, mute, looping) = match parse_youtube_embed(request) {
         Some(v) => v,
         None => {
             write_response(stream, 400, "Bad Request", "text/plain", b"invalid v").await?;
@@ -917,7 +768,7 @@ async fn serve_youtube_embed(
         }
     };
     let mut params = String::from(
-        "rel=0&playsinline=1&enablejsapi=1&vq=hd1080&origin=http%3A%2F%2F127.0.0.1%3A3031",
+        "rel=0&playsinline=1&enablejsapi=1&vq=hd720&origin=http%3A%2F%2F127.0.0.1%3A3031",
     );
     if autoplay {
         params.push_str("&autoplay=1");
@@ -925,31 +776,14 @@ async fn serve_youtube_embed(
     if mute {
         params.push_str("&mute=1");
     }
-    // A one-id playlist is how YouTube honours loop, and it paints previous /
-    // next on the cover. The hero loops from ended → play instead.
-    if looping && controls {
+    // YouTube ignores loop unless playlist names this same video.
+    if looping {
         params.push_str("&loop=1&playlist=");
         params.push_str(&id);
     }
-    // Cover hero: mute/unmute is ours. Hide YouTube's title, play, and FS.
-    if !controls {
-        params.push_str(
-            "&controls=0&modestbranding=1&fs=0&disablekb=1&iv_load_policy=3&cc_load_policy=0",
-        );
-    }
-    let loop_ready = if looping && controls {
-        r#"send("setLoop",[true]);"#
-    } else {
-        ""
-    };
-    let loop_ended = if looping {
-        r#"if(d&&d.info&&d.info.playerState===0)send("seekTo",[0,true]);if(d&&d.info&&d.info.playerState===0)send("playVideo");"#
-    } else {
-        ""
-    };
     // Forwards mute/unMute/quality from the page, and player state back up, so
     // the volume button does not reload the iframe and the hero can hide YouTube's
-    // spinner until the trailer is actually playing.
+    // spinner until 720p is actually playing.
     let html = format!(
         r#"<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>*{{margin:0;padding:0;box-sizing:border-box}}html,body{{width:100%;height:100%;overflow:hidden;background:#000}}iframe{{width:100%;height:100%;border:none}}</style></head>
@@ -962,8 +796,8 @@ async fn serve_youtube_embed(
     if(f.contentWindow)f.contentWindow.postMessage(JSON.stringify({{event:"command",func:func,args:args||[]}}),yt);
   }}
   function lock(){{
-    send("setPlaybackQuality",["hd1080"]);
-    send("setPlaybackQualityRange",["hd1080","hd1080"]);
+    send("setPlaybackQuality",["hd720"]);
+    send("setPlaybackQualityRange",["hd720","hd720"]);
   }}
   addEventListener("message",function(e){{
     if(!f.contentWindow)return;
@@ -974,208 +808,16 @@ async fn serve_youtube_embed(
     if(e.source!==f.contentWindow)return;
     parent.postMessage(typeof e.data==="string"?e.data:JSON.stringify(e.data),"*");
     var d=e.data;if(typeof d==="string"){{try{{d=JSON.parse(d)}}catch(x){{return}}}}
-    if(d&&d.event==="onReady"){{lock();{loop_ready}send("playVideo");}}
-    if(d&&d.info&&d.info.playerState===1)lock();
-    {loop_ended}
+    if(d&&(d.event==="onReady"||(d.info&&d.info.playerState===1)))lock();
   }});
   f.addEventListener("load",function(){{
     f.contentWindow.postMessage(JSON.stringify({{event:"listening"}}),yt);
     lock();
-    {loop_ready}
-    send("playVideo");
   }});
 }})();
 </script></body></html>"#
     );
-    write_response(
-        stream,
-        200,
-        "OK",
-        "text/html; charset=utf-8",
-        html.as_bytes(),
-    )
-    .await
-}
-
-async fn serve_youtube_stream(
-    stream: &mut tokio::net::TcpStream,
-    request: &str,
-) -> anyhow::Result<()> {
-    let id = match parse_youtube_embed(request) {
-        Some((id, _, _, _, _)) => id,
-        None => {
-            write_response(stream, 400, "Bad Request", "text/plain", b"invalid v").await?;
-            return Ok(());
-        }
-    };
-
-    let is_head = request.starts_with("HEAD ");
-    let range =
-        extract_header(request, "Range").or_else(|| is_head.then(|| "bytes=0-0".to_string()));
-
-    // Use yt-dlp to resolve the direct video stream URL at up to 1080p. The
-    // result is cached per ID so a <video>'s repeated Range requests don't each
-    // respawn yt-dlp, and the whole resolution is bounded by a timeout so a
-    // hung yt-dlp (AppImage cold run, YouTube throttling) returns a fast 502
-    // instead of blocking the media pipeline free.
-    if let Some(resolved) = cached_youtube(&id) {
-        eprintln!("[iptv-proxy] cached youtube-stream {id} → {resolved}");
-        return stream_resolved_youtube(stream, &id, &resolved, range.as_deref(), is_head).await;
-    }
-
-    let url = format!("https://www.youtube.com/watch?v={id}");
-    let ytdlp = ytdlp_path()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()
-        .unwrap_or_else(|| PathBuf::from("yt-dlp"));
-    let cmd = ytdlp_command(&ytdlp)
-        .arg("--get-url")
-        .arg("--no-playlist")
-        .arg("--no-warnings")
-        .arg("--format")
-        .arg(YTDLP_FORMAT)
-        .arg(&url)
-        .output();
-
-    let output = match tokio::time::timeout(YTDLP_TIMEOUT, cmd).await {
-        Ok(Ok(o)) => o,
-        Ok(Err(e)) => {
-            eprintln!("[iptv-proxy] yt-dlp not found: {e}");
-            write_response(
-                stream,
-                502,
-                "Bad Gateway",
-                "text/plain",
-                b"yt-dlp not installed",
-            )
-            .await?;
-            return Ok(());
-        }
-        Err(_) => {
-            eprintln!("[iptv-proxy] yt-dlp timed out after {YTDLP_TIMEOUT:?} for {id}");
-            write_response(
-                stream,
-                502,
-                "Bad Gateway",
-                "text/plain",
-                b"yt-dlp timed out",
-            )
-            .await?;
-            return Ok(());
-        }
-    };
-
-    let resolved = match output {
-        o if o.status.success() => {
-            let resolved = match first_http_url(&String::from_utf8_lossy(&o.stdout)) {
-                Some(url) => url,
-                None => {
-                    write_response(
-                        stream,
-                        502,
-                        "Bad Gateway",
-                        "text/plain",
-                        b"yt-dlp returned no single URL",
-                    )
-                    .await?;
-                    return Ok(());
-                }
-            };
-            eprintln!("[iptv-proxy] yt-dlp resolved youtube-stream {id} → {resolved}");
-            remember_youtube(&id, &resolved);
-            resolved
-        }
-        o => {
-            let stderr = String::from_utf8_lossy(&o.stderr);
-            eprintln!("[iptv-proxy] yt-dlp failed for {id}: {stderr}");
-            write_response(stream, 502, "Bad Gateway", "text/plain", b"yt-dlp failed").await?;
-            return Ok(());
-        }
-    };
-
-    stream_resolved_youtube(stream, &id, &resolved, range.as_deref(), is_head).await
-}
-
-/// Given an already-resolved direct stream URL, fetch its bytes and proxy them
-/// to the client. Separated so the cached path and the freshly-resolved path
-/// share the same upstream handling.
-async fn stream_resolved_youtube(
-    stream: &mut tokio::net::TcpStream,
-    id: &str,
-    resolved: &str,
-    range: Option<&str>,
-    is_head: bool,
-) -> anyhow::Result<()> {
-    // Now stream the resolved CDN URL's bytes back through the loopback. A 302
-    // to a cross-origin googlevideo URL is fragile — the webview <video> would
-    // fetch it without our CORS headers or browser UA. Proxying means the
-    // element only ever talks to 127.0.0.1:3031, and we control the headers.
-    // Forward the client's Range so seeks hit the right byte window. Bound the
-    // resolve handshake so a stalled CDN can't block the caller indefinitely.
-    let send = stream_get(resolved, None, Some("https://www.youtube.com"), range).send();
-    let resp = match tokio::time::timeout(Duration::from_secs(15), send).await {
-        Ok(Ok(r)) => r,
-        Ok(Err(e)) => {
-            eprintln!("[iptv-proxy] upstream error for resolved youtube stream {id}: {e}");
-            write_response(
-                stream,
-                502,
-                "Bad Gateway",
-                "text/plain",
-                e.to_string().as_bytes(),
-            )
-            .await?;
-            return Ok(());
-        }
-        Err(_) => {
-            eprintln!("[iptv-proxy] upstream timed out for resolved youtube stream {id}");
-            write_response(
-                stream,
-                502,
-                "Bad Gateway",
-                "text/plain",
-                b"upstream timed out",
-            )
-            .await?;
-            return Ok(());
-        }
-    };
-    let status = resp.status();
-    if !status.is_success() && status.as_u16() != 206 {
-        // Some CDNs reject Range outright; retry once without it.
-        let retry = stream_get(resolved, None, Some("https://www.youtube.com"), None)
-            .send()
-            .await;
-        if let Ok(r) = retry {
-            if r.status().is_success() || r.status().as_u16() == 206 {
-                let content_type = r
-                    .headers()
-                    .get("content-type")
-                    .and_then(|v| v.to_str().ok())
-                    .unwrap_or("application/octet-stream")
-                    .to_string();
-                return relay_upstream(stream, r.status(), &content_type, r, is_head).await;
-            }
-        }
-        eprintln!("[iptv-proxy] resolved youtube stream {id} failed with {status}");
-        write_response(
-            stream,
-            status.as_u16(),
-            status.canonical_reason().unwrap_or("Bad Gateway"),
-            "text/plain",
-            b"upstream error",
-        )
-        .await?;
-        return Ok(());
-    }
-    let content_type = resp
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("application/octet-stream")
-        .to_string();
-    relay_upstream(stream, status, &content_type, resp, is_head).await
+    write_response(stream, 200, "OK", "text/html; charset=utf-8", html.as_bytes()).await
 }
 
 fn parse_target(request: &str) -> Option<(String, Option<String>, Option<String>)> {
@@ -1246,63 +888,66 @@ async fn write_preflight(stream: &mut tokio::net::TcpStream) -> anyhow::Result<(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    const MASTER: &str = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nhttps://dead.invalid/a.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=200\nhttps://live.example/b.m3u8\n";
-
-    #[test]
-    fn dead_variant_hosts_are_dropped_with_their_tags() {
-        let out = rewrite_m3u_filter(
-            MASTER,
-            "https://news.example/master.m3u8",
-            None,
-            None,
-            |url| url.contains("live.example"),
-        );
-        assert!(
-            !out.contains("dead.invalid"),
-            "unresolvable variants must not reach mpv"
-        );
-        assert!(out.contains("live.example"), "reachable variants stay");
-        assert!(out.contains("X-Rivulet-Referer="), "nested fetches inherit the playlist origin");
-        assert_eq!(out.matches("#EXT-X-STREAM-INF").count(), 1);
-    }
+    use super::{
+        default_upstream_ua, hls_bandwidth, hls_height, is_hls_downgrade, is_xtream_media_url,
+        prefer_highest_hls_rung, IPTV_PLAYER_UA,
+    };
 
     #[test]
     fn master_playlist_puts_the_highest_rung_first() {
-        const LADDER: &str = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1500000,RESOLUTION=1280x720\nhttps://live.example/720.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=8000000,RESOLUTION=1920x1080\nhttps://live.example/1080.m3u8\n";
-        let out = rewrite_m3u_filter(LADDER, "https://live.example/master.m3u8", None, None, |_| {
-            true
-        });
-        let i1080 = out.find("1080.m3u8").expect("1080 variant");
-        let i720 = out.find("720.m3u8").expect("720 variant");
-        assert!(i1080 < i720, "ffmpeg/mpv pick the first STREAM-INF, so FHD must lead\n{out}");
-    }
-
-    #[test]
-    fn a_master_of_only_dead_hosts_has_no_uri() {
-        let out = rewrite_m3u_filter(MASTER, "https://news.example/master.m3u8", None, None, |_| {
-            false
-        });
-        assert!(playlist_has_uri(MASTER));
-        assert!(!playlist_has_uri(&out));
-    }
-
-    #[test]
-    fn first_http_url_takes_a_single_line() {
+        const LADDER: &str = "#EXTM3U\n\
+#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360\n\
+low.m3u8\n\
+#EXT-X-STREAM-INF:BANDWIDTH=8000000,RESOLUTION=3840x2160\n\
+uhd.m3u8\n";
+        let out = prefer_highest_hls_rung(LADDER);
+        let uhd = out.find("uhd.m3u8").expect("4K rung stays");
+        let low = out.find("low.m3u8").expect("low rung stays");
+        assert!(uhd < low, "mpv plays the first variant — 4K must lead\n{out}");
         assert_eq!(
-            first_http_url("https://googlevideo.example/v.mp4\n"),
-            Some("https://googlevideo.example/v.mp4".into())
+            hls_bandwidth("#EXT-X-STREAM-INF:BANDWIDTH=8000000,RESOLUTION=3840x2160"),
+            8_000_000
+        );
+        assert_eq!(
+            hls_height("#EXT-X-STREAM-INF:BANDWIDTH=8000000,RESOLUTION=3840x2160"),
+            2160
         );
     }
 
     #[test]
-    fn first_http_url_rejects_separate_video_and_audio() {
+    fn master_playlist_uses_resolution_when_bandwidth_is_missing() {
+        const LADDER: &str = "#EXTM3U\n\
+#EXT-X-STREAM-INF:RESOLUTION=1280x720\n\
+hd.m3u8\n\
+#EXT-X-STREAM-INF:RESOLUTION=3840x2160\n\
+uhd.m3u8\n";
+        let out = prefer_highest_hls_rung(LADDER);
+        let uhd = out.find("uhd.m3u8").expect("4K rung stays");
+        let hd = out.find("hd.m3u8").expect("hd rung stays");
+        assert!(uhd < hd, "height must rank the ladder when BANDWIDTH is absent\n{out}");
+    }
+
+    #[test]
+    fn xtream_live_uses_a_player_ua_not_chrome() {
+        assert!(is_xtream_media_url(
+            "http://panel.example:8080/live/user/pass/1234.ts"
+        ));
         assert_eq!(
-            first_http_url("https://v.example/a.webm\nhttps://v.example/b.m4a\n"),
-            None
+            default_upstream_ua("http://panel.example:8080/live/user/pass/1234.ts", None),
+            Some(IPTV_PLAYER_UA)
         );
-        assert_eq!(first_http_url(""), None);
-        assert_eq!(first_http_url("WARNING: something\n"), None);
+        assert!(!IPTV_PLAYER_UA.contains("Mozilla"));
+    }
+
+    #[test]
+    fn a_ts_to_hls_redirect_is_the_transcode_not_a_cache_hit() {
+        assert!(is_hls_downgrade(
+            "http://panel/live/u/p/1.ts",
+            "http://panel/hls/1/index.m3u8"
+        ));
+        assert!(!is_hls_downgrade(
+            "http://cdn/file.ts",
+            "http://cdn/file.ts?token=1"
+        ));
     }
 }

@@ -226,6 +226,12 @@ await check('Xtream live opens MPEG-TS, not the HLS transcode', () => {
   assert.ok(!xtream.includes('{}/live/{}/{}/{}.m3u8'), 'the .m3u8 ladder is what looks like 720p')
 })
 
+await check('the redirector asks the panel as a player, not a browser', () => {
+  assert.ok(HANDLERS.includes('IPTV_PLAYER_UA'), 'Chrome UA is the HTML5 720p ladder')
+  const proxy = readFileSync(`${ROOT}src-tauri/src/iptv/proxy.rs`, 'utf8')
+  assert.ok(proxy.includes('VLC/3.0.18 LibVLC/3.0.18'), 'same UA the M3U importer already uses')
+})
+
 // ── Credentials never leave the Rust side ────────────────────────
 
 /**

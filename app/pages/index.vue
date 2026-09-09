@@ -2,6 +2,8 @@
 import type { TmdbPage } from '~/utils/tmdb'
 import { mdiArrowRight, mdiArrowUp, mdiBookmark, mdiBookmarkOutline, mdiChevronLeft, mdiChevronRight, mdiClose, mdiHeart, mdiHeartOutline, mdiInformationOutline, mdiPlay, mdiStar, mdiTelevision } from '@mdi/js'
 
+definePageMeta({ keepalive: true })
+
 const ui = useUiStore()
 const library = useLibraryStore()
 
@@ -33,13 +35,13 @@ watch(featured, async m => {
     return
   }
   try {
-    const data = await tmdb<any>(`/${m.type}/${m.id}`)
+    const data = await loadMediaDetail(m.type, m.id)
     featuredDetail.value = {
-      logo: data.logo?.file_path ?? null,
-      trailer: data.videos?.results?.find((v: any) => v.type === 'Trailer' && v.site === 'YouTube')?.key ?? null,
-      runtime: data.runtime ?? data.episode_run_time?.[0] ?? 0,
-      certification: data.release_dates?.results?.find((d: any) => d.iso_3166_1 === 'US')?.release_dates?.[0]?.certification ?? '',
-      genres: data.genres ?? [],
+      logo: data.logo,
+      trailer: data.trailer,
+      runtime: data.runtime,
+      certification: data.certification,
+      genres: data.genres,
     }
   }
   catch {
@@ -63,13 +65,6 @@ watch(featured, (_m, _old, onCleanup) => {
 // ── Hero actions ──────────────────────────────────────────────────────────────
 const trailerDialog = ref(false)
 const trailerKey = computed(() => featuredDetail.value?.trailer)
-
-function openFeaturedTrailer() {
-  const key = trailerKey.value
-  if (!key)
-    return
-  trailerDialog.value = true
-}
 
 function runtimeText(min?: number) {
   if (!min)
@@ -114,6 +109,14 @@ watch(at, () => startTimer())
 
 onMounted(() => {
   startTimer()
+})
+
+onActivated(() => {
+  startTimer()
+})
+
+onDeactivated(() => {
+  stopTimer()
 })
 
 onUnmounted(() => {
@@ -205,7 +208,10 @@ const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
 </script>
 
 <template>
-  <div ref="scroller" class="h-full overflow-y-auto pb-10">
+  <div
+    ref="scroller"
+    class="h-full overflow-y-auto pb-10"
+  >
     <!-- Cover Banner Hero Section -->
     <section
       v-if="featured"
@@ -235,7 +241,7 @@ const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
       <button
         v-if="spotlight.length > 1"
         type="button"
-        class="absolute left-3 top-1/2 z-10 grid size-11 -translate-y-1/2 place-items-center rounded-full bg-black/40 text-white backdrop-blur-md border border-white/10 opacity-0 transition-[opacity,transform,background-color] hover:bg-primary hover:text-on-primary hover:scale-110 group-hover/hero:opacity-100 focus-visible:opacity-100"
+        class="absolute left-3 top-1/2 z-10 grid size-11 -translate-y-1/2 place-items-center rounded-full border border-white/10 bg-black/60 text-white opacity-0 transition-[opacity,transform,background-color] hover:scale-110 hover:bg-primary hover:text-on-primary group-hover/hero:opacity-100 focus-visible:opacity-100"
         :aria-label="$t('Previous')"
         @click="prevSlide"
       >
@@ -245,7 +251,7 @@ const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
       <button
         v-if="spotlight.length > 1"
         type="button"
-        class="absolute right-3 top-1/2 z-10 grid size-11 -translate-y-1/2 place-items-center rounded-full bg-black/40 text-white backdrop-blur-md border border-white/10 opacity-0 transition-[opacity,transform,background-color] hover:bg-primary hover:text-on-primary hover:scale-110 group-hover/hero:opacity-100 focus-visible:opacity-100"
+        class="absolute right-3 top-1/2 z-10 grid size-11 -translate-y-1/2 place-items-center rounded-full border border-white/10 bg-black/60 text-white opacity-0 transition-[opacity,transform,background-color] hover:scale-110 hover:bg-primary hover:text-on-primary group-hover/hero:opacity-100 focus-visible:opacity-100"
         :aria-label="$t('Next')"
         @click="nextSlide"
       >
@@ -258,8 +264,10 @@ const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
           <!-- Featured Vertical Poster Card -->
           <nuxt-link
             :to="mediaLink(featured)"
+            no-prefetch
             class="group/poster relative hidden sm:block w-32 shrink-0 overflow-hidden rounded-xl border border-white/20 bg-surface-container shadow-[0_16px_40px_rgba(0,0,0,0.8)] transition-[transform,border-color] duration-300 md:w-44 lg:w-48 aspect-2/3 hover:scale-105 hover:border-primary hover:shadow-[0_20px_50px_rgba(111,227,255,0.3)] focus-visible:scale-105 focus-visible:ring-2 focus-visible:ring-primary"
-            @pointerdown="ui.open(featured); prefetchMediaDetail(featured)"
+            @pointerdown="armDetailPress($event, featured)"
+            @click="openDetail($event, featured)"
           >
             <media-poster :src="posterUrl(featured.poster, 'w342')" :alt="featured.title" />
             <div class="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-0 transition-opacity group-hover/poster:opacity-100 flex items-end justify-center pb-3">
@@ -321,10 +329,10 @@ const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
               <v-btn :prepend-icon="mdiPlay" size="large" color="primary" class="font-semibold px-6 shadow-lg shadow-primary/25" :to="library.resumeLink(featured)">
                 {{ $t('Play') }}
               </v-btn>
-              <v-btn :prepend-icon="mdiInformationOutline" size="large" variant="tonal" class="bg-white/10 hover:bg-white/20" :to="mediaLink(featured)" @click="ui.open(featured); prefetchMediaDetail(featured)">
+              <v-btn :prepend-icon="mdiInformationOutline" size="large" variant="tonal" class="bg-white/10 hover:bg-white/20" :to="mediaLink(featured)" @pointerdown="armDetailPress($event, featured)" @click="openDetail($event, featured)">
                 {{ $t('Details') }}
               </v-btn>
-              <v-btn v-if="trailerKey" size="large" variant="tonal" class="bg-white/10 hover:bg-white/20" @click="openFeaturedTrailer">
+              <v-btn v-if="trailerKey" size="large" variant="tonal" class="bg-white/10 hover:bg-white/20" @click="trailerDialog = true">
                 <v-icon :icon="mdiPlay" size="18" class="mr-1" />
                 {{ $t('Watch Trailer') }}
               </v-btn>
@@ -382,7 +390,7 @@ const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
       <v-card v-if="trailerKey" rounded="xl" class="overflow-hidden">
         <div class="relative aspect-video">
           <iframe
-            :src="youtubeEmbedSrc(trailerKey)"
+            :src="`https://www.youtube.com/embed/${trailerKey}?autoplay=1&rel=0`"
             class="absolute inset-0 h-full w-full"
             allow="autoplay; encrypted-media"
             allowfullscreen
@@ -474,7 +482,7 @@ const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
       <button
         v-if="showBackToTop"
         type="button"
-        class="fixed bottom-6 right-6 z-50 grid size-12 place-items-center rounded-full bg-surface-container-high text-primary shadow-lg shadow-black/30 backdrop-blur-md border border-white/10 transition-[transform,background-color,color] hover:bg-primary hover:text-on-primary hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        class="fixed bottom-6 right-6 z-50 grid size-12 place-items-center rounded-full border border-white/10 bg-surface-container-high text-primary shadow-lg shadow-black/30 transition-[transform,background-color,color] hover:scale-110 hover:bg-primary hover:text-on-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
         :aria-label="$t('Back to top')"
         @click="scrollToTop"
       >

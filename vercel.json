@@ -1,5 +1,3 @@
 {
-  "buildCommand": "cp -r . /vercel/output/ && ls /vercel/output/landing.html",
-  "outputDirectory": ".",
   "rewrites": [{ "source": "/", "destination": "/landing.html" }]
 }

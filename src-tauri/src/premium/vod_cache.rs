@@ -53,12 +53,7 @@ impl VodCache {
         }
     }
 
-    pub fn list_lock(
-        &self,
-        connection_id: &str,
-        kind: &str,
-        category_id: &str,
-    ) -> Arc<tokio::sync::Mutex<()>> {
+    pub fn list_lock(&self, connection_id: &str, kind: &str, category_id: &str) -> Arc<tokio::sync::Mutex<()>> {
         let key = (format!("{connection_id}\0{kind}"), category_id.to_string());
         let mut map = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
         map.entry(key)
@@ -79,10 +74,7 @@ impl VodCache {
         if let Ok(mut inner) = self.inner.lock() {
             inner.movie_categories.insert(
                 connection_id.to_string(),
-                Timed {
-                    at: Instant::now(),
-                    data: cats,
-                },
+                Timed { at: Instant::now(), data: cats },
             );
         }
     }
@@ -100,10 +92,7 @@ impl VodCache {
         if let Ok(mut inner) = self.inner.lock() {
             inner.series_categories.insert(
                 connection_id.to_string(),
-                Timed {
-                    at: Instant::now(),
-                    data: cats,
-                },
+                Timed { at: Instant::now(), data: cats },
             );
         }
     }
@@ -121,10 +110,7 @@ impl VodCache {
         if let Ok(mut inner) = self.inner.lock() {
             inner.movies.insert(
                 (connection_id.to_string(), category_id.to_string()),
-                Timed {
-                    at: Instant::now(),
-                    data: items,
-                },
+                Timed { at: Instant::now(), data: items },
             );
         }
     }
@@ -138,19 +124,11 @@ impl VodCache {
             .map(|e| e.data.clone())
     }
 
-    pub fn set_series(
-        &self,
-        connection_id: &str,
-        category_id: &str,
-        items: Vec<PremiumSeriesItem>,
-    ) {
+    pub fn set_series(&self, connection_id: &str, category_id: &str, items: Vec<PremiumSeriesItem>) {
         if let Ok(mut inner) = self.inner.lock() {
             inner.series.insert(
                 (connection_id.to_string(), category_id.to_string()),
-                Timed {
-                    at: Instant::now(),
-                    data: items,
-                },
+                Timed { at: Instant::now(), data: items },
             );
         }
     }

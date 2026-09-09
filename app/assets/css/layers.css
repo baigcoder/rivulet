@@ -362,21 +362,6 @@
     will-change: transform;
   }
 
-  /* Cover trailer is mute-only. WebKit still paints pause / skip-back /
-     skip-forward on a <video> that never asked for controls. */
-  .rivulet-cover-video::-webkit-media-controls,
-  .rivulet-cover-video::-webkit-media-controls-enclosure,
-  .rivulet-cover-video::-webkit-media-controls-panel,
-  .rivulet-cover-video::-webkit-media-controls-overlay-enclosure,
-  .rivulet-cover-video::-webkit-media-controls-overlay-play-button,
-  .rivulet-cover-video::-webkit-media-controls-start-playback-button,
-  .rivulet-cover-video::-webkit-media-controls-rewind-button,
-  .rivulet-cover-video::-webkit-media-controls-return-to-realtime-button {
-    display: none !important;
-    opacity: 0 !important;
-    pointer-events: none !important;
-  }
-
   /* A remote has no cursor, so focus has to be as loud as hover is. `.dpad` goes
      on <html> the first time an arrow key arrives and comes off again when a
      mouse moves (plugins/dpad.client.ts), so desktop never sees this.

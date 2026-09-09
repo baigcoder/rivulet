@@ -21,8 +21,6 @@ import type { PremiumView } from '~/stores/premiumTv'
 import type { IPTVChannel, PremiumSeriesItem, PremiumVodItem } from '~/types/premium'
 import { mdiAccountCircle, mdiClose, mdiDeleteSweepOutline, mdiTelevisionOff } from '@mdi/js'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { prefetchPremiumPlay } from '~/composables/usePlaybackSource'
-import { savePremiumPlay } from '~/utils/liveNav'
 import { vodDisplayName } from '~/utils/providerTitle'
 
 /**
@@ -187,22 +185,9 @@ const resumeStrip = computed(() => {
 })
 
 function play(channel: IPTVChannel): void {
-  const lineup = premium.zapList
-  savePremiumPlay({
-    id: channel.id,
-    title: channel.name,
-    logo: channel.logoUrl ?? '',
-    zapList: lineup.length ? lineup : [{ id: channel.id, name: channel.name, logoUrl: channel.logoUrl }],
-  })
-  const i = lineup.findIndex(c => c.id === channel.id)
-  prefetchPremiumPlay([channel.id, lineup[i - 1]?.id, lineup[i + 1]?.id])
   void router.push({
     path: localePath('/live-tv/premium/watch'),
-    query: {
-      id: channel.id,
-      from: route.fullPath,
-      title: channel.name,
-    },
+    query: { id: channel.id, from: route.fullPath },
   })
 }
 
@@ -315,7 +300,6 @@ async function disconnect(): Promise<void> {
       :status-tone="status.tone"
       :status-label="status.label"
       :status-text="status.label"
-      :status-meta="isLive && premium.offlineIds.size ? $t('{count} offline', { count: premium.offlineIds.size }) : undefined"
       :show-clear="(isLive && premium.view === 'category') || !!premium.searchQuery || (!isLive && !!premium.selectedVodCategory)"
       :refreshing="busy || premium.catalog?.syncing === true"
       :show-tune="!railPinned"
@@ -505,7 +489,6 @@ async function disconnect(): Promise<void> {
 
         <template v-else>
           <premium-tv-premium-vod-grid
-            :key="isMovies ? 'movies' : 'series'"
             class="min-h-0 flex-1"
             :kind="isMovies ? 'movie' : 'series'"
             :movies="premium.vodMovies"

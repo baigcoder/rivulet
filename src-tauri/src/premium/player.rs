@@ -4,9 +4,15 @@
 //! intermediate proxy log, or a player command line. `build_source`
 //! returns a short-lived signed redirector URL; the player opens it;
 //! the redirector resolves the real upstream URL server-side and
-//! 302s onto the local IPTV proxy (`:3031`) that Free TV already uses.
-//! HLS rewrite and the upstream User-Agent stay on that proxy; mpv
-//! never talks to the provider host itself.
+//! answers with a 302 to it.
+//!
+//! The two upstream headers travel in the `PlaybackSource`, not on the
+//! redirect response. A header on a 302 describes that response — it
+//! says nothing about the request the client makes to the `Location`
+//! it names, which is the request the upstream actually sees. So the
+//! player is told what to send, and sends it (`--user-agent=` /
+//! `--referrer=` for mpv, the proxy's query parameters for the
+//! webview fallback).
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -43,8 +49,12 @@ pub fn mint_redirector_token(
         .map_err(|e| PremiumError::ServerError(format!("clock: {e}")))?;
     let ttl = ttl_ms.unwrap_or(DEFAULT_TTL_MS);
     let expires_at = now + ttl;
-    let token =
-        crate::api::auth::mint_stream_token(&state.vault, connection_id, channel_id, expires_at)?;
+    let token = crate::api::auth::mint_stream_token(
+        &state.vault,
+        connection_id,
+        channel_id,
+        expires_at,
+    )?;
     Ok(SignedRedirect { token, expires_at })
 }
 
@@ -84,14 +94,9 @@ pub fn build_source(
     };
     let redirect = mint_redirector_token(&state, connection_id, channel_id, None)?;
     Ok(super::models::PlaybackSource {
-        url: format!(
-            "http://{}/premium-stream/{}",
-            crate::api::ADDR,
-            redirect.token
-        ),
-        // Xtream live is MPEG-TS (the original FHD/4K feed). The `.m3u8`
-        // sibling is often a transcoded ladder. M3U lines are whatever
-        // the playlist named. Hint only — sniffing is mpv's job.
+        url: format!("http://{}/premium-stream/{}", crate::api::ADDR, redirect.token),
+        // Xtream live is MPEG-TS (the original 4K feed). An M3U import
+        // is usually HLS; the player sniffs the body either way.
         mime_type: Some("video/mp2t".to_string()),
         expires_at: Some(redirect.expires_at),
         user_agent: row.user_agent,
@@ -112,11 +117,7 @@ pub fn build_vod_source(
     let redirect = mint_redirector_token(&state, connection_id, play_id, None)?;
     let mime = vod_mime(ext);
     Ok(super::models::PlaybackSource {
-        url: format!(
-            "http://{}/premium-stream/{}",
-            crate::api::ADDR,
-            redirect.token
-        ),
+        url: format!("http://{}/premium-stream/{}", crate::api::ADDR, redirect.token),
         mime_type: Some(mime),
         expires_at: Some(redirect.expires_at),
         user_agent: None,

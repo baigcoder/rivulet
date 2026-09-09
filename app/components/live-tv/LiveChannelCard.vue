@@ -5,11 +5,9 @@
 import type { LiveChannel } from '~/utils/iptv'
 import { mdiPlay, mdiStar } from '@mdi/js'
 import { computed, onUnmounted, ref, watch } from 'vue'
-import { useLiveTvStore } from '~/stores/liveTv'
 import { categoryLabel } from '~/utils/categoryLabel'
 import { channelTileStyle, isPlaceholderLogoUrl, isTinyLogo } from '~/utils/channelLogo'
 import { channelInitials, parseChannelName } from '~/utils/channelName'
-
 import { proxyLogo } from '~/utils/premiumTv'
 
 const props = defineProps<{
@@ -25,17 +23,10 @@ const emit = defineEmits<{
   toggleFavorite: [channel: LiveChannel]
 }>()
 
-const liveTv = useLiveTvStore()
 const epg = computed(() => props.getEpg(props.channel.id))
 const nowProgram = computed(() => epg.value[0] ?? null)
 const fav = computed(() => props.isFavorite(props.channel))
-const offline = computed(() => {
-  const ch = props.channel
-  const s = ch.streamUrl
-  if (!s || s === 'undefined' || s === 'null')
-    return true
-  return liveTv.offlineIds.has(ch.id) || props.isOffline?.(ch) === true
-})
+const offline = computed(() => props.isOffline?.(props.channel) === true)
 const imgError = ref(false)
 const imgLoaded = ref(false)
 
@@ -46,7 +37,6 @@ const hasStream = computed(() => {
 
 /** No URL, or the player already found the stream dead. Advisory: click still works. */
 const dead = computed(() => offline.value || !hasStream.value)
-const health = computed(() => dead.value ? 'offline' as const : liveTv.healthOf(props.channel.id))
 
 const nowMs = ref(Date.now())
 let progressTimer: ReturnType<typeof setInterval> | undefined
@@ -164,7 +154,16 @@ function onLogoLoad(e: Event): void {
       </div>
 
       <div class="pointer-events-none absolute start-1.5 top-1.5 z-10 flex items-center gap-1">
-        <live-tv-live-status-badge :health="health" />
+        <span
+          class="flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+          :class="dead ? 'bg-zinc-800/90 text-white/75' : 'bg-red-600 text-white'"
+        >
+          <span
+            v-if="!dead"
+            class="size-1.5 rounded-full bg-white animate-pulse"
+          />
+          {{ dead ? $t('Offline') : $t('LIVE') }}
+        </span>
         <span
           v-if="parsedName.quality"
           class="rounded bg-black/60 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-200"

@@ -81,6 +81,7 @@ function onProgram(ch: LiveChannel) {
     query: {
       id: ch.id,
       title: ch.name,
+      logo: ch.logoUrl ?? '',
       type: 'live',
       sourceId: liveTv.activeSourceId || 'free:iptv-org',
       from: route.fullPath,

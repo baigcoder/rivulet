@@ -571,7 +571,7 @@ function searchPath(imdbId: string, season: number, episode: number) {
 
 async function runSources(
   path: string,
-  wait: { mode: 'all' } | { mode: 'first', graceMs: number, onBatch?: (releases: Release[]) => void },
+  wait: { mode: 'all' } | { mode: 'first', graceMs: number },
 ): Promise<{ releases: Release[], rest: Promise<Release[]> }> {
   if (!sources.length)
     throw new Error(NO_SOURCES())
@@ -589,38 +589,6 @@ async function runSources(
     firstUseful = resolve
   })
 
-  // Merge whatever landed, in the order sources were added — that order is the
-  // preference order, and it also decides whose copy a duplicate belongs to.
-  const seen = new Map<string, Release>()
-  const merge = (i: number) => {
-    const batch = batches[i]
-    if (!batch)
-      return []
-    batches[i] = null
-    const added: Release[] = []
-    for (const t of batch) {
-      if (!seen.has(releaseKey(t))) {
-        seen.set(releaseKey(t), t)
-        t.via = sources[i]
-        added.push(t)
-      }
-    }
-    return added
-  }
-  const takeLanded = () => {
-    for (let i = 0; i < sources.length; i++)
-      merge(i)
-  }
-
-  /**
-   * Only set once the first wave has been merged, so nothing can jump the
-   * preference order. After that a straggler is reported the moment it lands
-   * rather than at the end of the batch — the caller waiting for a stream URL
-   * has no reason to sit through the slowest source to hear about it.
-   */
-  let closed = false
-  const onBatch = wait.mode === 'first' ? wait.onBatch : undefined
-
   const settled = tasks.map(async (task, i) => {
     try {
       batches[i] = await task
@@ -629,11 +597,6 @@ async function runSources(
       // reason to start playback — wait for a source that actually has streams.
       if (batches[i]!.length)
         firstUseful()
-      if (closed && onBatch) {
-        const added = merge(i)
-        if (added.length)
-          onBatch(added)
-      }
     }
     catch {
       anyFailed = true
@@ -650,8 +613,24 @@ async function runSources(
     Promise.all(tasks.map(t => t.catch(() => []))),
   ])
 
+  // Merge whatever landed, in the order sources were added — that order is the
+  // preference order, and it also decides whose copy a duplicate belongs to.
+  const seen = new Map<string, Release>()
+  const takeLanded = () => {
+    for (let i = 0; i < sources.length; i++) {
+      const batch = batches[i]
+      if (!batch)
+        continue
+      batches[i] = null
+      for (const t of batch) {
+        if (!seen.has(releaseKey(t))) {
+          seen.set(releaseKey(t), t)
+          t.via = sources[i]
+        }
+      }
+    }
+  }
   takeLanded()
-  closed = true
 
   if (!seen.size && !anyAnswered && anyFailed)
     throw new Error($t('No source answered.'))
@@ -679,56 +658,16 @@ export async function findReleasesFast(
   imdbId: string,
   season: number,
   episode: number,
-  options: { graceMs?: number, onLate?: (releases: Release[]) => void, needUrl?: boolean, needMagnet?: boolean } = {},
+  options: { graceMs?: number, onLate?: (releases: Release[]) => void, needUrl?: boolean } = {},
 ): Promise<Release[]> {
-  // Resolves with everything landed so far the moment a straggler brings a
-  // stream URL. Built before the search so it can be handed in as `onBatch`.
-  const landed: Release[] = []
-  let urlLanded!: (releases: Release[]) => void
-  const gotUrl = new Promise<Release[]>(resolve => {
-    urlLanded = resolve
-  })
-  let magnetLanded!: (releases: Release[]) => void
-  const gotMagnet = new Promise<Release[]>(resolve => {
-    magnetLanded = resolve
-  })
-
   const { releases, rest } = await runSources(
     searchPath(imdbId, season, episode),
-    {
-      mode: 'first',
-      graceMs: options.graceMs ?? 50,
-      onBatch: (added: Release[]) => {
-        landed.push(...added)
-        if (added.length)
-          urlLanded([...landed])
-        if (added.some(r => r.magnet))
-          magnetLanded([...landed])
-      },
-    },
+    { mode: 'first', graceMs: options.graceMs ?? 600 },
   )
   let out = releases
   // Magnet-only first wave is common: the debrid host resolves a beat later.
-  // Waiting on `rest` alone means waiting for the slowest source of the lot,
-  // so the first URL to land ends the wait; the timer is only the give-up
-  // bound for when no source has one at all.
   if (options.needUrl && !out.some(r => r.url)) {
     const late = await Promise.race([
-      gotUrl,
-      rest,
-      new Promise<Release[]>(resolve => setTimeout(resolve, 2000, [])),
-    ])
-    if (late.length)
-      out = [...out, ...late]
-  }
-  // Torrent-engine mode is not merely a ranking preference. A fast Direct
-  // source used to end the race before a slower magnet source could answer,
-  // silently turning "Torrent engine" into Direct play and leaving Downloads
-  // empty. Give a magnet the same short chance that Direct-only mode gives a
-  // URL; use the Direct result only when no torrent source responds.
-  if (options.needMagnet && !out.some(r => r.magnet)) {
-    const late = await Promise.race([
-      gotMagnet,
       rest,
       new Promise<Release[]>(resolve => setTimeout(resolve, 2000, [])),
     ])
@@ -800,77 +739,26 @@ export function setDownloadDir(path: string) {
   downloadDir = path.trim()
 }
 
-function packAdded(t: EngineTorrent) {
-  return { id: t.id, details: { name: t.name, info_hash: t.info_hash, files: t.files ?? null } }
-}
-
-/** The engine already knows this hash — files may still be empty (metadata in flight). */
-async function listedTorrent(hash: string): Promise<EngineTorrent | null> {
-  const byHash = await torrentDetails(canonHash(hash))
-  if (typeof byHash?.id === 'number')
-    return byHash
-  return (await listTorrents().catch(() => [])).find(t => hashesMatch(t.info_hash, hash)) ?? null
-}
-
 export async function addTorrent(magnet: string) {
-  const hash = magnetHash(magnet)
-  if (hash) {
-    const existing = await listedTorrent(hash)
-    if (existing)
-      return packAdded(existing)
-  }
-  // A hash already in the list is one librqbit is fetching. A second POST
-  // waits the full `timeout_ms` for metadata of a torrent it already holds —
-  // the "Fetching metadata from peers…" first Play that then goes blank,
-  // while Back + Play finds the copy and streams.
-  const alreadyListed = !!hash && !!(await listedTorrent(hash))
   // Only new torrents move: the engine remembers an existing one's folder, and
   // its data is already sitting in it.
   const folder = downloadDir ? `&output_folder=${encodeURIComponent(downloadDir)}` : ''
-
-  interface Added { id: number, details: { name: string | null, info_hash: string, files: EngineFile[] | null } }
-  let posted: Added | null = null
-  let postError: Error | null = null
-  if (!alreadyListed) {
-    void fetch(`${ENGINE}/torrents?overwrite=true&timeout_ms=180000${folder}`, { method: 'POST', body: magnet })
-      .then(async res => {
-        if (!res.ok)
-          throw new Error($t('Torrent engine said {status}: {reason}', { status: res.status, reason: await res.text() }))
-        const added = await res.json() as { id: number | null, details: Added['details'] }
-        if (added.id == null)
-          throw new Error($t('The torrent engine accepted the magnet but gave it no id.'))
-        posted = { ...added, id: added.id }
-      })
-      .catch(e => {
-        const err = e instanceof TypeError
-          ? new Error($t('Torrent engine offline. Launch the native desktop or Android app to play torrents.'))
-          : e instanceof Error ? e : new Error(String(e))
-        // The list can lag the add. A second POST then 400s "already live"
-        // for a hash we are about to see — keep polling, do not throw.
-        if (hash && /already live/i.test(err.message))
-          return
-        postError = err
-      })
+  let res: Response
+  try {
+    res = await fetch(`${ENGINE}/torrents?overwrite=true${folder}`, { method: 'POST', body: magnet })
   }
-
-  const deadline = Date.now() + 180_000
-  while (Date.now() < deadline) {
-    if (hash) {
-      const existing = await listedTorrent(hash)
-      if (existing)
-        return packAdded(existing)
-    }
-    if (posted)
-      return posted
-    if (postError)
-      throw postError
-    await new Promise(r => setTimeout(r, 150))
+  catch {
+    throw new Error($t('Torrent engine offline. Launch the native desktop or Android app to play torrents.'))
   }
-  if (postError)
-    throw postError
-  if (posted)
-    return posted
-  throw new Error($t('The torrent engine accepted the magnet but gave it no id.'))
+  if (!res.ok)
+    throw new Error($t('Torrent engine said {status}: {reason}', { status: res.status, reason: await res.text() }))
+  const added = await res.json() as {
+    id: number | null
+    details: { name: string | null, info_hash: string, files: EngineFile[] | null }
+  }
+  if (added.id == null)
+    throw new Error($t('The torrent engine accepted the magnet but gave it no id.'))
+  return { ...added, id: added.id }
 }
 
 /**
@@ -1079,120 +967,19 @@ export async function limitToFiles(id: number, indexes: number[]) {
   }).catch(() => {}) // best effort: failing here only costs disk, not playback
 }
 
-/** After first Play opened stream/0 (or the addon's fileIdx), narrow the pack. */
-async function refineTorrentFiles(
-  id: number,
-  index: number,
-  hint: number | null,
-  options: { fileIndex?: number | null, season?: number, episode?: number },
-) {
-  const deadline = Date.now() + 180_000
-  while (Date.now() < deadline) {
-    const files = (await torrentDetails(id))?.files ?? []
-    if (files.length) {
-      const i = options.fileIndex ?? pickVideoFile(files, hint, options) ?? index
-      await limitToFiles(id, [i, ...pickSubtitleFiles(files, i)])
-      return
-    }
-    await new Promise(r => setTimeout(r, 400))
-  }
-}
-
-/** One torrent with its file list — the list endpoint doesn't carry files. `id` may be the numeric id or the info hash. */
-export async function torrentDetails(id: number | string): Promise<EngineTorrent | null> {
+/** One torrent with its file list — the list endpoint doesn't carry files. */
+export async function torrentDetails(id: number): Promise<EngineTorrent | null> {
   try {
     const res = await fetch(`${ENGINE}/torrents/${id}`)
-    if (!res.ok)
-      return null
-    const t = await res.json() as EngineTorrent
-    return typeof t?.id === 'number' ? t : null
+    return res.ok ? await res.json() as EngineTorrent : null
   }
   catch {
     return null
   }
 }
 
-/** Native path to a file the engine is writing. */
-export function mediaFilePath(folder: string, file: EngineFile): string {
-  const sep = folder.includes('\\') ? '\\' : '/'
-  const rel = file.components?.length ? file.components : [file.name]
-  return [folder.replace(/[\\/]+$/, ''), ...rel].join(sep)
-}
-
-/**
- * Directory the file manager should open. A file's own folder, not the
- * session root and not the `.mkv` — `xdg-open` on a video launches a player.
- */
-export function containingFolder(folder: string, file?: EngineFile | null): string {
-  const root = folder.replace(/[\\/]+$/, '')
-  if (!file)
-    return root
-  const path = mediaFilePath(root, file)
-  const sep = root.includes('\\') ? '\\' : '/'
-  const cut = path.lastIndexOf(sep)
-  if (cut <= 0)
-    return root
-  const parent = path.slice(0, cut)
-  // `C:\file.mkv` would otherwise yield `C:`, which is not a directory.
-  return /^[a-z]:$/i.test(parent) ? parent + sep : parent
-}
-
-/** `file://` with `[]` percent-encoded — some mpv builds glob a raw path and have no `--globbing` flag. */
-export function mediaFileUrl(folder: string, file: EngineFile): string {
-  return pathToFileUrl(mediaFilePath(folder, file))
-}
-
-/** mpv globs `[]` in a raw path. Percent-encode so a `[EZTV]` release actually opens. */
-export function pathToFileUrl(path: string): string {
-  if (/^[a-z]:[\\/]/i.test(path)) {
-    const rest = path.replace(/\\/g, '/')
-    return `file:///${rest.split('/').map(encodeURIComponent).join('/')}`
-  }
-  return `file://${path.split('/').map((p, i) => (i === 0 ? p : encodeURIComponent(p))).join('/')}`
-}
-
 export function streamUrl(id: number, index: number) {
   return `${ENGINE}/torrents/${id}/stream/${index}`
-}
-
-/**
- * Every byte of this file is on disk. A growing copy is preallocated to its
- * full size, so the file's length on disk is a lie — `file_progress` / `finished`
- * is what counts.
- */
-export function fileComplete(
-  t: { stats?: Pick<TorrentStats, 'finished' | 'file_progress'> | null },
-  index: number,
-  length = 0,
-) {
-  if (t.stats?.finished)
-    return true
-  const have = t.stats?.file_progress?.[index] ?? 0
-  return length > 0 && have >= length
-}
-
-/**
- * What the player should open for a file the engine already holds.
- *
- * A finished copy is the disk path so mpv can seek (the engine HTTP stream is
- * opened with `force-seekable=no`, or a 100% download starts at 0:00 and the
- * bar does nothing). A growing copy stays on the stream so mpv never sees a
- * sparse preallocated file.
- */
-export function heldSrc(
-  t: Pick<EngineTorrent, 'id' | 'output_folder' | 'files' | 'stats'>,
-  index: number,
-  file?: EngineFile | null,
-): string {
-  const f = file ?? t.files?.[index] ?? null
-  if (f && t.output_folder && fileComplete(t, index, f.length))
-    return mediaFileUrl(t.output_folder, f)
-  return streamUrl(t.id, index)
-}
-
-/** What the player should open: a Direct link or a finished disk path, else the engine HTTP stream. */
-export function playUrl(started: Pick<Started, 'id' | 'index' | 'url'>) {
-  return started.url || streamUrl(started.id, started.index)
 }
 
 /** The `{id}/stream/{index}` a stream URL names, or null for a debrid `url`. */
@@ -1262,67 +1049,6 @@ export function haveAt(map: PieceMap, haves: Uint8Array, fraction: number) {
   return has(piece - 1) && has(piece) && has(piece + 1)
 }
 
-/**
- * librqbit's per-stream lookahead: the window it treats as priority pieces,
- * measured from wherever the reader is. Everything past it is downloaded in
- * the ordinary order, so it is also how much of the start we can expect to
- * arrive before anything else.
- */
-const LOOKAHEAD = 32 * 1024 * 1024
-
-/**
- * How much of the run-up to the first frame is on disk, 0 to 1.
- *
- * The engine's own percentage is the *whole torrent*, which on a two-gigabyte
- * film reads "1%" for the first half-minute and looks like nothing is
- * happening — while the pieces that actually decide when a picture appears,
- * the ones at the head of the file, are nearly all in. This counts those
- * instead, so the number on screen is the wait the viewer is actually doing.
- */
-/**
- * Is the end of the file on disk?
- *
- * A matroska keeps its Cues — the seek index — in the last few hundred
- * kilobytes, and the first thing mpv does with a *seekable* stream is jump
- * there and read them. On a torrent that has not got that far yet, the read
- * stalls the open and drags librqbit's priority window to the wrong end of the
- * file, which is a player stuck at 0:00. When those pieces are already here it
- * costs nothing, and the whole seek bar can be made to work instead of only
- * the part mpv happens to be holding — so this is what decides `seekable` on
- * `player_start`.
- *
- * Two pieces, because the seek head and the cues are separate elements and the
- * second read lands a little further along than the first.
- */
-export function tailBuffered(map: PieceMap, haves: Uint8Array, pieces = 2) {
-  const at = (byte: number) => Math.min(map.pieces - 1, Math.floor((byte / map.total) * map.pieces))
-  const last = at(map.start + map.length)
-  const first = Math.max(at(map.start), last - pieces + 1)
-  for (let i = first; i <= last; i++) {
-    if (!(haves[i >> 3]! & (0x80 >> (i & 7))))
-      return false
-  }
-  return true
-}
-
-export function headBuffered(map: PieceMap, haves: Uint8Array) {
-  const at = (byte: number) => Math.min(map.pieces - 1, Math.floor((byte / map.total) * map.pieces))
-  const first = at(map.start)
-  // A file shorter than the window ends where it ends.
-  const last = at(map.start + Math.min(map.length, LOOKAHEAD))
-  // Prefix only: FileStream cannot send a byte until piece 0 of the file
-  // is complete, so pieces later in the window do not bring the picture
-  // any closer. Counting those made "17% buffered" appear while the
-  // player was still waiting on the first piece.
-  let have = 0
-  for (let i = first; i <= last; i++) {
-    if (!(haves[i >> 3]! & (0x80 >> (i & 7))))
-      break
-    have++
-  }
-  return have / (last - first + 1)
-}
-
 /** Everything the engine holds, stats included — one request per poll. */
 export async function listTorrents(): Promise<EngineTorrent[]> {
   const res = await fetch(`${ENGINE}/torrents?with_stats=true`)
@@ -1334,10 +1060,11 @@ export async function listTorrents(): Promise<EngineTorrent[]> {
 
 /** Poll until a hash shows up in the engine list — add can return before the list catches up. */
 export async function waitForEngineHash(hash: string, ms = 20_000): Promise<boolean> {
+  const want = hash.toLowerCase()
   const deadline = Date.now() + ms
   while (Date.now() < deadline) {
     const list = await listTorrents().catch(() => [])
-    if (list.some(t => hashesMatch(t.info_hash, hash)))
+    if (list.some(t => t.info_hash.toLowerCase() === want))
       return true
     await new Promise(r => setTimeout(r, 400))
   }
@@ -1368,52 +1095,28 @@ export async function setLimits(uploadBps: number | null, downloadBps: number | 
  * capping it. Hence `probing`: seeding runs unlimited for a few minutes after
  * launch (never during playback), and what that reaches becomes the estimate.
  *
- * Four fifths of it when only seeding. While something is *downloading*,
- * forty percent — a 3.3 / 2.6 MiB/s pair is the uplink full, and TCP ACKs
- * for the download sit behind that seed. The first-launch probe is
- * unlimited only when the downlink is idle; otherwise it is the thing
- * that produces that pair.
+ * Half of it in the background, a quarter while watching: a saturated uplink
+ * delays the ACKs of the stream you're downloading, so it's the one thing that
+ * can make buffering worse while looking idle.
  */
-export function uploadLimit(
-  peakBps: number,
-  watching: boolean,
-  probing: boolean,
-  override = 0,
-  downloading = false,
-) {
+export function uploadLimit(peakBps: number, watching: boolean, probing: boolean, override = 0) {
   // A number typed into the settings page is a decision, not an estimate: it
   // wins outright, including over the probe and the playback back-off.
   if (override > 0)
     return override
-  if (probing && !watching && !downloading)
+  if (probing && !watching)
     return null
-  if (watching) {
-    if (peakBps <= 0)
-      return 1024 * 1024
-    return Math.max(512 * 1024, Math.round(peakBps * 0.4))
-  }
-  // Downloading still needs some seed or the swarm throttles us. 55% of
-  // a measured peak, 1 MiB/s until we have one — enough reciprocity
-  // without the 2.6-up / 3.3-down pair that filled the uplink.
-  if (downloading) {
-    if (peakBps <= 0)
-      return 1024 * 1024
-    return Math.max(1024 * 1024, Math.round(peakBps * 0.55))
-  }
-  return Math.max(256 * 1024, Math.round(peakBps * 0.8))
+  // Floors, so a line we've never measured still gives something back.
+  return watching
+    ? Math.max(32 * 1024, Math.round(peakBps * 0.25))
+    : Math.max(64 * 1024, Math.round(peakBps * 0.5))
 }
 
 /** `forget` drops the torrent but keeps what's on disk; `delete` removes both. */
 export async function torrentAction(id: number, action: 'pause' | 'start' | 'forget' | 'delete') {
   const res = await fetch(`${ENGINE}/torrents/${id}/${action}`, { method: 'POST' })
-  if (res.ok)
-    return
-  const reason = await res.text()
-  // POSTing a magnet already puts the torrent in Live. librqbit's start
-  // then 400s "already live" — that is the success case, not a failure.
-  if (action === 'start' && /already live/i.test(reason))
-    return
-  throw new Error($t('Torrent engine said {status}: {reason}', { status: res.status, reason }))
+  if (!res.ok)
+    throw new Error($t('Torrent engine said {status}: {reason}', { status: res.status, reason: await res.text() }))
 }
 
 export interface Started {
@@ -1428,10 +1131,11 @@ export interface Started {
   /** The release we picked, or null when the caller named one itself. */
   torrent: Release | null
   /**
-   * The other releases the sources answered with, best first, current one
-   * included. The player's Quality menu is built from it — Direct URLs and
-   * magnets alike, so torrent engine Play can switch resolution without
-   * leaving the player.
+   * The other direct links the sources answered with, best first, current one
+   * included at [0]. The player's server and quality menus are built from it,
+   * and a server that dies mid-film is failed over to the next entry. Present
+   * only when playback resolved through a search; absent for magnets and
+   * already-held copies.
    */
   alternatives?: Release[]
 }
@@ -1446,105 +1150,42 @@ export interface Started {
  * inside it anyone means.
  */
 async function heldCopy(hash: string, want: number | null, of?: { season?: number, episode?: number }) {
-  if (!hash)
-    return null
-  const listed = await listTorrents().catch(() => [])
-  let held = listed.find(t => hashesMatch(t.info_hash, hash)) ?? null
-  // The list can lag; librqbit also answers GET /torrents/{info_hash}.
-  if (!held)
-    held = await torrentDetails(canonHash(hash))
+  const held = hash
+    ? (await listTorrents().catch(() => [])).find(t => t.info_hash.toLowerCase() === hash.toLowerCase())
+    : null
   if (!held)
     return null
-  const files = held.files?.length ? held.files : (await torrentDetails(held.id))?.files ?? []
-  // Metadata still in flight — not a playable copy yet. Returning an empty
-  // file list made Play throw "no video file" instead of waiting, and a
-  // second addTorrent POST sat on "Fetching metadata" until the user left.
-  if (!files.length)
-    return null
+  // The list carries per-file progress but not the lengths to compare it to.
+  const files = (await torrentDetails(held.id))?.files ?? []
   const index = want ?? pickVideoFile(files, null, of)
   const size = index == null ? 0 : files[index]?.length ?? 0
   const have = index == null ? 0 : held.stats?.file_progress?.[index] ?? 0
-  return {
-    id: held.id,
-    hash: held.info_hash,
-    files,
-    index,
-    folder: held.output_folder,
-    // `file_progress` can lag behind `finished`; either means every byte is here.
-    ready: !!size && (have >= size || !!held.stats?.finished),
-  }
+  return { id: held.id, hash: held.info_hash, files, index, ready: !!size && have >= size }
 }
 
 /**
- * Info hashes as 40-char hex. Magnets and the engine disagree on spelling:
- * addons often put a 32-char base32 `btih` in the magnet, librqbit lists
- * hex. A case-sensitive (or encoding-sensitive) compare then misses a copy
- * that is already on the disk and POSTs the magnet again — and librqbit
- * waits for metadata *before* it notices it already holds that hash.
- */
-export function canonHash(hash: string): string {
-  const h = hash.trim().toLowerCase()
-  if (/^[0-9a-f]{40}$/.test(h))
-    return h
-  if (!/^[a-z2-7]{32}$/.test(h))
-    return h
-  const alphabet = 'abcdefghijklmnopqrstuvwxyz234567'
-  let bits = 0
-  let value = 0
-  let hex = ''
-  for (const c of h) {
-    const i = alphabet.indexOf(c)
-    if (i < 0)
-      return h
-    value = (value << 5) | i
-    bits += 5
-    if (bits >= 8) {
-      bits -= 8
-      hex += ((value >> bits) & 0xFF).toString(16).padStart(2, '0')
-    }
-  }
-  return hex.length === 40 ? hex : h
-}
-
-function hashesMatch(a: string, b: string) {
-  return !!a && !!b && canonHash(a) === canonHash(b)
-}
-
-/**
- * The info hash a magnet names, '' for anything that isn't one.
+ * The info hash a magnet names, '' for anything that isn't one. Taken as it is
+ * spelled rather than validated: the only thing it is ever compared against is
+ * the engine's own list, so a base32 magnet simply matches nothing there and
+ * takes the long way round.
  */
 function magnetHash(magnet: string) {
   return magnet.match(/xt=urn:btih:([^&]+)/i)?.[1] ?? ''
 }
 
 /**
- * Play a copy the engine already holds, without adding anything.
- *
- * A growing copy is the HTTP stream, never a disk path: librqbit preallocates
- * the full size, so a partial file looks complete to mpv and hangs at 0:00.
- * The stream serves the pieces that exist and waits for the rest. A finished
- * one is the path — otherwise mpv opens the unseekable engine URL, duration
- * never lands, and dragging the bar does nothing.
+ * Play a copy the engine already holds, without adding anything: every byte of
+ * the wanted file is on the disk, so there is nothing to fetch and nobody to
+ * ask. This is the whole of what "offline" means here.
  */
-async function playHeld(held: NonNullable<Awaited<ReturnType<typeof heldCopy>>>, torrent: Release | null, preferStream = false): Promise<Started> {
-  if (held.index == null)
-    throw new Error($t('That torrent holds no video file.'))
-  const included = held.files.flatMap((f, i) => f.included ? [i] : [])
-  const narrowed = included.length < held.files.length
-  const wanted = [held.index, ...pickSubtitleFiles(held.files, held.index)]
-  const missing = wanted.filter(i => !held.files[i]!.included)
-  if (missing.length) {
-    const only = narrowed ? [...new Set([...included, ...wanted])] : wanted
-    await limitToFiles(held.id, only)
-  }
-  const file = held.files[held.index] ?? null
-  // A Quality pick must not reopen the hanging `file://` path of a copy we
-  // already have — the engine HTTP stream is what actually starts a download
-  // and what mpv can buffer. Finished Play still uses the disk path.
-  const url = !preferStream && held.ready && held.folder && file
-    ? mediaFileUrl(held.folder, file)
-    : ''
-  return { id: held.id, index: held.index, hash: held.hash, url, torrent }
+async function playHeld(held: NonNullable<Awaited<ReturnType<typeof heldCopy>>>, torrent: Release | null): Promise<Started> {
+  // A copy downloaded before the subtitles were ever asked for can still gain
+  // them — the engine only fetches a file it was told to, and it will do that
+  // when peers turn up. The film plays off the disk meanwhile.
+  const missing = pickSubtitleFiles(held.files, held.index!).filter(i => !held.files[i]!.included)
+  if (missing.length)
+    await limitToFiles(held.id, [...held.files.flatMap((f, i) => f.included ? [i] : []), ...missing])
+  return { id: held.id, index: held.index!, hash: held.hash, url: '', torrent }
 }
 
 /** Release names and TMDB titles compared on the letters only. */
@@ -1603,11 +1244,6 @@ export async function startTorrent(options: {
   imdbId?: string | null | (() => Promise<string | null | undefined>)
   /** Skips the source lookup entirely. */
   magnet?: string
-  /**
-   * Engine info hash from the Downloads page. Tried before any magnet or
-   * source search — a finished copy must not sit on "Fetching metadata".
-   */
-  hash?: string
   /** Ditto, for a release that was a direct link rather than a torrent. */
   url?: string
   season?: number
@@ -1655,73 +1291,17 @@ export async function startTorrent(options: {
   fast?: boolean
   /** Late server answers from a `fast` search, ranked, ready to join the candidates. */
   onAlternativesLate?: (releases: Release[]) => void
-  /**
-   * Magnet is about to be added. The player can open the engine stream as
-   * soon as this hash appears in the list, without waiting for addTorrent.
-   */
-  onQueued?: (info: { hash: string, index: number | null }) => void
   onStep?: (step: string) => void
-  /**
-   * Play may reuse a copy of this title the engine already holds, even when
-   * the magnet names a different hash — that is how a downloaded film skips
-   * "Fetching metadata". A Quality pick is the other hash on purpose, so it
-   * passes `false` or the menu keeps playing the same file and looks blank.
-   */
-  adopt?: boolean
-  /**
-   * Open the engine HTTP stream even when the file is already on disk. Quality
-   * picks use this so a tap starts that torrent instead of reopening a
-   * `file://` path that is already stuck at 0:00.
-   */
-  preferStream?: boolean
 }): Promise<Started> {
   const step = options.onStep ?? (() => {})
   const allowTorrents = options.allowTorrents ?? true
-  const adopt = options.adopt ?? true
-  const viaStream = !!options.preferStream || adopt === false
   let magnet = options.magnet ?? ''
   let picked: Release | null = null
   let hint: number | null = null
-  let searched: Release[] = []
-
-  const finish = (started: Started): Started => {
-    if (!searched.length)
-      return started
-    const alternatives = serverCandidates(
-      searched,
-      options.maxBytes,
-      options.compatible ?? !hasNativePlayer(),
-      allowTorrents,
-    )
-    return alternatives.length ? { ...started, alternatives } : started
-  }
-
-  /**
-   * A budget of nothing is not a small budget — it means the disk has no room
-   * for new bytes at all, and saying so beats the two things that used to happen
-   * instead. `ranked` reads a `maxBytes` of 0 as a size limit every *sized*
-   * release fails, so the honest ones reported "cams, dead, or too big" while an
-   * unsized one was added, downloaded, and then deleted by the next eviction
-   * poll. Called only where new bytes are really about to be pulled: a copy
-   * already on the disk plays with no room at all, and must keep doing so.
-   */
-  const needRoom = () => {
-    if (options.maxBytes != null && options.maxBytes <= 0)
-      throw new Error($t('Not enough free space to download. Free some room, or pick another folder under Settings → Storage.'))
-  }
 
   // Nothing to add, nothing to fetch, nothing to keep — the link is the stream.
   if (options.url)
     return { id: -1, index: -1, hash: '', url: options.url, torrent: null }
-
-  // Downloads Play names the torrent the engine already holds. Look it up
-  // before anything else: a 100% copy must not wait on magnets or sources.
-  const givenHash = (options.hash || magnetHash(magnet)).trim()
-  if (givenHash) {
-    const held = await heldCopy(givenHash, options.fileIndex ?? hint, options)
-    if (held)
-      return finish(await playHeld(held, null, viaStream))
-  }
 
   // A magnet the caller named is a release someone chose by hand, so it beats
   // whatever is already on the disk. Asked before the id lookup below, because
@@ -1731,23 +1311,14 @@ export async function startTorrent(options: {
   if (!magnet && allowTorrents && options.cached) {
     const { hash, file } = options.cached
     const held = await heldCopy(hash, file)
-    // On disk beats searching again, finished or still growing.
-    if (held)
-      return finish(await playHeld(held, null, viaStream))
-  }
-
-  // An engine copy we can name without TMDB — Downloads Play puts the release
-  // name in the query, and waiting on a lookup just to re-add that hash is the
-  // "Fetching metadata" hang on a torrent that is already downloading.
-  if (adopt && !magnet && allowTorrents) {
-    const named = options.named?.()
-    if (named?.title) {
-      const adopted = await heldByName(named.title, named.year, options.season, options.episode)
-      if (adopted) {
-        const held = await heldCopy(adopted, options.fileIndex ?? hint, options)
-        if (held)
-          return finish(await playHeld(held, null, viaStream))
-      }
+    // Every byte is here: nothing to search, nobody to ask, nothing to wait for.
+    if (held?.ready)
+      return playHeld(held, null)
+    // Part-way through, the same release still beats searching for another one —
+    // a second copy of a film you are half-way through is what that costs.
+    if (held) {
+      magnet = magnetForHash(hash)
+      hint = file
     }
   }
 
@@ -1772,13 +1343,6 @@ export async function startTorrent(options: {
       if (!imdbId)
         throw new Error($t('TMDB has no IMDb id for this title, so there is nothing to look it up with.'))
 
-      // Nothing held, nothing adopted: whatever this finds has to be fetched.
-      // Unless the engine is off, in which case whatever this finds is a link
-      // that streams — a full disk is no reason to refuse to play it. The real
-      // add further down carries the same check for the paths that reach it.
-      if (allowTorrents)
-        needRoom()
-
       // Fast mode races the sources: playback starts on the first healthy
       // answer and slower servers flow into the candidate list as they land.
       // Sources can be slow to warm up on the first request (DNS, TLS, cold
@@ -1795,9 +1359,8 @@ export async function startTorrent(options: {
                 // Engine on: start on the first magnet, don't wait 2s for a
                 // Direct URL. Engine off: first link plays at once — no extra
                 // grace for a second server that is still resolving.
-                graceMs: attempt === 1 ? (allowTorrents ? 50 : 0) : 0,
+                graceMs: attempt === 1 ? (allowTorrents ? 250 : 0) : 100,
                 needUrl: !allowTorrents,
-                needMagnet: allowTorrents && !options.save,
                 onLate: late => {
                   const more = serverCandidates(late, options.maxBytes ?? MAX_BYTES, options.compatible ?? !hasNativePlayer(), allowTorrents)
                   if (more.length)
@@ -1822,7 +1385,6 @@ export async function startTorrent(options: {
         if (attempt < MAX_SEARCH_ATTEMPTS)
           await new Promise(r => setTimeout(r, options.fast ? 200 : 600))
       }
-      searched = found
 
       // Stream-only mode narrows before ranking: a torrent release is not a
       // worse pick, it is no pick at all. A save is the opposite — a link
@@ -1864,11 +1426,6 @@ export async function startTorrent(options: {
       }
       magnet = picked.magnet
       hint = picked.fileIdx
-      // Quality pills on the player *during* the metadata wait. Waiting until
-      // addTorrent returns left first Play as a spinner with no 720p/1080p/4K.
-      const alts = serverCandidates(found, options.maxBytes, options.compatible ?? !hasNativePlayer(), allowTorrents)
-      if (alts.length)
-        options.onAlternativesLate?.(alts)
     }
   }
 
@@ -1878,30 +1435,25 @@ export async function startTorrent(options: {
   // is already serving — which is the "fetching metadata" wait a film that
   // finished downloading sat through with every byte of it on the disk.
   const already = await heldCopy(magnetHash(magnet), options.fileIndex ?? hint, options)
-  if (already)
-    return finish(await playHeld(already, picked, viaStream))
+  if (already?.ready)
+    return playHeld(already, picked)
 
-  // Sources often return a different hash than the copy already downloading
-  // for this title. Adding that magnet is the "Fetching metadata" wait on a
-  // film whose pieces are already on disk. A Quality pick names the other
-  // hash on purpose — adopting here would keep the same picture and look
-  // like the menu did nothing, or punch the player out onto a blank 0:00.
-  const named = options.named?.()
-  if (adopt && allowTorrents && named?.title) {
-    const adopted = await heldByName(named.title, named.year, options.season, options.episode)
-    if (adopted && !hashesMatch(adopted, magnetHash(magnet))) {
-      const held = await heldCopy(adopted, options.fileIndex ?? hint, options)
-      if (held)
-        return finish(await playHeld(held, picked, viaStream))
-    }
+  // Re-adding a hash the engine is already fetching makes librqbit sit through
+  // metadata again and the Downloads page can miss it entirely.
+  if (already) {
+    const files = already.files
+    const index = options.fileIndex ?? already.index ?? pickVideoFile(files, hint, options)
+    if (index == null)
+      throw new Error($t('That torrent holds no video file.'))
+    const included = files.flatMap((f, i) => f.included ? [i] : [])
+    const narrowed = included.length < files.length
+    const wanted = [index, ...pickSubtitleFiles(files, index)]
+    const only = narrowed ? [...new Set([...included, ...wanted])] : wanted
+    await limitToFiles(already.id, only)
+    return { id: already.id, index, hash: already.hash, url: '', torrent: picked }
   }
 
   step($t('Fetching metadata from peers…'))
-  const queuedHash = magnetHash(magnet)
-  const queuedIndex = options.fileIndex ?? hint ?? null
-  needRoom()
-  if (queuedHash)
-    options.onQueued?.({ hash: queuedHash, index: queuedIndex })
   let added
   try {
     added = await addTorrent(magnet)
@@ -1914,26 +1466,9 @@ export async function startTorrent(options: {
     throw engineError
   }
   const files = added.details.files ?? []
-  // First Play used to wait for the file list before handing mpv a URL. The
-  // engine already had an id (Downloads showed the torrent) and the second
-  // Play streamed; the first sat on "Fetching metadata from peers…". Open
-  // the source's file index (or 0) the moment we have an id.
-  const index = files.length
-    ? (options.fileIndex ?? pickVideoFile(files, hint, options))
-    : (queuedIndex ?? 0)
+  const index = options.fileIndex ?? pickVideoFile(files, hint, options)
   if (index == null)
     throw new Error($t('That torrent holds no video file.'))
-
-  if (!files.length) {
-    void refineTorrentFiles(added.id, index, hint, options)
-    return finish({
-      id: added.id,
-      index,
-      hash: added.details.info_hash || queuedHash,
-      url: '',
-      torrent: picked,
-    })
-  }
 
   // Adding a magnet the engine already holds hands back its current selection,
   // so a pack you're part-way through keeps downloading what it was told to and
@@ -1944,34 +1479,8 @@ export async function startTorrent(options: {
   // each, and the engine only serves a file it was told to download.
   const wanted = [index, ...pickSubtitleFiles(files, index)]
   const only = narrowed ? [...new Set([...included, ...wanted])] : wanted
-
-  // Metadata is the first honest answer about size, and for a lot of releases it
-  // is the *only* one: `ranked` lets a release through when its source reported
-  // no size at all (`!t.bytes`), so the budget filter never saw these. One that
-  // turns out to be twice the budget used to download anyway and then be deleted
-  // mid-flight by an eviction poll — the same "starts and then vanishes" this
-  // whole path exists to stop, just ten minutes later. Refuse it now, while
-  // nothing is on the disk and there is still something useful to say.
-  //
-  // Only the files we asked for count: `limitToFiles` below is what keeps a
-  // season pack from pulling all sixty episodes, so the pack's own total is not
-  // the number the budget is about.
-  if (options.maxBytes != null && !narrowed) {
-    const bytes = only.reduce((n, i) => n + (files[i]?.length ?? 0), 0)
-    if (bytes > options.maxBytes) {
-      // Nothing has been downloaded yet, so this reclaims the metadata and the
-      // engine entry rather than any real bytes — and leaving it listed would put
-      // a torrent on the Downloads page that we just told the user was too big.
-      await torrentAction(added.id, 'delete').catch(() => {})
-      throw new Error($t('That release needs {size} but only {free} is free. Free some room, or pick another folder under Settings → Storage.', {
-        size: bytesText(bytes),
-        free: bytesText(options.maxBytes),
-      }))
-    }
-  }
-
   await limitToFiles(added.id, only)
-  return finish({ id: added.id, index, hash: added.details.info_hash, url: '', torrent: picked })
+  return { id: added.id, index, hash: added.details.info_hash, url: '', torrent: picked }
 }
 
 export function magnetForHash(hash: string) {
@@ -2004,18 +1513,9 @@ export interface DiskSpace {
 export function diskBudget(disk: DiskSpace | null, used: number, cap = 0) {
   if (!disk?.total)
     return Number.POSITIVE_INFINITY
-  // Ours to spend: what is free, plus what the cache already holds and may reuse.
-  const room = disk.free + used
-  const sized = Math.min(Math.max(disk.total * 0.1, RESERVE_MIN), RESERVE_MAX)
-  // A share of the *device* is the wrong reserve once a big disk is nearly full.
-  // 10% of a 235 GB drive is the 20 GiB cap, so a drive with 16 GB free — several
-  // films' worth — produced a budget of exactly 0, and a budget of 0 meant every
-  // torrent holding a single byte was deleted on the next two-second poll. Hence
-  // the second clamp: the reserve never takes more than half of what we actually
-  // have to spend, and never drops below the floor, so a genuinely full disk
-  // still yields nothing while a roomy one stops pretending it has no room.
-  const reserve = Math.min(sized, Math.max(RESERVE_MIN, room * 0.5))
-  return cap > 0 ? Math.min(cap, Math.max(0, room - reserve)) : Math.max(0, room - reserve)
+  const reserve = Math.min(Math.max(disk.total * 0.1, RESERVE_MIN), RESERVE_MAX)
+  const room = Math.max(0, disk.free + used - reserve)
+  return cap > 0 ? Math.min(cap, room) : room
 }
 
 /** All eviction needs of a torrent: what it is, and what it costs on disk. */
@@ -2024,18 +1524,6 @@ type Cached = Pick<EngineTorrent, 'id' | 'info_hash'> & { stats?: { progress_byt
 export function usedBytes(torrents: Cached[]) {
   return torrents.reduce((n, t) => n + (t.stats?.progress_bytes ?? 0), 0)
 }
-
-/**
- * How long a torrent is safe from eviction after it was last asked for.
- *
- * `keep` below is the torrent being *watched*, which is the only thing playback
- * ever marks. A press of Download marks nothing, so on a disk with a tight
- * budget the poll answered it by deleting the very torrent it had just added,
- * two seconds later — the download that "starts and then vanishes". A cache is
- * what nobody is waiting for, and someone who pressed a button ten seconds ago
- * is waiting.
- */
-const EVICT_GRACE = 10 * 60_000
 
 /**
  * Which torrents to delete to get back under budget. Oldest `touched` first
@@ -2051,7 +1539,6 @@ export function planEviction(
   budget: number,
   keep: number | null,
   touched: Record<string, number>,
-  now = Date.now(),
 ) {
   let used = usedBytes(torrents)
   if (used <= budget)
@@ -2064,16 +1551,8 @@ export function planEviction(
       break
     if (t.id === keep)
       continue
-    // Just asked for — see EVICT_GRACE.
-    if (now - (touched[t.info_hash] ?? 0) < EVICT_GRACE)
-      continue
-    const have = t.stats?.progress_bytes ?? 0
-    // Metadata fetch — nothing on disk yet, so deleting frees no room and a
-    // release someone just sent to Download vanishes while older copies stay.
-    if (!have)
-      continue
     drop.push(t.id)
-    used -= have
+    used -= t.stats?.progress_bytes ?? 0
   }
   return drop
 }

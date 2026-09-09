@@ -144,23 +144,12 @@ assert.ok(
   'the picker dialog is not nested inside the Releases button',
 )
 assert.ok(watchPage.includes('takePendingRelease'), 'the player reads the release the picker stashed')
-assert.ok(watchPage.includes('magnet.value || infoHash.value || settings.allowTorrents'), 'a picked magnet plays while Play is Direct-only')
+assert.ok(watchPage.includes('magnet.value || settings.allowTorrents'), 'a picked magnet plays while Play is Direct-only')
 const downloadBtn = readFileSync(new URL('../app/components/DownloadButton.vue', import.meta.url), 'utf8')
 assert.ok(!/if\s*\(\s*!settings\.allowTorrents\s*\)/.test(downloadBtn), 'Download still files when Play is Direct-only')
 assert.ok(downloadBtn.includes('save: true'), 'and still asks the engine for a magnet')
-assert.ok(downloadBtn.includes('allowTorrents: true'), 'Direct Play mode does not stop Download from filing a magnet')
 assert.ok(!downloadBtn.includes('download_url'), 'the title Download button never HTTP-saves a Direct URL')
 assert.ok(downloadBtn.includes('started.id < 0'), 'and does not tick without an engine id')
-assert.ok(downloadBtn.includes('cachedFor'), 'a title already filed shows In downloads')
-assert.ok(downloadBtn.includes('canonHash'), 'and matches the engine hash, not the magnet spelling')
-assert.ok(!downloadBtn.includes("emit('pick')"), 'Download files the best magnet — it does not open Releases')
-assert.ok(
-  !readFileSync(new URL('../app/components/MediaDetailView.vue', import.meta.url), 'utf8').includes('@pick="torrentPickerRef'),
-  'the title page does not wire Download to the picker',
-)
-assert.ok(picker.includes('$t(\'Play best\')'), 'Releases can play the same pick Play would make')
-assert.ok(picker.includes('$t(\'Download best\')'), 'and download the best magnet even when Play is Direct-only')
-assert.ok(picker.includes('pickPlay('), 'the Best chip follows How Play works')
 
 // Formatting a drive means leaving the app for Android's settings, so the list
 // has to be re-read on the way back or the screen shows the old drive and the

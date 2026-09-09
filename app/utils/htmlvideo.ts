@@ -33,20 +33,8 @@ import { isDesktop } from './platform'
  * `<video>` element below.
  */
 export function hasNativePlayer() {
-  try {
-    const os = platform()
-    return os === 'linux' || os === 'windows' || os === 'macos'
-  }
-  catch {
-    // The OS plugin can throw before Tauri is ready. Desktop still has mpv;
-    // Android's user agent says so, and it uses libVLC instead.
-    try {
-      return isTauri() && !/android/i.test(navigator.userAgent)
-    }
-    catch {
-      return false
-    }
-  }
+  // Not running under Tauri at all counts as no, which `isDesktop` already says.
+  return isDesktop()
 }
 
 /**
@@ -221,8 +209,9 @@ function looksLikeHls(url: string): boolean {
   return /\.m3u8?$/i.test(path) || /[/.]m3u8?(?:[?#]|$)/i.test(url)
 }
 
-/** Debrid hosts reject a non-browser UA. Same string the IPTV proxy sends. */
+/** Debrid hosts reject a non-browser UA. Same string the IPTV proxy sends for Direct HTTP. */
 const STREAM_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+const IPTV_PLAYER_UA = 'VLC/3.0.18 LibVLC/3.0.18'
 
 function isLoopback(url: string) {
   return /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])[:/]/i.test(url)
@@ -241,7 +230,8 @@ function playUrl(url: string): string {
     return url
   if (!isTauri() && !hasVlcPlayer())
     return url
-  let qs = `url=${encodeURIComponent(url)}&X-Rivulet-Ua=${encodeURIComponent(STREAM_UA)}`
+  const ua = /\/(?:live|timeshift|movie|series)\//i.test(url) ? IPTV_PLAYER_UA : STREAM_UA
+  let qs = `url=${encodeURIComponent(url)}&X-Rivulet-Ua=${encodeURIComponent(ua)}`
   try {
     qs += `&X-Rivulet-Referer=${encodeURIComponent(`${new URL(url).origin}/`)}`
   }
@@ -309,11 +299,6 @@ export function videoEngine(video: HTMLVideoElement): PlayerEngine {
         maxBufferLength: 4,
         maxMaxBufferLength: 16,
         startFragPrefetch: true,
-        // Default ABR assumes a few Mbps and opens the 720p rung of a
-        // master that also has 1080p/4K. Start as if the link is fast
-        // enough for FHD; hls.js still drops if it cannot keep up.
-        abrEwmaDefaultEstimate: 12_000_000,
-        capLevelToPlayerSize: false,
       }) as unknown as HlsInstance
       hls.on('hlsError', (_e, data) => {
         // Only a fatal error is a failure. hls.js recovers from the rest on its
@@ -394,12 +379,6 @@ export function videoEngine(video: HTMLVideoElement): PlayerEngine {
     // warn wrongly.
     'silent': () => 'webkitAudioDecodedByteCount' in video
       && !(video as unknown as { webkitAudioDecodedByteCount: number }).webkitAudioDecodedByteCount,
-    'audio-params': () => {
-      const n = (video as unknown as { webkitAudioDecodedByteCount?: number }).webkitAudioDecodedByteCount
-      if (typeof n === 'number' && n > 0)
-        return { 'samplerate': 48000, 'channel-count': 2 }
-      return { 'samplerate': 0, 'channel-count': 0 }
-    },
     // Video dimensions for the resolution badge — Chromium/Safari expose the
     // decoded size once the first frame is painted.
     'video-params': () => ({

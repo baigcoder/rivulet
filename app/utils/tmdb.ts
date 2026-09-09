@@ -53,13 +53,6 @@ export interface Media {
    * it was kept has none — see `kindOf` for what stands in there.
    */
   lang?: string
-  /**
-   * What a source is keyed by, and the one field playback cannot start without.
-   * Optional because only a detail response carries it — a card out of a TMDB
-   * list has never seen one. Kept in the stored snapshot so that resuming a
-   * title asks its sources straight away instead of waiting on TMDB first.
-   */
-  imdbId?: string | null
 }
 
 export function tmdb<T>(path: string, params?: Record<string, unknown>) {

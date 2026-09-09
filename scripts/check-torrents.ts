@@ -1,7 +1,6 @@
 import assert from 'node:assert'
-import { readFileSync } from 'node:fs'
 import process from 'node:process'
-import { addTorrent, canonHash, containingFolder, diskBudget, ENGINE, fileComplete, findReleases, haveAt, headBuffered, heldSrc, isAwkward, magnetForHash, mediaFilePath, mediaFileUrl, normalizeSource, NoServerStream, parseRelease, pathToFileUrl, pickBest, pickPlay, pickSubtitleFiles, pickVideoFile, planEviction, planNetwork, playUrl, ranked, releaseFileName, releaseKey, releaseLangs, releaseQuality, serverCandidates, setSources, startTorrent, streamParts, streamUrl, tailBuffered, torrentAction, toRelease, uploadLimit, usedBytes, withoutUhd } from '../app/utils/torrents'
+import { diskBudget, ENGINE, findReleases, haveAt, isAwkward, normalizeSource, NoServerStream, parseRelease, pickBest, pickPlay, pickSubtitleFiles, pickVideoFile, planEviction, planNetwork, ranked, releaseFileName, releaseKey, releaseLangs, releaseQuality, serverCandidates, setSources, startTorrent, streamParts, toRelease, uploadLimit, usedBytes, withoutUhd } from '../app/utils/torrents'
 // Self-check for the torrent parser/ranker: `bun scripts/check-torrents.ts`.
 // The fixture is the response shape a source answers with, filled in with a
 // public-domain film. `--live <source-url> <imdb-id>` also searches for real.
@@ -185,8 +184,6 @@ assert.equal(pickPlay(links, MAX_BYTES_TEST, false, true)!.hash, 'bbb')
 assert.equal(pickPlay(links, MAX_BYTES_TEST, false, false)!.url, debrid!.url, 'engine off: Direct only')
 assert.equal(pickPlay([sameTier!], MAX_BYTES_TEST, false, true)!.hash, 'bbb', 'no link: the magnet still plays')
 assert.equal(pickPlay([sameTier!], MAX_BYTES_TEST, false, false), null, 'torrents off and no link: nothing to play')
-const torrentSource = readFileSync(new URL('../app/utils/torrents.ts', import.meta.url), 'utf8')
-assert.match(torrentSource, /needMagnet: allowTorrents && !options\.save/, 'Torrent engine mode waits briefly for a magnet instead of letting a Direct source win the race')
 assert.equal(toRelease({ url: '/dl/abc.mkv', title: 'Sintel.2010.1080p' }, 'https://mediafusion.example/token')!.url, 'https://mediafusion.example/token/dl/abc.mkv')
 assert.equal(toRelease({ url: 'https://debrid.example/file.mkv' })!.name, 'Stream')
 assert.deepEqual(releaseLangs('Avengers Endgame 1080p Dual Audio Hindi English'), ['hi', 'en'])
@@ -207,22 +204,6 @@ assert.equal(serverCandidates(parsed.filter(t => t.hash === 'aaa'), MAX_BYTES_TE
 // menu can never disagree with what auto-play chose.
 assert.deepEqual(ranked(links).map(t => releaseKey(t)), [releaseKey(debrid!), releaseKey(sameTier!), releaseKey(hosted!)])
 assert.equal(ranked(links)[0], pickBest(links), 'the head of the list is what pickBest picks')
-
-// 1080p is the tier Play lands on by default — above 4K, which streams badly on
-// anything but a LAN, and above 720p. Every other tier stays reachable from the
-// Quality menu, so this is the starting point rather than a restriction.
-const tiers = ['720p', '2160p', '1080p', '480p'].flatMap((q, i) => toRelease({
-  name: `Example\n${q}`,
-  title: `Sintel 2010 ${q} BRrip\n👤 ${100 + i} 💾 2 GB ⚙️ indexer-t`,
-  infoHash: `t${i}`,
-}) ?? [])
-assert.equal(tiers.length, 4)
-assert.equal(pickBest(tiers)!.quality, '1080p', 'Play defaults to 1080p')
-assert.deepEqual(
-  ranked(tiers).map(t => t.quality),
-  ['1080p', '720p', '2160p', '480p'],
-  'and every other tier stays on offer in the Quality menu, best-streaming first',
-)
 assert.equal(ranked(links, MAX_BYTES_TEST, false, true)[0]!.hash, 'bbb', 'engine on: ranked prefers the magnet')
 
 // Stream-only's empty answer is its own kind, so the watch page can tell it
@@ -416,44 +397,6 @@ assert.deepEqual(planEviction(cache, 4 * GB, null, ages), [2, 3, 1], 'oldest fir
 assert.deepEqual(planEviction(cache, 4 * GB, 2, ages), [3, 1], 'never what is playing')
 assert.deepEqual(planEviction(cache, 4 * GB, 2, {}), [1, 3], 'no history: engine order')
 assert.deepEqual(planEviction(cache, Number.POSITIVE_INFINITY, null, ages), [])
-const fetching = [
-  { id: 1, info_hash: 'new', stats: { progress_bytes: 0 } },
-  { id: 2, info_hash: 'old', stats: { progress_bytes: 5 * GB } },
-]
-assert.deepEqual(
-  planEviction(fetching, 4 * GB, null, { new: 200, old: 100 }),
-  [2],
-  'a release still fetching metadata must not be evicted — it holds no bytes',
-)
-
-// A big disk that is nearly full still has room for a film. 10% of 235 GB hits
-// the 20 GiB cap, which on a drive with 16 GB free used to leave a budget of
-// exactly 0 — and a budget of 0 deleted every torrent holding a byte, every
-// two-second poll: the download that started and then vanished.
-assert.equal(diskBudget({ free: 16 * GB, total: 235 * GB }, 0), 8 * GB, 'the reserve never takes more than half of what is free')
-// The floor still bites, so a genuinely full disk yields nothing rather than
-// filling the last gigabyte.
-assert.equal(diskBudget({ free: 2 * GB, total: 235 * GB }, 0), 0)
-
-// `keep` is only ever the torrent being *watched*. A press of Download marks
-// nothing, so without a grace window the poll deleted the torrent it had just
-// added — while older, colder copies stayed.
-const now = Date.now()
-const fresh = [
-  { id: 1, info_hash: 'just-asked-for', stats: { progress_bytes: 2 * GB } },
-  { id: 2, info_hash: 'cold', stats: { progress_bytes: 5 * GB } },
-]
-const justAsked = { 'just-asked-for': now, 'cold': now - 60 * 60_000 }
-assert.deepEqual(
-  planEviction(fresh, 1 * GB, null, justAsked, now),
-  [2],
-  'a download just asked for outlives the budget; the cold copy goes instead',
-)
-assert.deepEqual(
-  planEviction(fresh, 0, null, justAsked, now),
-  [2],
-  'a budget of 0 is no licence to delete what the user just started',
-)
 
 // --- Only download on Wi-Fi ---------------------------------------------------
 // The rule is asymmetric on purpose: it stops anything running, but only ever
@@ -519,80 +462,24 @@ assert.ok(!haveAt(map, bits(10, 11, 15, 16, 17, 18, 19), 0.35), 'a gap reads as 
 // An empty bitfield says no rather than throwing.
 assert.ok(!haveAt(map, new Uint8Array(0), 0.5))
 
-// The head of the file, which is what the cold-start wait is actually about.
-// This file is 1000 bytes and the lookahead is far larger, so the window is
-// the whole of it: pieces 10-19.
-assert.equal(headBuffered(map, all), 1, 'a complete torrent is fully buffered at the head')
-assert.equal(headBuffered(map, half), 0.5, 'five of the file\'s ten pieces')
-assert.equal(headBuffered(map, bits(0, 1, 2, 9)), 0, 'pieces before the file do not count towards it')
-// The whole point: torrent-wide progress and head progress disagree, and the
-// head is the one that says when a picture appears.
-const headOnly = bits(10, 11, 12, 13, 14, 15, 16, 17, 18)
-assert.equal(headBuffered(map, headOnly), 0.9, 'nearly ready to play')
-assert.ok(headBuffered(map, headOnly) > 9 / 20, 'and well ahead of what the torrent-wide percentage would say')
-assert.equal(headBuffered(map, bits(12, 13, 14, 15, 16)), 0, 'later pieces in the window do not count until the first piece is in')
-
-// The tail decides whether mpv may open the stream seekable: the cues live in
-// the last pieces, and reading them before they arrive stalls the open.
-assert.equal(tailBuffered(map, all), true, 'a complete torrent can be opened seekable')
-assert.equal(tailBuffered(map, headOnly), false, 'the head alone is not enough — piece 19 holds the cues')
-assert.equal(tailBuffered(map, bits(18, 19)), true, 'the last two pieces are what it needs')
-assert.equal(tailBuffered(map, bits(19)), false, 'one is not, the seek head and the cues are separate reads')
-// Another file's pieces sitting past the end must not be mistaken for our tail.
-assert.equal(tailBuffered({ start: 0, length: 1000, total: 2000, pieces: 20 }, bits(10, 11)), false, 'the tail of *this* file, not the torrent')
-
 // --- Seeding ------------------------------------------------------------------
 
 const MBPS = 1024 ** 2
 // Idle with nothing measured yet: probe unlimited, and never below the floor.
 assert.equal(uploadLimit(0, false, true), null)
-assert.equal(uploadLimit(0, false, false), 256 * 1024)
-// A line that managed 4 MiB/s seeds at four fifths of that when only seeding.
-assert.equal(uploadLimit(4 * MBPS, false, false), Math.round(4 * MBPS * 0.8))
-assert.equal(uploadLimit(4 * MBPS, true, false), Math.round(4 * MBPS * 0.4))
-// Playback and an active download are never the probe: unlimited seed is
-// exactly what turns a download into 3.3 MiB/s next to 2.6 MiB/s up.
-assert.equal(uploadLimit(4 * MBPS, true, true), Math.round(4 * MBPS * 0.4))
-assert.equal(uploadLimit(0, false, true, 0, true), MBPS, 'probe + download caps at 1 MiB/s')
-assert.equal(uploadLimit(4 * MBPS, false, false, 0, true), Math.round(4 * MBPS * 0.55))
-// A slow line still seeds at the floor rather than at 80 KiB/s.
-assert.equal(uploadLimit(100 * 1024, false, false), 256 * 1024)
-assert.equal(uploadLimit(100 * 1024, false, false, 0, true), MBPS)
+assert.equal(uploadLimit(0, false, false), 64 * 1024)
+// A line that managed 4 MiB/s seeds at half that, a quarter of it while watching.
+assert.equal(uploadLimit(4 * MBPS, false, false), 2 * MBPS)
+assert.equal(uploadLimit(4 * MBPS, true, false), 1 * MBPS)
+// Playback is never the probe: the stream is exactly what an open uplink hurts.
+assert.equal(uploadLimit(4 * MBPS, true, true), 1 * MBPS)
+// A slow line still seeds at the floor rather than at 12 KiB/s.
+assert.equal(uploadLimit(100 * 1024, false, false), 64 * 1024)
 // A limit set in settings wins over all of it — that is what "override" means.
 assert.equal(uploadLimit(4 * MBPS, false, false, MBPS), MBPS)
 assert.equal(uploadLimit(4 * MBPS, true, false, 8 * MBPS), 8 * MBPS, 'even where the app would back off')
 assert.equal(uploadLimit(0, false, true, MBPS), MBPS, 'and it ends the probe')
-assert.equal(uploadLimit(4 * MBPS, false, false, 0), Math.round(4 * MBPS * 0.8), '0 means "work it out"')
-
-const downloadsStore = await Bun.file('app/stores/downloads.ts').text()
-assert.match(downloadsStore, /The film itself keeps pulling/, 'Play then Back leaves the torrent downloading')
-assert.match(downloadsStore, /wifiOnly && metered\.value/, 'only a metered Wi-Fi-only line pauses on leave')
-assert.match(downloadsStore, /uploadLimit\([^)]*pulling\.value\)/, 'an active download is passed into the seed cap')
-assert.match(downloadsStore, /if \(options\.save\)\s*await refresh\(\)/, 'Download waits for the list so In downloads is not a lie')
-assert.match(downloadsStore, /invoke<string>\('download_dir'/, 'Open folder can name the engine default when settings left the path empty')
-assert.match(
-  downloadsStore,
-  /torrentAction\(started\.id, 'start'\)\.catch/,
-  'a live torrent must not turn Download into Retry',
-)
-
-const engineBoot = await Bun.file('src-tauri/src/lib.rs').text()
-assert.match(engineBoot, /fn download_dir/, 'Rust can name the folder a blank storage setting still writes to')
-assert.match(engineBoot, /FileManager1/, 'Linux Open folder talks to the session file manager, not a detached xdg-open')
-assert.match(engineBoot, /peer_limit:\s*Some\(200\)/, 'the session asks for more than librqbit\'s 128-peer default')
-assert.match(engineBoot, /ipv4_only:\s*cfg!\(target_os = "android"\)/, 'desktop can reach IPv6 peers')
-assert.match(engineBoot, /mode:\s*ListenerMode::TcpOnly/, 'uTP is still unstable; TCP is what fills the first piece')
-assert.doesNotMatch(engineBoot, /ListenerMode::TcpAndUtp/, 'uTP handshakes then sits at 0 B/s with live peers')
-assert.match(engineBoot, /fn writable_dir/, 'Downloads must be proven writable, not just created')
-assert.match(engineBoot, /extra_announce_trackers/, 'and extra announce URLs, not a content source')
-// An open stream holds one of these permits for the life of the connection and
-// `write_to_disk` needs one per chunk, so librqbit's default of 8 lets a few
-// players throttle the download and eight of them stop it.
-assert.match(engineBoot, /runtime_worker_threads:\s*Some\((\d+)\)/, 'the blocking semaphore is raised above librqbit\'s default of 8')
-assert.ok(
-  Number(engineBoot.match(/runtime_worker_threads:\s*Some\((\d+)\)/)![1]) >= 32,
-  'a stream permit is held for the whole connection, so the pool has to be far wider than the stream count',
-)
+assert.equal(uploadLimit(4 * MBPS, false, false, 0), 2 * MBPS, '0 means "work it out"')
 
 // --- Sources ------------------------------------------------------------------
 // The app ships with none and searches nothing until the user adds one, so the
@@ -732,36 +619,6 @@ assert.equal(disk.index, 1, 'the file it was played from, not the biggest one')
 // the title's offline copy, and the store prunes that list by comparing it to
 // the hashes the engine lists (see `prune`).
 assert.equal(disk.hash, 'BBB')
-assert.equal(disk.url, 'file:///x/Sintel.2010.1080p.mkv', 'a finished copy plays off disk so seeking works')
-assert.equal(playUrl(disk), disk.url, 'playUrl keeps the disk path')
-assert.equal(pathToFileUrl('/home/x/Silo.[EZTV].mkv'), 'file:///home/x/Silo.%5BEZTV%5D.mkv')
-assert.equal(
-  mediaFileUrl('/x', PACK[1]!),
-  'file:///x/Sintel.2010.1080p.mkv',
-)
-assert.equal(mediaFilePath('/x/', PACK[1]!), '/x/Sintel.2010.1080p.mkv')
-assert.equal(containingFolder('/x', PACK[1]!), '/x')
-assert.equal(containingFolder('/x'), '/x')
-assert.equal(
-  containingFolder('/home/x/Show', { name: 'ep.mkv', length: 1, included: true, components: ['S01', 'ep.mkv'] }),
-  '/home/x/Show/S01',
-)
-assert.equal(
-  containingFolder('C:\\Show', { name: 'ep.mkv', length: 1, included: true, components: ['S01', 'ep.mkv'] }),
-  'C:\\Show\\S01',
-)
-assert.ok(fileComplete({ stats: { finished: true, file_progress: [] } }, 0))
-assert.ok(fileComplete({ stats: { finished: false, file_progress: [10, 2_000_000_000] } }, 1, 2_000_000_000))
-assert.ok(!fileComplete({ stats: { finished: false, file_progress: [10, 500_000_000] } }, 1, 2_000_000_000))
-assert.equal(
-  heldSrc({ id: 7, output_folder: '/x', files: PACK, stats: { finished: false, file_progress: [10, 2_000_000_000] } }, 1),
-  'file:///x/Sintel.2010.1080p.mkv',
-)
-assert.equal(
-  heldSrc({ id: 7, output_folder: '/x', files: PACK, stats: { finished: false, file_progress: [10, 500_000_000] } }, 1),
-  streamUrl(7, 1),
-  'a partial copy stays on the engine stream',
-)
 assert.ok(!requests.some(u => u.startsWith('https://a.example')), 'nothing on disk is ever searched for')
 assert.ok(!requests.some(u => u.includes('overwrite')), 'nor re-added to the engine')
 assert.ok(requests.includes(`${ENGINE}/torrents/7`), 'it asked the engine what it actually holds')
@@ -775,61 +632,13 @@ requests = []
 const byMagnet = await startTorrent({ magnet: 'magnet:?xt=urn:btih:bbb&dn=pack&tr=udp%3A%2F%2Ftracker', fileIndex: 1 })
 assert.equal(byMagnet.id, 7)
 assert.equal(byMagnet.index, 1)
-assert.equal(byMagnet.url, 'file:///x/Sintel.2010.1080p.mkv', 'a magnet the engine already holds plays the finished file')
-assert.equal(byMagnet.index, 1)
 assert.ok(!requests.some(u => u.includes('overwrite')), 'a hash the engine holds is never re-added')
-
-requests = []
-const byHash = await startTorrent({ hash: 'BBB', fileIndex: 1 })
-assert.equal(byHash.id, 7)
-assert.equal(byHash.url, 'file:///x/Sintel.2010.1080p.mkv', 'Downloads Play by info hash opens the finished file')
-assert.ok(!requests.some(u => u.includes('overwrite')), 'an info hash the engine holds is never re-added')
 
 // Same again with nobody naming a file: the magnet says which torrent, and the
 // pack's own contents say which file inside it.
 requests = []
 assert.equal((await startTorrent({ magnet: 'magnet:?xt=urn:btih:BBB' })).index, 1)
 assert.ok(!requests.some(u => u.includes('overwrite')), 'and the case of the hash is not what decides it')
-
-// Addons put a 32-char base32 btih in the magnet; the engine lists 40-char hex.
-// Comparing them as strings re-POSTs the magnet, and librqbit waits for
-// metadata before it notices it already holds that hash.
-assert.equal(canonHash('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'), '0000000000000000000000000000000000000000')
-assert.equal(canonHash('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'), 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
-const HEX0 = '0000000000000000000000000000000000000000'
-const listedBase32 = { id: 7, info_hash: HEX0, name: 'pack', output_folder: '/x', stats: { file_progress: [10, engine.have] } }
-globalThis.fetch = (async (input: string | URL | Request) => {
-  const url = String(input)
-  requests.push(url)
-  if (url.startsWith(`${ENGINE}/torrents?with_stats`))
-    return Response.json({ torrents: [listedBase32] })
-  if (url === `${ENGINE}/torrents/7`)
-    return Response.json({ ...listedBase32, files: PACK })
-  if (url.startsWith(`${ENGINE}/torrents?overwrite`))
-    return Response.json({ id: 7, details: { name: 'pack', info_hash: HEX0, files: PACK } })
-  if (url.startsWith(ENGINE))
-    return Response.json({})
-  return Response.json({ streams: [] })
-}) as typeof fetch
-requests = []
-assert.equal((await startTorrent({ magnet: 'magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' })).id, 7)
-assert.ok(!requests.some(u => u.includes('overwrite')), 'base32 and hex name the same torrent')
-
-// Restore the BBB mock the half-downloaded case below still uses.
-globalThis.fetch = (async (input: string | URL | Request) => {
-  const url = String(input)
-  requests.push(url)
-  const listed = { id: 7, info_hash: 'BBB', name: 'pack', output_folder: '/x', stats: { file_progress: [10, engine.have] } }
-  if (url.startsWith(`${ENGINE}/torrents?with_stats`))
-    return Response.json({ torrents: engine.held ? [listed] : [] })
-  if (url === `${ENGINE}/torrents/7`)
-    return Response.json({ ...listed, files: PACK })
-  if (url.startsWith(`${ENGINE}/torrents?overwrite`))
-    return Response.json({ id: 7, details: { name: 'pack', info_hash: 'bbb', files: PACK } })
-  if (url.startsWith(ENGINE))
-    return Response.json({})
-  return Response.json({ streams: [streams[1]] })
-}) as typeof fetch
 
 // Half-downloaded: the same release still beats searching for another one, and
 // the engine picks up where it left off.
@@ -838,10 +647,9 @@ requests = []
 const resumed = await startTorrent({ imdbId: 'tt0000001', cached })
 assert.equal(resumed.id, 7)
 assert.equal(resumed.index, 1)
-assert.equal(resumed.url, '', 'a partial copy streams from the engine, not a sparse disk file')
-assert.equal(playUrl(resumed), streamUrl(7, 1), 'playUrl of a growing copy is the engine stream')
 assert.ok(!requests.some(u => u.startsWith('https://a.example')), 'the release is already decided')
 assert.ok(!requests.some(u => u.includes('overwrite=true')), 'a hash the engine is already fetching is not re-added')
+assert.ok(requests.some(u => u.includes('update_only_files')), 'the wanted file is handed to the copy already there')
 
 // Evicted since: the bytes are gone, so the sources are worth asking again —
 // re-adding a hash nobody seeds any more would just hang.
@@ -877,35 +685,6 @@ requests = []
 const adopted = await startTorrent({ imdbId: 'tt0000001', named: () => ({ title: 'Sintel', year: '2010' }) })
 assert.equal(adopted.id, 7, 'the copy already on the disk')
 assert.ok(!requests.some(u => u.startsWith('https://a.example')), 'a held copy is never searched for')
-
-// Quality menu: the magnet is a different hash on purpose. Adopting the
-// 1080p already on disk would keep the same file on screen (or punch it
-// out onto a blank 0:00 while metadata is "fetched" for a copy we skip).
-requests = []
-await startTorrent({
-  magnet: 'magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-  named: () => ({ title: 'Sintel', year: '2010' }),
-  adopt: false,
-})
-assert.ok(requests.some(u => u.includes('overwrite')), 'a Quality pick adds the magnet it named')
-requests = []
-await startTorrent({
-  magnet: 'magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-  named: () => ({ title: 'Sintel', year: '2010' }),
-})
-assert.ok(!requests.some(u => u.includes('overwrite')), 'Play still adopts the copy already on disk')
-
-// Tapping the Quality chip for a copy already on disk must not reopen the
-// hanging `file://` path — the engine stream is what starts that torrent.
-requests = []
-const streamed = await startTorrent({
-  magnet: magnetForHash('BBB'),
-  hash: 'BBB',
-  adopt: false,
-})
-assert.equal(streamed.id, 7)
-assert.equal(streamed.url, '', 'a Quality pick streams from the engine so the download can start')
-assert.ok(!requests.some(u => u.includes('overwrite')), 'the engine already holds that hash')
 
 // A link the picker chose goes straight to the player: the engine never hears
 // about it, so there is no metadata round trip, nothing to evict later, and
@@ -946,124 +725,10 @@ assert.ok(saved.hash, 'a save files a copy the engine holds')
 assert.equal(saved.url || '', '', 'and is not the debrid link Play would open')
 assert.ok(requests.some(u => u.includes('overwrite')), 'handed to the engine')
 
-// Engine already accepted the magnet (it is on the list) but files have not
-// landed. Re-POSTing waits 180s for metadata of a torrent it already holds —
-// first Play stuck on "Fetching metadata from peers…", second Play streams.
-{
-  let posts = 0
-  globalThis.fetch = (async (input: string | URL | Request) => {
-    const url = String(input)
-    if (url.startsWith(`${ENGINE}/torrents?with_stats`))
-      return Response.json({ torrents: [{ id: 7, info_hash: 'bbb', name: 'pack', output_folder: '/x' }] })
-    if (url === `${ENGINE}/torrents/7`)
-      return Response.json({ id: 7, info_hash: 'bbb', name: 'pack', output_folder: '/x', files: [] })
-    if (url.startsWith(`${ENGINE}/torrents?overwrite`)) {
-      posts++
-      return Response.json({ id: 7, details: { name: 'pack', info_hash: 'bbb', files: PACK } })
-    }
-    return Response.json({})
-  }) as typeof fetch
-  const added = await addTorrent('magnet:?xt=urn:btih:bbb')
-  assert.equal(added.id, 7)
-  assert.equal(posts, 0, 'do not re-POST a hash the engine is already fetching')
-  assert.equal(added.details.files?.length ?? 0, 0, 'first Play must not wait for the file list')
-}
-
-// librqbit starts the torrent on add. A second start 400s "already live".
-{
-  globalThis.fetch = (async (input: string | URL | Request) => {
-    const url = String(input)
-    if (url.endsWith('/7/start')) {
-      return new Response(JSON.stringify({
-        error_kind: 'Internal_error',
-        human_readable: 'torrent is already live',
-        status: 400,
-      }), { status: 400, statusText: '400 Bad Request' })
-    }
-    return Response.json({})
-  }) as typeof fetch
-  await torrentAction(7, 'start')
-}
-
-// POST add can lose the race to a Play that just filed the same hash.
-{
-  let seen = 0
-  globalThis.fetch = (async (input: string | URL | Request) => {
-    const url = String(input)
-    if (url.startsWith(`${ENGINE}/torrents?overwrite`)) {
-      return new Response(JSON.stringify({
-        error_kind: 'Internal_error',
-        human_readable: 'torrent is already live',
-        status: 400,
-      }), { status: 400, statusText: '400 Bad Request' })
-    }
-    if (url.startsWith(`${ENGINE}/torrents?with_stats`)) {
-      seen++
-      return Response.json({
-        torrents: seen > 1 ? [{ id: 7, info_hash: 'bbb', name: 'pack' }] : [],
-      })
-    }
-    return new Response(null, { status: 404 })
-  }) as typeof fetch
-  assert.equal((await addTorrent('magnet:?xt=urn:btih:bbb')).id, 7)
-}
-
-{
-  const order: string[] = []
-  globalThis.fetch = (async (input: string | URL | Request) => {
-    const url = String(input)
-    if (url.startsWith(`${ENGINE}/torrents?with_stats`))
-      return Response.json({ torrents: [] })
-    if (url.startsWith(`${ENGINE}/torrents?overwrite`)) {
-      order.push('add')
-      return Response.json({ id: 7, details: { name: 'pack', info_hash: 'bbb', files: PACK } })
-    }
-    if (url.startsWith(ENGINE))
-      return Response.json({})
-    order.push('search')
-    return Response.json({
-      streams: [{
-        name: 'Example\n1080p',
-        title: 'Sintel.2010.1080p.WEB-DL\n👤 10 💾 2.2 GB ⚙️ indexer-a',
-        infoHash: 'bbb',
-      }],
-    })
-  }) as typeof fetch
-  await startTorrent({
-    imdbId: 'tt0000001',
-    allowTorrents: true,
-    onAlternativesLate: () => { order.push('alts') },
-  })
-  assert.ok(order.includes('alts'), 'Quality candidates are published from the search')
-  assert.ok(
-    order.indexOf('alts') < order.indexOf('add'),
-    'Quality pills land before the metadata POST, not after first Play goes blank',
-  )
-}
-
 requests = []
-globalThis.fetch = (async (input: string | URL | Request) => {
-  const url = String(input)
-  requests.push(url)
-  if (url.startsWith(`${ENGINE}/torrents?with_stats`))
-    return Response.json({ torrents: [] })
-  if (url.startsWith(`${ENGINE}/torrents?overwrite`))
-    return Response.json({ id: 7, details: { name: 'pack', info_hash: 'bbb', files: PACK } })
-  if (url.startsWith(ENGINE))
-    return Response.json({})
-  return Response.json({
-    streams: [{
-      name: 'Example\n1080p',
-      title: 'Sintel.2010.1080p.WEB-DL\n👤 0 💾 2.2 GB ⚙️ debrid',
-      url: 'https://debrid.example/dl/abc/Sintel.mkv',
-      infoHash: 'bbb',
-    }],
-  })
-}) as typeof fetch
 const mixedOn = await startTorrent({ imdbId: 'tt0000001', allowTorrents: true })
 assert.ok(mixedOn.hash, 'engine on: Play files the magnet even when the same row has a Direct URL')
 assert.equal(mixedOn.url || '', '')
-assert.ok(mixedOn.alternatives?.length, 'engine Play carries other qualities for the player menu')
 
 requests = []
 const mixedOff = await startTorrent({ imdbId: 'tt0000001', allowTorrents: false })
@@ -1157,14 +822,6 @@ const promise = startTorrent({
 })
 assert.equal((await promise).id, 7, 'the name arrived with the lookup, and still adopted')
 assert.ok(!requests.some(u => u.startsWith('https://a.example')), 'and the sources were never asked')
-
-const downloadsPage = await Bun.file('app/pages/downloads.vue').text()
-assert.match(downloadsPage, /pickVideoFile/, 'Downloads Play picks the video file, not always index 0')
-assert.match(downloadsPage, /src: streamUrl/, 'Downloads Play opens the engine stream, not a disk path')
-assert.match(downloadsPage, /reveal_path/, 'Downloads folder buttons use the native reveal command')
-assert.match(downloadsPage, /@click\.(?:prevent\.)?stop="openFolder/, 'folder buttons do not steal the row click')
-const pickerSrc = await Bun.file('app/components/TorrentPicker.vue').text()
-assert.match(pickerSrc, /pickPlay\(torrents\.value, downloads\.budget/, 'Releases Best is the same pick Play would make')
 
 globalThis.fetch = realFetch
 setSources([])

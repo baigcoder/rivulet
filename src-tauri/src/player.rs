@@ -45,276 +45,254 @@ const SHAPE_UNSORTED: libc::c_int = 0;
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct XRectangle {
-    x: libc::c_short,
-    y: libc::c_short,
-    width: libc::c_ushort,
-    height: libc::c_ushort,
+	x: libc::c_short,
+	y: libc::c_short,
+	width: libc::c_ushort,
+	height: libc::c_ushort,
 }
 
 type ShapeRectsFn = unsafe extern "C" fn(
-    *mut x11_dl::xlib::Display,
-    x11_dl::xlib::Window,
-    libc::c_int,
-    libc::c_int,
-    libc::c_int,
-    *const XRectangle,
-    libc::c_int,
-    libc::c_int,
-    libc::c_int,
+	*mut x11_dl::xlib::Display,
+	x11_dl::xlib::Window,
+	libc::c_int,
+	libc::c_int,
+	libc::c_int,
+	*const XRectangle,
+	libc::c_int,
+	libc::c_int,
+	libc::c_int,
 );
 
 /// A rectangle of the video window the frontend wants punched out, in physical
 /// pixels relative to the video box's top-left.
 #[derive(serde::Deserialize, Clone, Copy)]
 pub struct Cutout {
-    x: i32,
-    y: i32,
-    width: u32,
-    height: u32,
+	x: i32,
+	y: i32,
+	width: u32,
+	height: u32,
 }
 
 fn shape_fn() -> Option<ShapeRectsFn> {
-    static SHAPE: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
-    let addr = SHAPE.get_or_init(|| unsafe {
-        let lib = libc::dlopen(c"libXext.so.6".as_ptr(), libc::RTLD_LAZY);
-        if lib.is_null() {
-            return None;
-        }
-        let sym = libc::dlsym(lib, c"XShapeCombineRectangles".as_ptr());
-        if sym.is_null() {
-            None
-        } else {
-            Some(sym as usize)
-        }
-    });
-    addr.map(|a| unsafe { std::mem::transmute::<usize, ShapeRectsFn>(a) })
+	static SHAPE: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
+	let addr = SHAPE.get_or_init(|| unsafe {
+		let lib = libc::dlopen(c"libXext.so.6".as_ptr(), libc::RTLD_LAZY);
+		if lib.is_null() {
+			return None;
+		}
+		let sym = libc::dlsym(lib, c"XShapeCombineRectangles".as_ptr());
+		if sym.is_null() { None } else { Some(sym as usize) }
+	});
+	addr.map(|a| unsafe { std::mem::transmute::<usize, ShapeRectsFn>(a) })
 }
 
 /// The X11 child window mpv renders into, kept alive for the player's lifetime
 /// (closing the display connection would destroy the server-side window).
 struct Embed {
-    xlib: x11_dl::xlib::Xlib,
-    display: *mut x11_dl::xlib::Display,
-    window: x11_dl::xlib::Window,
-    width: u32,
-    height: u32,
+	xlib: x11_dl::xlib::Xlib,
+	display: *mut x11_dl::xlib::Display,
+	window: x11_dl::xlib::Window,
+	width: u32,
+	height: u32,
 }
 // The display connection is only ever touched under `PlayerState`'s mutex, and
 // we call XInitThreads() at startup, so serialised cross-thread use is sound.
 unsafe impl Send for Embed {}
 
 impl Embed {
-    fn move_resize(&mut self, x: i32, y: i32, w: u32, h: u32) {
-        unsafe {
-            (self.xlib.XMoveResizeWindow)(self.display, self.window, x, y, w.max(1), h.max(1));
-            (self.xlib.XFlush)(self.display);
-        }
-        self.width = w.max(1);
-        self.height = h.max(1);
-    }
+	fn move_resize(&mut self, x: i32, y: i32, w: u32, h: u32) {
+		unsafe {
+			(self.xlib.XMoveResizeWindow)(self.display, self.window, x, y, w.max(1), h.max(1));
+			(self.xlib.XFlush)(self.display);
+		}
+		self.width = w.max(1);
+		self.height = h.max(1);
+	}
 
-    /// Cursor coordinates relative to the native video surface. `mpv`'s
-    /// `mouse-pos` stops updating for some embedded X11 fullscreen windows, so
-    /// ask X11 directly just as the Windows backend asks Win32.
-    fn pointer(&self) -> Option<(i32, i32, bool)> {
-        unsafe {
-            let mut root = 0;
-            let mut child = 0;
-            let mut root_x = 0;
-            let mut root_y = 0;
-            let mut x = 0;
-            let mut y = 0;
-            let mut mask = 0;
-            if (self.xlib.XQueryPointer)(
-                self.display,
-                self.window,
-                &mut root,
-                &mut child,
-                &mut root_x,
-                &mut root_y,
-                &mut x,
-                &mut y,
-                &mut mask,
-            ) == 0
-            {
-                return None;
-            }
-            let over = x >= 0 && y >= 0 && x < self.width as i32 && y < self.height as i32;
-            Some((x, y, over))
-        }
-    }
+	/// Cursor coordinates relative to the native video surface. `mpv`'s
+	/// `mouse-pos` stops updating for some embedded X11 fullscreen windows, so
+	/// ask X11 directly just as the Windows backend asks Win32.
+	fn pointer(&self) -> Option<(i32, i32, bool)> {
+		unsafe {
+			let mut root = 0;
+			let mut child = 0;
+			let mut root_x = 0;
+			let mut root_y = 0;
+			let mut x = 0;
+			let mut y = 0;
+			let mut mask = 0;
+			if (self.xlib.XQueryPointer)(
+				self.display,
+				self.window,
+				&mut root,
+				&mut child,
+				&mut root_x,
+				&mut root_y,
+				&mut x,
+				&mut y,
+				&mut mask,
+			) == 0 {
+				return None;
+			}
+			let over = x >= 0 && y >= 0 && x < self.width as i32 && y < self.height as i32;
+			Some((x, y, over))
+		}
+	}
 
-    /// Map/unmap the video window. Unmapping is how we hide the native surface
-    /// when its DOM box scrolls out of view — otherwise it would keep painting
-    /// over whatever the webview draws in that region.
-    fn set_visible(&self, visible: bool) {
-        unsafe {
-            if visible {
-                (self.xlib.XMapWindow)(self.display, self.window);
-            } else {
-                (self.xlib.XUnmapWindow)(self.display, self.window);
-            }
-            (self.xlib.XFlush)(self.display);
-        }
-    }
+	/// Map/unmap the video window. Unmapping is how we hide the native surface
+	/// when its DOM box scrolls out of view — otherwise it would keep painting
+	/// over whatever the webview draws in that region.
+	fn set_visible(&self, visible: bool) {
+		unsafe {
+			if visible {
+				(self.xlib.XMapWindow)(self.display, self.window);
+			} else {
+				(self.xlib.XUnmapWindow)(self.display, self.window);
+			}
+			(self.xlib.XFlush)(self.display);
+		}
+	}
 
-    /// Reset the window to a plain rectangle, then subtract each cutout from it.
-    /// Re-applied on every geometry change: a shape is stored in window
-    /// coordinates and does not grow when the window is resized.
-    fn set_shape(&self, w: u32, h: u32, cutouts: &[Cutout]) {
-        let Some(shape) = shape_fn() else {
-            return; // no libXext: controls simply stay behind the video
-        };
-        let clip = |v: i32| v.clamp(0, i32::from(i16::MAX)) as libc::c_short;
-        let full = XRectangle {
-            x: 0,
-            y: 0,
-            width: w.max(1) as libc::c_ushort,
-            height: h.max(1) as libc::c_ushort,
-        };
-        let holes: Vec<XRectangle> = cutouts
-            .iter()
-            .filter(|c| c.width > 0 && c.height > 0)
-            .map(|c| XRectangle {
-                x: clip(c.x),
-                y: clip(c.y),
-                width: c.width.min(u32::from(u16::MAX)) as libc::c_ushort,
-                height: c.height.min(u32::from(u16::MAX)) as libc::c_ushort,
-            })
-            .collect();
-        unsafe {
-            shape(
-                self.display,
-                self.window,
-                SHAPE_BOUNDING,
-                0,
-                0,
-                &full,
-                1,
-                SHAPE_SET,
-                SHAPE_UNSORTED,
-            );
-            if !holes.is_empty() {
-                shape(
-                    self.display,
-                    self.window,
-                    SHAPE_BOUNDING,
-                    0,
-                    0,
-                    holes.as_ptr(),
-                    holes.len() as libc::c_int,
-                    SHAPE_SUBTRACT,
-                    SHAPE_UNSORTED,
-                );
-            }
-            (self.xlib.XFlush)(self.display);
-        }
-    }
+	/// Reset the window to a plain rectangle, then subtract each cutout from it.
+	/// Re-applied on every geometry change: a shape is stored in window
+	/// coordinates and does not grow when the window is resized.
+	fn set_shape(&self, w: u32, h: u32, cutouts: &[Cutout]) {
+		let Some(shape) = shape_fn() else {
+			return; // no libXext: controls simply stay behind the video
+		};
+		let clip = |v: i32| v.clamp(0, i32::from(i16::MAX)) as libc::c_short;
+		let full = XRectangle { x: 0, y: 0, width: w.max(1) as libc::c_ushort, height: h.max(1) as libc::c_ushort };
+		let holes: Vec<XRectangle> = cutouts
+			.iter()
+			.filter(|c| c.width > 0 && c.height > 0)
+			.map(|c| XRectangle {
+				x: clip(c.x),
+				y: clip(c.y),
+				width: c.width.min(u32::from(u16::MAX)) as libc::c_ushort,
+				height: c.height.min(u32::from(u16::MAX)) as libc::c_ushort,
+			})
+			.collect();
+		unsafe {
+			shape(self.display, self.window, SHAPE_BOUNDING, 0, 0, &full, 1, SHAPE_SET, SHAPE_UNSORTED);
+			if !holes.is_empty() {
+				shape(
+					self.display,
+					self.window,
+					SHAPE_BOUNDING,
+					0,
+					0,
+					holes.as_ptr(),
+					holes.len() as libc::c_int,
+					SHAPE_SUBTRACT,
+					SHAPE_UNSORTED,
+				);
+			}
+			(self.xlib.XFlush)(self.display);
+		}
+	}
 
-    fn destroy(self) {
-        unsafe {
-            (self.xlib.XDestroyWindow)(self.display, self.window);
-            (self.xlib.XFlush)(self.display);
-            (self.xlib.XCloseDisplay)(self.display);
-        }
-    }
+	fn destroy(self) {
+		unsafe {
+			(self.xlib.XDestroyWindow)(self.display, self.window);
+			(self.xlib.XFlush)(self.display);
+			(self.xlib.XCloseDisplay)(self.display);
+		}
+	}
 }
 
 #[derive(Default)]
 struct Player {
-    mpv: Option<Child>,
-    ipc: Option<PathBuf>,
-    embed: Option<Embed>,
-    log: Option<PathBuf>,
-    url: Option<String>,
+	mpv: Option<Child>,
+	ipc: Option<PathBuf>,
+	embed: Option<Embed>,
+	log: Option<PathBuf>,
 }
 
 /// What the frontend polls to tell "playing" apart from "mpv died silently".
 #[derive(serde::Serialize)]
 pub struct PlayerStatus {
-    /// False once the mpv process has exited (or was never started).
-    running: bool,
-    /// Tail of mpv's own log, so a failure can be reported instead of a black box.
-    log_tail: Option<String>,
+	/// False once the mpv process has exited (or was never started).
+	running: bool,
+	/// Tail of mpv's own log, so a failure can be reported instead of a black box.
+	log_tail: Option<String>,
 }
 
 /// Pointer position returned to the web player while the embedded mpv child
 /// window owns the cursor.
 #[derive(serde::Serialize)]
 pub struct Pointer {
-    x: i32,
-    y: i32,
-    over: bool,
+	x: i32,
+	y: i32,
+	over: bool,
 }
 
 #[derive(Default)]
 pub struct PlayerState(Mutex<Player>);
 
 impl Player {
-    fn stop(&mut self) {
-        if let Some(mut mpv) = self.mpv.take() {
-            let _ = mpv.kill();
-            let _ = mpv.wait();
-        }
-        if let Some(embed) = self.embed.take() {
-            embed.destroy();
-        }
-        if let Some(ipc) = self.ipc.take() {
-            let _ = std::fs::remove_file(ipc);
-        }
-        if let Some(log) = self.log.take() {
-            let _ = std::fs::remove_file(log);
-        }
-        self.url = None;
-    }
+	fn stop(&mut self) {
+		if let Some(mut mpv) = self.mpv.take() {
+			let _ = mpv.kill();
+			let _ = mpv.wait();
+		}
+		if let Some(embed) = self.embed.take() {
+			embed.destroy();
+		}
+		if let Some(ipc) = self.ipc.take() {
+			let _ = std::fs::remove_file(ipc);
+		}
+		if let Some(log) = self.log.take() {
+			let _ = std::fs::remove_file(log);
+		}
+	}
 }
 
 /// Prepare the process for X11. Must run before GTK is initialised (i.e. before
 /// `tauri::Builder::run`) and before any other X call.
 pub fn init() {
-    // mpv can only embed into an X11 window, so the app window has to be one:
-    // under a Wayland session GTK would otherwise give us a wl_surface with no
-    // XID and playback would fail with "App window is not X11". Forcing the
-    // backend here rather than in the dev script means packaged builds get it
-    // too. XWayland is part of every Wayland desktop that can run this app.
-    //
-    // Unconditional on purpose: Wayland sessions (Hyprland, GNOME, KDE) export
-    // GDK_BACKEND=wayland themselves, so honouring an inherited value means
-    // honouring the one value that cannot work here.
-    std::env::set_var("GDK_BACKEND", "x11");
+	// mpv can only embed into an X11 window, so the app window has to be one:
+	// under a Wayland session GTK would otherwise give us a wl_surface with no
+	// XID and playback would fail with "App window is not X11". Forcing the
+	// backend here rather than in the dev script means packaged builds get it
+	// too. XWayland is part of every Wayland desktop that can run this app.
+	//
+	// Unconditional on purpose: Wayland sessions (Hyprland, GNOME, KDE) export
+	// GDK_BACKEND=wayland themselves, so honouring an inherited value means
+	// honouring the one value that cannot work here.
+	std::env::set_var("GDK_BACKEND", "x11");
 
-    // Make Xlib safe to call from multiple threads: we touch one display
-    // connection from both command handlers and the resize event, serialised by
-    // `PlayerState`'s mutex.
-    if let Ok(xlib) = x11_dl::xlib::Xlib::open() {
-        unsafe { (xlib.XInitThreads)() };
-    }
+	// Make Xlib safe to call from multiple threads: we touch one display
+	// connection from both command handlers and the resize event, serialised by
+	// `PlayerState`'s mutex.
+	if let Ok(xlib) = x11_dl::xlib::Xlib::open() {
+		unsafe { (xlib.XInitThreads)() };
+	}
 }
 
 /// Resolve the native X11 window id of the app window (needs GDK_BACKEND=x11).
 fn x11_window_id(window: &tauri::WebviewWindow) -> Result<x11_dl::xlib::Window, String> {
-    let raw = window
-        .window_handle()
-        .map_err(|e| format!("no window handle: {e}"))?
-        .as_raw();
-    match raw {
-        RawWindowHandle::Xlib(h) => Ok(h.window as x11_dl::xlib::Window),
-        RawWindowHandle::Xcb(h) => Ok(u32::from(h.window) as x11_dl::xlib::Window),
-        _ => Err("App window is not X11 — launch under GDK_BACKEND=x11 (XWayland).".into()),
-    }
+	let raw = window
+		.window_handle()
+		.map_err(|e| format!("no window handle: {e}"))?
+		.as_raw();
+	match raw {
+		RawWindowHandle::Xlib(h) => Ok(h.window as x11_dl::xlib::Window),
+		RawWindowHandle::Xcb(h) => Ok(u32::from(h.window) as x11_dl::xlib::Window),
+		_ => Err("App window is not X11 — launch under GDK_BACKEND=x11 (XWayland).".into()),
+	}
 }
 
 /// Which mpv to run. A bundled copy (shipped as a Tauri resource, which is how
 /// the Windows build gets one) wins over whatever is on PATH; otherwise we fall
 /// back to the system install, which is the normal case on Linux.
 fn mpv_binary(app: &tauri::AppHandle) -> std::ffi::OsString {
-    use tauri::Manager;
-    app.path()
-        .resolve("mpv", tauri::path::BaseDirectory::Resource)
-        .ok()
-        .filter(|p| p.is_file())
-        .map(Into::into)
-        .unwrap_or_else(|| "mpv".into())
+	use tauri::Manager;
+	app.path()
+		.resolve("mpv", tauri::path::BaseDirectory::Resource)
+		.ok()
+		.filter(|p| p.is_file())
+		.map(Into::into)
+		.unwrap_or_else(|| "mpv".into())
 }
 
 /// Start the embedded player: create the child video window and launch mpv.
@@ -332,248 +310,159 @@ fn mpv_binary(app: &tauri::AppHandle) -> std::ffi::OsString {
 /// would also reject mpv's `User-Agent: Lavf/...` string.
 #[tauri::command]
 pub fn player_start(
-    app: tauri::AppHandle,
-    window: tauri::WebviewWindow,
-    state: tauri::State<'_, PlayerState>,
-    url: String,
-    x: i32,
-    y: i32,
-    width: u32,
-    height: u32,
-    user_agent: Option<String>,
-    referer: Option<String>,
-    live: Option<bool>,
-    seekable: Option<bool>,
+	app: tauri::AppHandle,
+	window: tauri::WebviewWindow,
+	state: tauri::State<'_, PlayerState>,
+	url: String,
+	x: i32,
+	y: i32,
+	width: u32,
+	height: u32,
+	user_agent: Option<String>,
+	referer: Option<String>,
+	live: Option<bool>,
 ) -> Result<(), String> {
-    // A degenerate box means the webview hadn't laid out yet. Embedding mpv into
-    // a 1x1 window makes it fail to bring up its video output and exit silently
-    // (a black box with a frozen 0:00 timer), so refuse and let the caller retry
-    // once the DOM box has a real size.
-    if width < 16 || height < 16 {
-        return Err(format!(
-            "player box not laid out yet ({width}x{height}px) — retrying"
-        ));
-    }
+	// A degenerate box means the webview hadn't laid out yet. Embedding mpv into
+	// a 1x1 window makes it fail to bring up its video output and exit silently
+	// (a black box with a frozen 0:00 timer), so refuse and let the caller retry
+	// once the DOM box has a real size.
+	if width < 16 || height < 16 {
+		return Err(format!(
+			"player box not laid out yet ({width}x{height}px) — retrying"
+		));
+	}
 
-    let ua = user_agent.filter(|s| !s.is_empty());
-    let rf = referer.filter(|s| !s.is_empty());
-    let url = player_direct::play_url(&url, ua.as_deref(), rf.as_deref());
-    let engine = player_direct::is_engine_stream(&url);
-    let local_file = player_direct::is_local_file(&url);
-    let is_youtube = url.contains("youtube.com/watch")
-        || url.contains("youtu.be/")
-        || url.contains("youtube.com/shorts/");
+	let ua = user_agent.filter(|s| !s.is_empty());
+	let rf = referer.filter(|s| !s.is_empty());
+	let url = player_direct::play_url(&url, ua.as_deref(), rf.as_deref());
+	let engine = player_direct::is_engine_stream(&url);
 
-    let parent = x11_window_id(&window)?;
+	let parent = x11_window_id(&window)?;
 
-    let mut player = state.0.lock().unwrap();
-    let still = match player.mpv.as_mut() {
-        Some(child) => matches!(child.try_wait(), Ok(None)),
-        None => false,
-    };
-    if player_direct::reuse_engine_process(player.url.as_deref(), &url, still) {
-        eprintln!("[player] keep {url}");
-        return Ok(());
-    }
-    eprintln!("[player] start {url}");
-    player.stop();
+	let mut player = state.0.lock().unwrap();
+	player.stop();
 
-    // Create the X11 child window mpv will render into, positioned to match the
-    // frontend's video box.
-    let xlib = x11_dl::xlib::Xlib::open().map_err(|e| format!("libX11: {e}"))?;
-    let display = unsafe { (xlib.XOpenDisplay)(std::ptr::null()) };
-    if display.is_null() {
-        return Err("XOpenDisplay failed (no X11/XWayland display available)".into());
-    }
-    let child = unsafe {
-        let w =
-            (xlib.XCreateSimpleWindow)(display, parent, x, y, width.max(1), height.max(1), 0, 0, 0);
-        (xlib.XMapWindow)(display, w);
-        (xlib.XFlush)(display);
-        w
-    };
-    let embed = Embed {
-        xlib,
-        display,
-        window: child,
-        width: width.max(1),
-        height: height.max(1),
-    };
+	// Create the X11 child window mpv will render into, positioned to match the
+	// frontend's video box.
+	let xlib = x11_dl::xlib::Xlib::open().map_err(|e| format!("libX11: {e}"))?;
+	let display = unsafe { (xlib.XOpenDisplay)(std::ptr::null()) };
+	if display.is_null() {
+		return Err("XOpenDisplay failed (no X11/XWayland display available)".into());
+	}
+	let child = unsafe {
+		let w = (xlib.XCreateSimpleWindow)(
+			display, parent, x, y, width.max(1), height.max(1), 0, 0, 0,
+		);
+		(xlib.XMapWindow)(display, w);
+		(xlib.XFlush)(display);
+		w
+	};
+	let embed = Embed { xlib, display, window: child, width: width.max(1), height: height.max(1) };
 
-    // mpv writes its own diagnostics to the log so `player_status` can report
-    // *why* it died rather than leaving the user staring at a black box.
-    let (ipc, log) = player_socket::paths();
+	// mpv writes its own diagnostics to the log so `player_status` can report
+	// *why* it died rather than leaving the user staring at a black box.
+	let (ipc, log) = player_socket::paths();
 
-    let mut command = std::process::Command::new(mpv_binary(&app));
-    command
-        .arg(format!("--wid={child}"))
-        .arg("--force-window=yes")
-        .arg("--no-config") // ignore user's ~/.config/mpv for predictability
-        .arg("--no-osc") // we draw our own controls
-        .arg("--osd-level=0")
-        .arg("--no-input-default-bindings")
-        // Never let the embedded video window swallow key presses — all shortcuts
-        // are handled by the webview. (Cursor input stays on: the frontend reads
-        // mpv's `mouse-pos` to un-hide the controls in fullscreen.)
-        .arg("--input-vo-keyboard=no")
-        .arg("--hwdec=auto-safe")
-        // The source is always a local librqbit URL, so mpv's youtube-dl hook can
-        // only ever fail (it spawns yt-dlp three times and logs errors).
-        // YouTube trailer URLs need ytdl enabled so yt-dlp resolves the stream.
-        .arg(if is_youtube { "--ytdl" } else { "--no-ytdl" });
-    if is_youtube {
-        crate::apply_bundled_ytdlp(&mut command, &app);
-    }
-    command
-        // Torrent streams stall (a piece isn't in yet) and librqbit sometimes
-        // drops the connection outright. Cache what we have and reconnect
-        // instead of ending playback.
-        .arg("--cache=yes")
-        // keep-open=yes below already keeps mpv alive through the first
-        // empty read. cache-pause-initial waits for cache-pause-wait
-        // seconds of *timeline* before the first frame — on HEVC that is
-        // a whole GOP, several megabytes, the "starts at 1%" wait.
-        // Start the picture as soon as a frame decodes; cache-pause still
-        // covers piece-boundary underruns after that.
-        .arg("--cache-pause-initial=no");
-    if local_file {
-        for flag in player_direct::file_cli() {
-            command.arg(*flag);
-        }
-    } else {
-        for flag in player_direct::cache_cli(engine) {
-            command.arg(*flag);
-        }
-    }
-    if live.unwrap_or(false) {
-        for flag in player_direct::live_cli() {
-            command.arg(*flag);
-        }
-        // auto-safe still hands HEVC 10-bit to VAAPI-copy, which paints
-        // black into the 8-bit X11 --wid window. Software decode is the
-        // picture; 1080p H264 live is cheap enough without the GPU.
-        command.arg("--hwdec=no");
-        command.arg("--target-trc=bt.1886");
-        command.arg("--target-colorspace-hint=no");
-    }
-    // A torrent is often a 10-bit HEVC release. VAAPI's copy path can report a
-    // successful decode while painting only black into mpv's X11 `--wid` child
-    // window (the same failure already handled for live TV above). The stream is
-    // local and progressive, so reliable software frames are worth more than a
-    // hardware shortcut that leaves the player at 0:00 with no picture.
-    // Direct VOD keeps `auto-safe`, where the GPU path is generally stable.
-    if engine || local_file {
-        command.arg("--hwdec=no");
-        command.arg("--vd-lavc-dr=no");
-        // 10-bit HEVC (the usual torrent encode) is PQ/HLG. Without a
-        // target transfer the software decoder paints black into the
-        // 8-bit X11 `--wid` window — audio, a 0:00 clock, no picture.
-        command.arg("--target-trc=bt.1886");
-        command.arg("--target-colorspace-hint=no");
-    }
-    // HTTP reconnect/timeouts on a `file://` path leave lavf waiting on a
-    // network open that never comes — black, 0:00, no duration.
-    if !local_file {
-        command.arg(format!(
-            "--stream-lavf-o={}",
-            player_direct::stream_lavf_o(engine, live.unwrap_or(false), seekable.unwrap_or(false))
-        ));
-    }
-    command
-        .arg(if engine {
-            // A growing torrent answers 500, then bytes. keep-open=no
-            // exits on that first empty read; the frontend player_start
-            // again and the FileStream pin is lost — Buffering 0% forever.
-            "--keep-open=yes"
-        } else {
-            "--keep-open=no"
-        })
-        .arg("--no-terminal")
-        .arg("--msg-level=all=warn")
-        .arg(format!("--input-ipc-server={}", ipc.display()))
-        .arg(format!("--log-file={}", log.display()))
-        // In a Wayland session mpv defaults to its own Wayland window and
-        // ignores --wid (X11-only). Drop WAYLAND_DISPLAY so mpv uses the X11
-        // (XWayland) output and embeds into our child window.
-        .env_remove("WAYLAND_DISPLAY")
-        // An AppImage puts its own libraries — the build box's, so usually older
-        // than the machine's — in front of everything on LD_LIBRARY_PATH. mpv is
-        // the *system's*, and inheriting that kills it on the first symbol its
-        // own dependencies have and the bundle's copies don't.
-        .env_remove("LD_LIBRARY_PATH");
-    if let Some(ua) = ua.as_deref() {
-        command.arg(format!("--user-agent={ua}"));
-    }
-    if let Some(rf) = rf.as_deref() {
-        command.arg(format!("--referrer={rf}"));
-    }
-    let spawn = command.arg(&url).spawn();
+	let mut command = std::process::Command::new(mpv_binary(&app));
+	command
+		.arg(format!("--wid={child}"))
+		.arg("--force-window=yes")
+		.arg("--no-config") // ignore user's ~/.config/mpv for predictability
+		.arg("--no-osc") // we draw our own controls
+		.arg("--osd-level=0")
+		.arg("--no-input-default-bindings")
+		// Never let the embedded video window swallow key presses — all shortcuts
+		// are handled by the webview. (Cursor input stays on: the frontend reads
+		// mpv's `mouse-pos` to un-hide the controls in fullscreen.)
+		.arg("--input-vo-keyboard=no")
+		.arg("--hwdec=auto-safe")
+		// The source is always a local librqbit URL, so mpv's youtube-dl hook can
+		// only ever fail (it spawns yt-dlp three times and logs errors).
+		.arg("--no-ytdl")
+		// Torrent streams stall (a piece isn't in yet) and librqbit sometimes
+		// drops the connection outright. Cache what we have and reconnect
+		// instead of ending playback.
+		.arg("--cache=yes")
+		// Start the picture as soon as a frame is decoded — do not sit on
+		// "Buffering" while lavf probes a remote HTTP file for several seconds.
+		.arg("--cache-pause-initial=no");
+	for flag in player_direct::cache_cli(engine) {
+		command.arg(*flag);
+	}
+	for flag in player_direct::picture_cli() {
+		command.arg(*flag);
+	}
+	// gpu vo scales 4K into the embed window; x11 nearest-neighbour is
+	// why UHD still looked like a soft HD picture after a correct decode.
+	command.arg("--vo=gpu");
+	if live.unwrap_or(false) {
+		for flag in player_direct::live_cli() {
+			command.arg(*flag);
+		}
+		// vo=gpu converts 10-bit copy-back to the embed window; forcing
+		// software decode is why 4K HEVC looked like a 720p transcode
+		// (CPU skip-loop-filter under load). auto-safe stays from above.
+		command.arg("--target-trc=bt.1886");
+		command.arg("--target-colorspace-hint=no");
+	}
+	command
+		.arg(format!("--stream-lavf-o={}", player_direct::stream_lavf_o(engine)))
+		.arg("--keep-open=no")
+		.arg("--no-terminal")
+		.arg("--msg-level=all=warn")
+		.arg(format!("--input-ipc-server={}", ipc.display()))
+		.arg(format!("--log-file={}", log.display()))
+		// In a Wayland session mpv defaults to its own Wayland window and
+		// ignores --wid (X11-only). Drop WAYLAND_DISPLAY so mpv uses the X11
+		// (XWayland) output and embeds into our child window.
+		.env_remove("WAYLAND_DISPLAY")
+		// An AppImage puts its own libraries — the build box's, so usually older
+		// than the machine's — in front of everything on LD_LIBRARY_PATH. mpv is
+		// the *system's*, and inheriting that kills it on the first symbol its
+		// own dependencies have and the bundle's copies don't.
+		.env_remove("LD_LIBRARY_PATH");
+	if let Some(ua) = ua.as_deref() {
+		command.arg(format!("--user-agent={ua}"));
+	}
+	if let Some(rf) = rf.as_deref() {
+		command.arg(format!("--referrer={rf}"));
+	}
+	let spawn = command.arg(&url).spawn();
 
-    match spawn {
-        Ok(mut mpv) => {
-            // An unknown flag is a fatal parse error (this distro's mpv 0.41
-            // has no `--globbing`). spawn() still succeeds, then mpv exits in
-            // a couple of milliseconds — a black 0:00 player that thinks it
-            // is playing. Catch that here so the frontend can show the log.
-            std::thread::sleep(std::time::Duration::from_millis(80));
-            match mpv.try_wait() {
-                Ok(Some(status)) => {
-                    embed.destroy();
-                    let why = player_socket::log_tail(&log)
-                        .unwrap_or_else(|| status.to_string());
-                    Err(format!("mpv exited immediately: {why}"))
-                }
-                _ => {
-                    player.mpv = Some(mpv);
-                    player.ipc = Some(ipc);
-                    player.embed = Some(embed);
-                    player.log = Some(log);
-                    player.url = Some(url);
-                    Ok(())
-                }
-            }
-        }
-        Err(e) => {
-            embed.destroy();
-            Err(format!("failed to launch mpv (is it installed?): {e}"))
-        }
-    }
+	match spawn {
+		Ok(mpv) => {
+			player.mpv = Some(mpv);
+			player.ipc = Some(ipc);
+			player.embed = Some(embed);
+			player.log = Some(log);
+			Ok(())
+		}
+		Err(e) => {
+			embed.destroy();
+			Err(format!("failed to launch mpv (is it installed?): {e}"))
+		}
+	}
 }
 
 /// Stop the embedded player and tear down its window.
 #[tauri::command]
 pub fn player_stop(state: tauri::State<'_, PlayerState>) {
-    state.0.lock().unwrap().stop();
+	state.0.lock().unwrap().stop();
 }
 
 /// Relay one JSON command to mpv's IPC socket and return its response line.
 /// `command` is a full mpv IPC object, e.g. `{"command":["cycle","pause"]}`.
 #[tauri::command]
 pub fn player_ipc(state: tauri::State<'_, PlayerState>, command: String) -> Result<String, String> {
-    let path = state
-        .0
-        .lock()
-        .unwrap()
-        .ipc
-        .clone()
-        .ok_or("player not running")?;
-    player_socket::command(&path, &command)
+	let path = state.0.lock().unwrap().ipc.clone().ok_or("player not running")?;
+	player_socket::command(&path, &command)
 }
 
 /// Read several mpv properties over a single socket connection.
 #[tauri::command]
-pub fn player_props(
-    state: tauri::State<'_, PlayerState>,
-    names: Vec<String>,
-) -> Result<String, String> {
-    let path = state
-        .0
-        .lock()
-        .unwrap()
-        .ipc
-        .clone()
-        .ok_or("player not running")?;
-    player_socket::properties(&path, &names)
+pub fn player_props(state: tauri::State<'_, PlayerState>, names: Vec<String>) -> Result<String, String> {
+	let path = state.0.lock().unwrap().ipc.clone().ok_or("player not running")?;
+	player_socket::properties(&path, &names)
 }
 
 /// Move/resize the embedded video window to track the frontend's DOM box, and
@@ -584,22 +473,20 @@ pub fn player_props(
 /// surface stops painting over the rest of the UI.
 #[tauri::command]
 pub fn player_set_geometry(
-    state: tauri::State<'_, PlayerState>,
-    x: i32,
-    y: i32,
-    width: u32,
-    height: u32,
-    visible: bool,
-    cutouts: Vec<Cutout>,
+	state: tauri::State<'_, PlayerState>,
+	x: i32,
+	y: i32,
+	width: u32,
+	height: u32,
+	visible: bool,
+	cutouts: Vec<Cutout>,
 ) {
-    let mut player = state.0.lock().unwrap();
-    if let Some(embed) = player.embed.as_mut() {
-        if visible {
-            embed.move_resize(x, y, width, height);
-            embed.set_shape(width, height, &cutouts);
-        }
-        embed.set_visible(visible);
-    }
+	let mut player = state.0.lock().unwrap();
+	if let Some(embed) = player.embed.as_mut() {
+		embed.move_resize(x, y, width, height);
+		embed.set_shape(width, height, &cutouts);
+		embed.set_visible(visible);
+	}
 }
 
 /// Where the mouse is relative to the embedded native video window.
@@ -609,24 +496,24 @@ pub fn player_set_geometry(
 /// resize, leaving the desktop controls hidden forever.
 #[tauri::command]
 pub fn player_pointer(state: tauri::State<'_, PlayerState>) -> Option<Pointer> {
-    let player = state.0.lock().ok()?;
-    let (x, y, over) = player.embed.as_ref()?.pointer()?;
-    Some(Pointer { x, y, over })
+	let player = state.0.lock().ok()?;
+	let (x, y, over) = player.embed.as_ref()?.pointer()?;
+	Some(Pointer { x, y, over })
 }
 
 /// Is mpv still alive? If not, hand back the tail of its log so the frontend can
 /// show a real error instead of a silent black rectangle.
 #[tauri::command]
 pub fn player_status(state: tauri::State<'_, PlayerState>) -> PlayerStatus {
-    let mut player = state.0.lock().unwrap();
-    let running = match player.mpv.as_mut() {
-        // try_wait returns Ok(None) while the child is still running.
-        Some(child) => matches!(child.try_wait(), Ok(None)),
-        None => false,
-    };
+	let mut player = state.0.lock().unwrap();
+	let running = match player.mpv.as_mut() {
+		// try_wait returns Ok(None) while the child is still running.
+		Some(child) => matches!(child.try_wait(), Ok(None)),
+		None => false,
+	};
 
-    let log_tail = player.log.as_deref().and_then(player_socket::log_tail);
-    PlayerStatus { running, log_tail }
+	let log_tail = if running { None } else { player.log.as_deref().and_then(player_socket::log_tail) };
+	PlayerStatus { running, log_tail }
 }
 
 /// Capture the current video frame as a JPEG data-URL via mpv's `screenshot-raw`
@@ -634,27 +521,17 @@ pub fn player_status(state: tauri::State<'_, PlayerState>) -> PlayerStatus {
 /// `data-cut` hole instead of the dark webview background.
 #[tauri::command]
 pub fn player_screenshot(state: tauri::State<'_, PlayerState>) -> Result<String, String> {
-    let path = state
-        .0
-        .lock()
-        .unwrap()
-        .ipc
-        .clone()
-        .ok_or("player not running")?;
-    // `screenshot-raw` returns the frame as raw RGBA pixels; `screenshot-to-file`
-    // saves a JPEG which is much smaller to ferry over IPC and decode on the
-    // frontend. We write to a temp path, read the bytes, and base64-encode them.
-    let tmp = std::env::temp_dir().join(format!("rivulet-screenshot-{}.jpg", std::process::id()));
-    let cmd = serde_json::json!({
-        "command": ["screenshot-to-file", tmp.to_string_lossy(), "video"]
-    })
-    .to_string();
-    player_socket::command(&path, &cmd)?;
-    let bytes = std::fs::read(&tmp).map_err(|e| e.to_string())?;
-    let _ = std::fs::remove_file(&tmp);
-    use base64::Engine;
-    Ok(format!(
-        "data:image/jpeg;base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(&bytes)
-    ))
+	let path = state.0.lock().unwrap().ipc.clone().ok_or("player not running")?;
+	// `screenshot-raw` returns the frame as raw RGBA pixels; `screenshot-to-file`
+	// saves a JPEG which is much smaller to ferry over IPC and decode on the
+	// frontend. We write to a temp path, read the bytes, and base64-encode them.
+	let tmp = std::env::temp_dir().join(format!("rivulet-screenshot-{}.jpg", std::process::id()));
+	let cmd = serde_json::json!({
+		"command": ["screenshot-to-file", tmp.to_string_lossy(), "video"]
+	}).to_string();
+	player_socket::command(&path, &cmd)?;
+	let bytes = std::fs::read(&tmp).map_err(|e| e.to_string())?;
+	let _ = std::fs::remove_file(&tmp);
+	use base64::Engine;
+	Ok(format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(&bytes)))
 }

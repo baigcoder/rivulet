@@ -24,8 +24,7 @@ import {
   liveToggleFavorite,
   proxyFreeStreamUrl,
 } from '~/utils/iptv'
-import { createChannelHealth, pool, PROBE_CONCURRENCY, probeStream } from '~/utils/livehealth'
-import { saveLivePlay } from '~/utils/liveNav'
+import { pool, PROBE_CONCURRENCY, probeStream } from '~/utils/livehealth'
 
 /**
  * Free TV is the only thing in this store. Premium TV (Xtream + user-added
@@ -573,30 +572,20 @@ export const useLiveTvStore = defineStore('liveTv', () => {
     if (!ch || !url)
       return
     hideMiniPlayer()
-    const zapList = [{
+    setZapList([{
       id: ch.id,
       name: ch.name,
       logoUrl: ch.logoUrl,
       streamUrl: ch.streamUrl ?? url,
       userAgent: ch.userAgent,
       referer: ch.referer,
-    }]
-    setZapList(zapList)
-    saveLivePlay({
-      id: ch.id,
-      title: ch.name,
-      logo: ch.logoUrl ?? '',
-      sourceId: activeSourceId.value || 'free:iptv-org',
-      streamUrl: ch.streamUrl ?? url,
-      userAgent: ch.userAgent,
-      referer: ch.referer,
-      zapList,
-    })
+    }])
     navigateTo({
       path: '/live-tv/watch',
       query: {
         id: ch.id,
         title: ch.name,
+        logo: ch.logoUrl ?? '',
         type: 'live',
         sourceId: activeSourceId.value || 'free:iptv-org',
       },
@@ -700,7 +689,7 @@ export const useLiveTvStore = defineStore('liveTv', () => {
   // was dead this morning is a channel worth trying again tonight, and a
   // persisted verdict would hide it for good.
 
-  const { liveIds, offlineIds, healthOf, markLive, markOffline } = createChannelHealth()
+  const offlineIds = ref<Set<string>>(new Set())
   /**
    * Ids already sent to a probe. Not reactive — nothing renders "we are
    * currently checking", and the point of the set is that a scroll back
@@ -715,6 +704,23 @@ export const useLiveTvStore = defineStore('liveTv', () => {
     return offlineIds.value.has(ch.id)
   }
 
+  function markOffline(channelId: string): void {
+    if (offlineIds.value.has(channelId))
+      return
+    // A new Set rather than a mutation: the cards read this through a
+    // computed and a Set is not deeply reactive.
+    offlineIds.value = new Set(offlineIds.value).add(channelId)
+    probedIds.add(channelId)
+  }
+
+  function markLive(channelId: string): void {
+    if (!offlineIds.value.has(channelId))
+      return
+    const next = new Set(offlineIds.value)
+    next.delete(channelId)
+    offlineIds.value = next
+  }
+
   /**
    * Probe the channels the grid can currently see. Called with the same
    * id batch the EPG hook gets, so "visible" is defined in one place.
@@ -725,10 +731,6 @@ export const useLiveTvStore = defineStore('liveTv', () => {
       if (probedIds.has(id))
         continue
       const ch = visibleChannels.value.find(c => c.id === id)
-        || dashboard.value?.recentPreviews?.find(c => c.id === id)
-        || dashboard.value?.favoritePreviews?.find(c => c.id === id)
-        || (dashboard.value?.countryPreviews ?? []).flatMap(cp => cp.channels).find(c => c.id === id)
-        || (dashboard.value?.categoryPreviews ?? []).flatMap(cp => cp.channels).find(c => c.id === id)
       const url = ch?.streamUrl
       if (!ch || !url || url === 'undefined' || url === 'null')
         continue
@@ -753,8 +755,6 @@ export const useLiveTvStore = defineStore('liveTv', () => {
       }
       if (await probeStream(proxied) === 'offline')
         markOffline(ch.id)
-      else
-        markLive(ch.id)
     })
   }
 
@@ -889,9 +889,7 @@ export const useLiveTvStore = defineStore('liveTv', () => {
     epgLoading,
 
     // Health
-    liveIds,
     offlineIds,
-    healthOf,
     isOffline,
     markOffline,
     markLive,

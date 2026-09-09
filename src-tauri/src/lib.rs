@@ -10,15 +10,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use librqbit::{
-    api::Api, dht::DhtPersistenceConfig, http_api::HttpApi, ConnectionOptions, DhtSessionConfig,
-    ListenerMode, ListenerOptions, PeerConnectionOptions, Session, SessionOptions,
-    SessionPersistenceConfig,
+    api::Api, dht::DhtPersistenceConfig, http_api::HttpApi, DhtSessionConfig, Session,
+    SessionOptions, SessionPersistenceConfig,
 };
 use librqbit_dualstack_sockets::TcpListener;
 use tokio_util::sync::CancellationToken;
 
-use crate::api::ApiState;
 use crate::premium::PremiumState;
+use crate::api::ApiState;
 
 // The embedded player is an mpv process parented into a child window of the app
 // window, which is X11 on Linux and an HWND on Windows. macOS embeds no other
@@ -61,10 +60,6 @@ mod player_socket;
 /// The NSOpenGLView libmpv renders into, which is macOS's answer to embedding.
 #[cfg(target_os = "macos")]
 mod player_render_mac;
-
-/// Embeds the Windows mpv/ffmpeg binaries into the .exe itself, so a single
-/// `rivulet.exe` works without an `mpv/` folder beside it.
-mod embedded_binaries;
 
 /// Drops the quotes `tauri-plugin-deep-link` puts around the binary path in the
 /// `Exec=` line it writes.
@@ -253,14 +248,6 @@ const ENVELOPE_FLOOR: f32 = -91.0;
 fn ffmpeg(app: &tauri::AppHandle) -> &'static std::ffi::OsStr {
     static FOUND: std::sync::OnceLock<std::ffi::OsString> = std::sync::OnceLock::new();
     FOUND.get_or_init(|| {
-        // The Windows binary embeds ffmpeg alongside mpv and extracts it to
-        // the same place at startup; that wins over the bundle-resources
-        // path an installer-built copy would use, and a system ffmpeg
-        // after that.
-        if let Some(p) = embedded_binaries::extracted_ffmpeg_path(app) {
-            return p.into_os_string();
-        }
-
         // Resolves to nothing on the platforms that declare no such resource, so
         // this needs no cfg of its own.
         if let Some(bundled) = app
@@ -311,13 +298,7 @@ fn ffmpeg_command(exe: &std::ffi::OsStr) -> std::process::Command {
 /// for a child process that hasn't got one.
 #[cfg(not(target_os = "windows"))]
 fn ffmpeg_command(exe: &std::ffi::OsStr) -> std::process::Command {
-    let mut cmd = std::process::Command::new(exe);
-    // Same as mpv: an AppImage puts the build box's libs in front of PATH
-    // binaries, and the system's ffmpeg then dies on the first missing symbol.
-    if std::env::var_os("APPIMAGE").is_some() {
-        cmd.env_remove("LD_LIBRARY_PATH");
-    }
-    cmd
+    std::process::Command::new(exe)
 }
 
 /// Speech-band loudness over `duration` seconds from `start`, one RMS reading in
@@ -430,34 +411,26 @@ async fn thumbnail(
     tauri::async_runtime::spawn_blocking(move || {
         let out = ffmpeg_command(exe)
             .args(["-hide_banner", "-nostats", "-nostdin", "-v", "error"])
-            .args(["-user_agent", crate::player_direct::STREAM_UA])
-            .args(["-rw_timeout", "15000000"])
+            .args(["-rw_timeout", "5000000"])
             // Before -i: seek by keyframe and start decoding there, rather than
             // reading the file from the top to reach one frame.
             .args(["-ss", &at.to_string()])
             .args(["-i", &url])
             .args(["-an", "-frames:v", "1"])
-            .args(["-vf", "format=yuv420p,scale=320:-1", "-f", "mjpeg", "-"])
+            // yuvj420p because mjpeg has no 10-bit: an HDR release encodes to
+            // nothing at all without it.
+            .args([
+                "-vf",
+                "scale=320:-2",
+                "-pix_fmt",
+                "yuvj420p",
+                "-f",
+                "mjpeg",
+                "-",
+            ])
             .output()
             .map_err(|e| format!("previews need ffmpeg, and {exe:?} would not start: {e}"))?;
-
-        if !out.stdout.is_empty() {
-            return Ok(tauri::ipc::Response::new(out.stdout));
-        }
-
-        // Fallback for HTTP/HLS streams where -ss before -i returns 0 bytes
-        let out_fallback = ffmpeg_command(exe)
-            .args(["-hide_banner", "-nostats", "-nostdin", "-v", "error"])
-            .args(["-user_agent", crate::player_direct::STREAM_UA])
-            .args(["-rw_timeout", "15000000"])
-            .args(["-i", &url])
-            .args(["-ss", &at.to_string()])
-            .args(["-an", "-frames:v", "1"])
-            .args(["-vf", "format=yuv420p,scale=320:-1", "-f", "mjpeg", "-"])
-            .output()
-            .map_err(|e| format!("previews need ffmpeg: {e}"))?;
-
-        Ok(tauri::ipc::Response::new(out_fallback.stdout))
+        Ok(tauri::ipc::Response::new(out.stdout))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -469,91 +442,6 @@ fn cache_dir(app: &tauri::AppHandle) -> PathBuf {
         .app_cache_dir()
         .unwrap_or_else(|_| std::env::temp_dir())
 }
-
-/// Where finished/partial torrent data lands by default.
-///
-/// Desktop writes into the OS's Downloads folder under a `Rivulet` subfolder so
-/// what the user downloads is easy to find in their file manager — the cache
-/// folder is hidden away and the point of the torrent mode is a copy you can
-/// keep. Falls back to the cache folder when the OS has no Downloads path (no
-/// home dir, or a platform that exposes none). Android keeps the cache folder:
-/// it offers a drive list instead of a Downloads directory.
-fn default_download_dir(app: &tauri::AppHandle) -> PathBuf {
-    #[cfg(desktop)]
-    {
-        if let Ok(dir) = app.path().download_dir() {
-            let with_sub = dir.join("Rivulet");
-            if writable_dir(&with_sub) {
-                return with_sub;
-            }
-        }
-    }
-    let fallback = cache_dir(app).join("rivulet-torrents");
-    let _ = std::fs::create_dir_all(&fallback);
-    fallback
-}
-
-/// Can the torrent engine actually create files here? An AppImage whose
-/// Downloads path lands on a FUSE mount, or a `create_dir_all` that we used
-/// to ignore, otherwise looks like 2 peers and 0 B/s forever.
-fn writable_dir(dir: &std::path::Path) -> bool {
-    if std::fs::create_dir_all(dir).is_err() {
-        return false;
-    }
-    let probe = dir.join(".rivulet-write-ok");
-    let ok = std::fs::write(&probe, b"ok").is_ok();
-    let _ = std::fs::remove_file(&probe);
-    ok
-}
-
-/// Resolve the yt-dlp binary bundled as a Tauri resource, if the build shipped
-/// one. Desktop bundles declare `ytdlp/yt-dlp(.exe)` as a resource; the
-/// resource dir is where Tauri copies it at runtime. The binary needs the
-/// execute bit on unix (resources may not preserve it), so `chmod` it once.
-/// Falls back to `None`, which makes the proxy use `yt-dlp` from PATH.
-pub(crate) fn bundled_ytdlp(app: &tauri::AppHandle) -> Option<PathBuf> {
-    #[cfg(target_os = "windows")]
-    let name = "yt-dlp.exe";
-    #[cfg(not(target_os = "windows"))]
-    let name = "yt-dlp";
-    let path = app.path().resource_dir().ok()?.join("ytdlp").join(name);
-    if !path.exists() {
-        return None;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Ok(meta) = std::fs::metadata(&path) {
-            let mut perms = meta.permissions();
-            perms.set_mode(perms.mode() | 0o755);
-            let _ = std::fs::set_permissions(&path, perms);
-        }
-    }
-    Some(path)
-}
-
-/// Point mpv's youtube-dl hook at the yt-dlp we ship. PATH in an AppImage is
-/// the bundle's, which has no yt-dlp, so `--ytdl` would spawn nothing and a
-/// trailer URL would sit on a black window.
-pub(crate) fn apply_bundled_ytdlp(cmd: &mut std::process::Command, app: &tauri::AppHandle) {
-    let Some(bin) = bundled_ytdlp(app) else {
-        return;
-    };
-    cmd.arg(format!(
-        "--script-opts=ytdl_hook-ytdl_path={}",
-        bin.display()
-    ));
-    if let Some(dir) = bin.parent() {
-        let mut path = dir.as_os_str().to_os_string();
-        #[cfg(windows)]
-        path.push(";");
-        #[cfg(not(windows))]
-        path.push(":");
-        path.push(std::env::var_os("PATH").unwrap_or_default());
-        cmd.env("PATH", path);
-    }
-}
-
 
 #[derive(serde::Serialize)]
 struct DiskSpace {
@@ -574,7 +462,7 @@ struct DiskSpace {
 fn disk_space(app: tauri::AppHandle, path: Option<String>) -> Result<DiskSpace, String> {
     let dir = match path.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
         Some(p) => PathBuf::from(p),
-        None => default_download_dir(&app),
+        None => cache_dir(&app).join("rivulet-torrents"),
     };
     #[cfg(unix)]
     {
@@ -596,231 +484,8 @@ fn disk_space(app: tauri::AppHandle, path: Option<String>) -> Result<DiskSpace, 
     }
     #[cfg(not(unix))]
     {
-        use std::os::windows::ffi::OsStrExt;
-        // GetDiskFreeSpaceExW needs a root path (drive letter or UNC share),
-        // not a deep subdirectory. Walk up until we find one that exists.
-        let root = find_drive_root(&dir);
-        let wide: Vec<u16> = root
-            .as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-        let mut free_avail: u64 = 0;
-        let mut total_bytes: u64 = 0;
-        let mut _total_free: u64 = 0;
-        let ok = unsafe {
-            windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(
-                wide.as_ptr(),
-                &mut free_avail,
-                &mut total_bytes,
-                &mut _total_free,
-            )
-        };
-        if ok == 0 {
-            return Err(format!("GetDiskFreeSpaceExW({}) failed", root.display()));
-        }
-        Ok(DiskSpace {
-            free: free_avail,
-            total: total_bytes,
-        })
-    }
-}
-
-/// Nearest existing path, walking up from a file that has not been written yet.
-fn existing_path_for_reveal(path: &str) -> Result<PathBuf, String> {
-    let trimmed = path.trim();
-    if trimmed.is_empty() {
-        return Err("no path".into());
-    }
-    let mut p = PathBuf::from(trimmed);
-    while !p.exists() {
-        if !p.pop() {
-            return Err(format!("nothing on disk at {trimmed}"));
-        }
-    }
-    Ok(p)
-}
-
-/// Where new torrents land: the storage setting, or the engine's default.
-///
-/// The frontend's `downloadDir` is empty until the user picks a folder, but
-/// the engine still writes under Downloads/Rivulet (desktop) or the cache
-/// dir. Open folder has to be able to name that path.
-#[tauri::command]
-fn download_dir(app: tauri::AppHandle, path: Option<String>) -> String {
-    match path.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
-        Some(p) => p.to_string(),
-        None => default_download_dir(&app).to_string_lossy().into_owned(),
-    }
-}
-
-/// Open a download (or its folder) in the system file manager.
-///
-/// The shell plugin's `open` is the wrong tool here: on Linux `xdg-open` on a
-/// `.mkv` launches a player, and an AppImage's `LD_LIBRARY_PATH` makes the
-/// file manager abort after a successful spawn. Walk up until something exists
-/// so an unfinished torrent still reveals its parent. An empty path is the
-/// engine default — a fresh add often has no `output_folder` yet and no
-/// storage setting either.
-#[tauri::command]
-fn reveal_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
-    let trimmed = path.trim();
-    let candidate = if trimmed.is_empty() {
-        default_download_dir(&app)
-    } else {
-        PathBuf::from(trimmed)
-    };
-    let target = match existing_path_for_reveal(&candidate.to_string_lossy()) {
-        Ok(p) => p,
-        Err(_) => {
-            let fallback = default_download_dir(&app);
-            std::fs::create_dir_all(&fallback).map_err(|e| e.to_string())?;
-            fallback
-        }
-    };
-    eprintln!("[rivulet] reveal_path {} -> {}", candidate.display(), target.display());
-    open_in_file_manager(&target)
-}
-
-fn file_uri(path: &std::path::Path) -> String {
-    url::Url::from_file_path(path)
-        .map(|u| u.to_string())
-        .unwrap_or_else(|_| format!("file://{}", path.display()))
-}
-
-fn command_succeeds(cmd: &mut std::process::Command) -> bool {
-    cmd.stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-fn open_in_file_manager(path: &std::path::Path) -> Result<(), String> {
-    #[cfg(target_os = "linux")]
-    {
-        // A video path must never reach xdg-open — that launches a player.
-        let dir = if path.is_file() {
-            path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(path)
-        } else {
-            path
-        };
-        linux_reveal_dir(dir)
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let mut cmd = std::process::Command::new("open");
-        if path.is_file() {
-            cmd.arg("-R").arg(path);
-        } else {
-            cmd.arg(path);
-        }
-        spawn_detached(&mut cmd)
-    }
-    #[cfg(target_os = "windows")]
-    {
-        // explorer's `/select,` flag is one argv token; splitting it makes it
-        // open the user's Documents folder instead.
-        let mut cmd = std::process::Command::new("explorer");
-        if path.is_file() {
-            cmd.arg(format!("/select,{}", path.display()));
-        } else {
-            cmd.arg(path);
-        }
-        spawn_detached(&mut cmd)
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    {
-        let _ = path;
-        Err("this device cannot open folders".into())
-    }
-}
-
-/// Ask the session file manager to show a folder.
-///
-/// `xdg-open` from a Tauri process often returns success and shows nothing
-/// (Wayland, portals, a stolen process group). The Freedesktop FileManager1
-/// bus is what Dolphin / Nautilus / Nemo listen on, and it raises the window.
-#[cfg(target_os = "linux")]
-fn linux_reveal_dir(dir: &std::path::Path) -> Result<(), String> {
-    let uri = file_uri(dir);
-    let gdbus_list = format!("['{uri}']");
-    if command_succeeds(
-        std::process::Command::new("gdbus").args([
-            "call",
-            "--session",
-            "--dest",
-            "org.freedesktop.FileManager1",
-            "--object-path",
-            "/org/freedesktop/FileManager1",
-            "--method",
-            "org.freedesktop.FileManager1.ShowFolders",
-            &gdbus_list,
-            "",
-        ]),
-    ) {
-        return Ok(());
-    }
-
-    let dbus_array = format!("array:string:{uri:?}");
-    if command_succeeds(
-        std::process::Command::new("dbus-send").args([
-            "--session",
-            "--dest=org.freedesktop.FileManager1",
-            "--type=method_call",
-            "/org/freedesktop/FileManager1",
-            "org.freedesktop.FileManager1.ShowFolders",
-            &dbus_array,
-            "string:",
-        ]),
-    ) {
-        return Ok(());
-    }
-
-    let dir_s = dir.to_string_lossy();
-    for bin in ["dolphin", "nautilus", "nemo", "thunar", "pcmanfm", "xdg-open"] {
-        let mut cmd = std::process::Command::new(bin);
-        cmd.arg(dir_s.as_ref());
-        if std::env::var_os("APPIMAGE").is_some() {
-            cmd.env_remove("LD_LIBRARY_PATH")
-                .env_remove("APPDIR")
-                .env_remove("APPIMAGE")
-                .env_remove("ARGV0")
-                .env_remove("PYTHONHOME")
-                .env_remove("PYTHONPATH");
-        }
-        if spawn_detached(&mut cmd).is_ok() {
-            return Ok(());
-        }
-    }
-    Err(format!("could not open {}", dir.display()))
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-fn spawn_detached(cmd: &mut std::process::Command) -> Result<(), String> {
-    cmd.stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
-    std::thread::spawn(move || {
-        let _ = child.wait();
-    });
-    Ok(())
-}
-
-/// Walk up from a deep path until we find a root (drive letter or UNC share)
-/// that `GetDiskFreeSpaceExW` can measure. The API requires a volume root —
-/// passing `C:\Users\foo\bar` fails if the path does not exist yet, but
-/// `C:\` always does.
-#[cfg(not(unix))]
-fn find_drive_root(path: &std::path::Path) -> PathBuf {
-    let mut cur = path.to_path_buf();
-    loop {
-        if cur.exists() || cur.parent().is_none() {
-            return cur;
-        }
-        cur.pop();
+        let _ = dir;
+        Err("disk space is only implemented for unix targets".into())
     }
 }
 
@@ -867,7 +532,7 @@ async fn download_url(
     }
     let folder = match dir.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
         Some(p) => PathBuf::from(p),
-        None => default_download_dir(&app),
+        None => cache_dir(&app).join("rivulet-torrents"),
     };
     tokio::fs::create_dir_all(&folder)
         .await
@@ -929,47 +594,6 @@ mod download_url_tests {
         assert!(!escaped.contains('\\'), "{escaped}");
         assert_eq!(super::safe_download_name(".."), "download.mkv");
         assert_eq!(super::safe_download_name("Film.mkv"), "Film.mkv");
-    }
-}
-
-#[cfg(test)]
-mod download_dir_tests {
-    #[test]
-    fn writable_dir_accepts_a_real_folder() {
-        let dir = std::env::temp_dir().join(format!("rivulet-writable-{}", std::process::id()));
-        assert!(super::writable_dir(&dir), "{}", dir.display());
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn writable_dir_rejects_a_file() {
-        let file = std::env::temp_dir().join(format!("rivulet-not-a-dir-{}", std::process::id()));
-        std::fs::write(&file, b"nope").unwrap();
-        assert!(!super::writable_dir(&file), "{}", file.display());
-        let _ = std::fs::remove_file(&file);
-    }
-}
-
-#[cfg(test)]
-mod reveal_path_tests {
-    #[test]
-    fn empty_is_an_error() {
-        assert!(super::existing_path_for_reveal("").is_err());
-        assert!(super::existing_path_for_reveal("   ").is_err());
-    }
-
-    #[test]
-    fn walks_up_to_something_that_exists() {
-        let missing = std::env::temp_dir().join("rivulet-reveal-nope").join("also-nope");
-        let found = super::existing_path_for_reveal(missing.to_str().unwrap()).unwrap();
-        assert!(found.exists());
-    }
-
-    #[test]
-    fn file_uri_encodes_spaces() {
-        let uri = super::file_uri(std::path::Path::new("/tmp/Spider-Man- Brand"));
-        assert!(uri.starts_with("file://"), "{uri}");
-        assert!(uri.contains("%20"), "{uri}");
     }
 }
 
@@ -1066,23 +690,6 @@ impl librqbit::storage::StorageFactory for LargeFileStorageFactory {
 /// element at `http://127.0.0.1:3030/torrents/{id}/stream/{file_idx}`.
 const TORRENT_API_ADDR: &str = "127.0.0.1:3030";
 
-/// Extra announce URLs every torrent gets. These are peer-discovery trackers,
-/// not content sources — the magnet still has to come from a user-added source
-/// or a paste. A swarm that only lists dead trackers otherwise sits on DHT
-/// alone, which is why a fast line can look like a few megabits.
-fn extra_announce_trackers() -> std::collections::HashSet<url::Url> {
-    [
-        "udp://tracker.opentrackr.org:1337/announce",
-        "udp://open.stealth.si:80/announce",
-        "udp://tracker.torrent.eu.org:451/announce",
-        "udp://explodie.org:6969/announce",
-        "udp://open.demonii.com:1337/announce",
-    ]
-    .into_iter()
-    .filter_map(|u| u.parse().ok())
-    .collect()
-}
-
 /// Boot a librqbit session and expose its HTTP API (which includes the
 /// range-capable streaming endpoint). Runs forever on the tokio runtime.
 async fn run_torrent_server(
@@ -1111,50 +718,6 @@ async fn run_torrent_server(
         // Films are routinely bigger than 2 GiB and a TV box is 32-bit. Boxed
         // here rather than through `.boxed()` — see LargeFileStorageFactory.
         default_storage_factory: Some(Box::new(LargeFileStorageFactory::default())),
-        listen: Some(ListenerOptions {
-            // librqbit's own default. Enabling uTP looks like extra throughput,
-            // but that protocol is still marked unstable there — handshake
-            // succeeds, then the pipe sits at 0 B/s with a couple of "live"
-            // peers and Buffering never moves. TCP is what actually fills the
-            // first piece.
-            mode: ListenerMode::TcpOnly,
-            listen_addr: std::net::SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, 6881)),
-            enable_upnp_port_forwarding: true,
-            // Incoming stays IPv4: UPnP and most NATs only map that. Outgoing
-            // IPv6 is `ipv4_only` on the session, below.
-            ipv4_only: true,
-            ..Default::default()
-        }),
-        // IPv6 peers are extra throughput on a dual-stack line. Android's
-        // IPv6 is often a dead AAAA behind CGNAT, so phones stay IPv4.
-        ipv4_only: cfg!(target_os = "android"),
-        // Default is 128. A few more slots fill a fast line; much higher
-        // and a TV's fd limit is the next failure.
-        peer_limit: Some(200),
-        concurrent_init_limit: Some(8),
-        // This is the size of librqbit's blocking-work semaphore, and an open
-        // HTTP stream holds one of its permits for as long as the connection
-        // lives (`FileStream::_blocking_permit`) — even though a stream that is
-        // waiting on the swarm blocks no thread at all. The same semaphore
-        // gates `write_to_disk`, which stores and hashes every chunk that
-        // arrives. So at the default of 8, a handful of streams throttles the
-        // download that feeds them, and eight of them stops it dead: the ninth
-        // `GET /stream/` then awaits a permit forever, which is a player that
-        // buffers with no error and no request ever answered.
-        runtime_worker_threads: Some(64),
-        trackers: extra_announce_trackers(),
-        // Dead peers otherwise sit on a ~10s connect timeout each. Three
-        // seconds is enough to know the handshake isn't coming, and the
-        // next candidate gets the slot.
-        connect: Some(ConnectionOptions {
-            enable_tcp: true,
-            proxy_url: None,
-            peer_opts: Some(PeerConnectionOptions {
-                connect_timeout: Some(Duration::from_secs(3)),
-                read_write_timeout: None,
-                keep_alive_interval: None,
-            }),
-        }),
         dht: with_dht.then(|| DhtSessionConfig {
             // Ask for a fresh port every launch. librqbit otherwise persists
             // whichever ephemeral port the OS handed it and re-binds that exact
@@ -1277,8 +840,6 @@ pub fn run() {
             thumbnail,
             deep_link_fix_handler,
             disk_space,
-            download_dir,
-            reveal_path,
             download_url,
             can_self_update,
             // Free TV IPTV — DB-backed query surface. Premium TV (Xtream +
@@ -1322,12 +883,6 @@ pub fn run() {
             api::commands::premium_entitlement,
         ])
         .setup(|app| {
-            // The Windows binary embeds mpv/ffmpeg — write them out to the
-            // app-local-data-dir before anything tries to launch them. The
-            // writes are idempotent (skipped if the file already has the
-            // expected size) so this is a no-op on subsequent launches.
-            embedded_binaries::ensure_extracted(&app.handle());
-
             // WebKitGTK's default user agent looks like Safari's, so YouTube
             // serves an embed the Safari player config — which WebKitGTK then
             // fails to run, and every trailer on a detail page dies with
@@ -1349,7 +904,7 @@ pub fn run() {
                         .expect("a webview always has settings")
                         .set_user_agent(Some(
                             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 \
-                             (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+                             (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
                         ));
                 })?;
             }
@@ -1414,7 +969,7 @@ pub fn run() {
             // Where finished/partial torrent data lives on disk, and next to it
             // the engine's own state (which torrents exist, resume data).
             let cache_dir = cache_dir(app.handle());
-            let download_dir = default_download_dir(app.handle());
+            let download_dir = cache_dir.join("rivulet-torrents");
             let session_dir = cache_dir.join("rivulet-session");
             std::fs::create_dir_all(&download_dir).ok();
             std::fs::create_dir_all(&session_dir).ok();
@@ -1428,22 +983,19 @@ pub fn run() {
             // The IPTV stream proxy lives on its own port (one above the
             // torrent engine). It fetches the upstream HLS/HTTP stream with
             // a browser UA and returns it with CORS headers so the webview's
-            // <video> element can load what it could not load directly. The
-            // bundled yt-dlp (desktop) lets its /youtube-stream route resolve
-            // a trailer to a direct 1080p stream on WebKit, which cannot play
-            // a YouTube iframe embed.
-            let ytdlp = bundled_ytdlp(app.handle());
+            // <video> element can load what it could not load directly.
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = iptv::proxy::run_proxy(ytdlp).await {
+                if let Err(e) = iptv::proxy::run_proxy().await {
                     eprintln!("[iptv] stream proxy exited with error: {e:#}");
                 }
             });
 
-            // Pre-fetch iptv-org countries and categories in the background.
-            // Both are small JSON with a 24h disk cache. The EPG map used to
-            // sit here too, but iptv-org's `epg/channels.json` is gone and
-            // `guides.json` is tens of megabytes — load that on demand when
-            // the guide page asks, not on every boot.
+            // Pre-fetch iptv-org reference data (countries, categories, EPG
+            // channel mapping) in the background. All three are small JSON
+            // files with a 24h (countries, categories) or 7d (EPG) disk
+            // cache. After the first launch they're served from disk and
+            // the first paint of the free TV page has flags + proper
+            // category names ready to render.
             let app_handle2 = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = iptv::countries::fetch_countries(&app_handle2).await {
@@ -1451,6 +1003,9 @@ pub fn run() {
                 }
                 if let Err(e) = iptv::categories::fetch_categories(&app_handle2).await {
                     eprintln!("[iptv] startup categories pre-fetch failed: {e}");
+                }
+                if let Err(e) = iptv::epg::fetch_channel_mapping(&app_handle2).await {
+                    eprintln!("[iptv] startup EPG channel mapping pre-fetch failed: {e}");
                 }
             });
 
@@ -1527,10 +1082,11 @@ pub fn run() {
             // unwritable; app_data_dir is the per-app private dir and
             // always available. Set the env var that crypto.rs and
             // auth.rs read so they use it instead of temp_dir().
-            let cache_dir = std::env::var("RIVULET_APP_CACHE").unwrap_or_else(|_| {
-                std::env::set_var("RIVULET_APP_CACHE", &app_data);
-                app_data.to_string_lossy().into_owned()
-            });
+            let cache_dir = std::env::var("RIVULET_APP_CACHE")
+                .unwrap_or_else(|_| {
+                    std::env::set_var("RIVULET_APP_CACHE", &app_data);
+                    app_data.to_string_lossy().into_owned()
+                });
             eprintln!("[premium] app_data={}", app_data.display());
             eprintln!("[premium] RIVULET_APP_CACHE={cache_dir}");
             eprintln!("[premium] db_path={}", premium_db_path.display());
@@ -1616,8 +1172,7 @@ pub fn run() {
                             //
                             // Stamp only now: this is the first moment the
                             // channel table really holds this playlist.
-                            if let Some(state) =
-                                app_handle4.try_state::<iptv::commands::IptvState>()
+                            if let Some(state) = app_handle4.try_state::<iptv::commands::IptvState>()
                             {
                                 if let Ok(conn) = state.db.lock() {
                                     let _ = iptv::sources::stamp_free_playlist(&conn, &stamped_url);

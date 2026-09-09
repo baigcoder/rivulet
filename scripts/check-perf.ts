@@ -20,7 +20,7 @@
 import assert from 'node:assert'
 import { readdirSync, readFileSync } from 'node:fs'
 import process from 'node:process'
-import { youtubeCommand, youtubeEmbedSrc, youtubeEnded, youtubeError, youtubePlaying } from '../app/utils/youtube'
+import { youtubeCommand, youtubeError, youtubePlaying } from '../app/utils/youtube'
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
 
@@ -208,18 +208,13 @@ assert.match(
 const detail = read('app/components/MediaDetailView.vue')
 assert.match(
   detail,
+  /setTimeout\(go, 4000\)/,
+  'the YouTube hero iframe must wait after first paint — requestIdleCallback fires too soon',
+)
+assert.match(
+  detail,
   /heroIdle/,
-  'the trailer src stays empty until a TMDB key exists',
-)
-assert.match(
-  detail,
-  /heroOnScreen/,
-  'the cover must not pause autoplay on the observer\'s first empty callback',
-)
-assert.match(
-  detail,
-  /youtubeEnded/,
-  'an ended cover trailer must loop instead of freezing on the last frame',
+  'the trailer src must stay empty until the page has painted',
 )
 assert.match(
   detail,
@@ -454,11 +449,7 @@ assert.doesNotMatch(
   /youtubeEmbedSrc\([^)]*heroMuted/,
   'mute must not sit in the hero src: changing it reloads YouTube from the start',
 )
-assert.match(detail, /hd1080/, 'the hero must lock YouTube at 1080p')
-assert.match(detail, /controls:\s*false/, 'the cover embed must not show YouTube chrome')
-assert.match(detail, /rivulet-cover-video/, 'native cover video must opt out of WebKit pause/skip overlays')
-assert.doesNotMatch(detail, /setLoop/, 'setLoop turns the cover into a playlist and paints next/prev')
-assert.doesNotMatch(detail, /Hide video/, 'the cover chrome is mute / unmute only')
+assert.match(detail, /hd720/, 'the hero must lock YouTube at 720p')
 assert.match(detail, /heroPlaying/, 'the hero iframe stays hidden until YouTube is playing')
 assert.match(detail, /pauseVideo/, 'the hero must pause when scrolled off the page')
 assert.match(detail, /useIntersectionObserver/, 'hero pause is driven by the hero box leaving the viewport')
@@ -466,74 +457,11 @@ assert.match(detail, /nextTrailer/, 'a geo-blocked YouTube key must fall through
 assert.match(detail, /youtubeError/, 'YouTube onError must skip the blocked embed, not paint the country card')
 
 const youtube = read('app/utils/youtube.ts')
-assert.match(youtube, /vq:\s*['"]hd1080['"]/, 'browser embeds request 1080p')
-// Linux keeps the iframe and stays off the /youtube-stream <video>. WebKitGTK
-// *waits* on that endpoint while it mounts the element, so a slow resolve
-// freezes the whole detail page — and a frozen page runs no `error` handler and
-// no timeout, so nothing in the app can recover it (66ce479).
-assert.match(
-  youtube,
-  /platform\(\) === 'linux'\)\s*return ''/,
-  'the Linux <video> wedges the detail page: the embed is what plays there',
-)
-// And it must not carry its own GStreamer. `bundleMediaFramework` puts the
-// build box's plugins in front of the host's on LD_LIBRARY_PATH, and WebKit
-// initialises that pipeline on the main thread the moment a media element
-// appears — a plugin scan that stalls there freezes the page before it can
-// paint. The host has codecs; the same rule as libwayland (appimage.ts).
-assert.doesNotMatch(
-  read('src-tauri/tauri.conf.json'),
-  /bundleMediaFramework/,
-  'a bundled GStreamer wedges WebKit on the detail page; the host has one',
-)
-// linuxdeploy copies the core in anyway, because WebKit links it — and a core
-// hunting for plugins in Ubuntu's directory finds none on Arch or Fedora, which
-// is a trailer that plays in `tauri:dev` and not in the AppImage.
-assert.match(
-  read('scripts/build/linux/appimage.ts'),
-  /HOST_OWNED = \[[^\]]*'libgst'/,
-  'the AppImage must let the host own GStreamer, core and plugins together',
-)
-assert.match(
-  read('scripts/build/linux/appimage.ts'),
-  /'libglib-2.0'/,
-  'host GStreamer needs host GLib or it dies on g_once_init_leave_pointer',
-)
-assert.match(
-  read('scripts/build/linux/appimage.ts'),
-  /'libpcre2-8'/,
-  'host GLib must not load the bundle\'s pcre2 (no version map)',
-)
-assert.match(
-  read('scripts/build/linux/appimage.ts'),
-  /'libmount'/,
-  'host GIO needs host libmount or it dies on MOUNT_2_40',
-)
-assert.match(read('src-tauri/src/iptv/proxy.rs'), /vq=hd1080/, 'the Tauri YouTube relay requests 1080p')
-assert.match(
-  read('src-tauri/src/iptv/proxy.rs'),
-  /YTDLP_FORMAT/,
-  'yt-dlp must ask for one muxed file, not best+audio which hangs WebKit',
-)
-assert.match(
-  read('src-tauri/src/iptv/proxy.rs'),
-  /env_remove\("LD_LIBRARY_PATH"\)/,
-  'AppImage yt-dlp must not inherit the bundle\'s libraries',
-)
-assert.match(
-  read('src-tauri/tauri.conf.json'),
-  /"bundleMediaFramework":\s*true/,
-  'the AppImage must ship GStreamer H.264 or <video> and YouTube both show "browser can\'t play this"',
-)
-assert.match(layers, /rivulet-cover-video::-webkit-media-controls/, 'WebKit cover overlays must be hidden in CSS')
-const coverEmbed = youtubeEmbedSrc('dQw4w9WgXcQ', { mute: true, loop: true, controls: false })
-assert.equal(coverEmbed.includes('playlist='), false, 'a one-video playlist paints YouTube next/prev on the cover')
-assert.equal(coverEmbed.includes('controls=0'), true, 'the cover embed must hide YouTube transport')
-assert.equal(youtubeCommand('setPlaybackQuality', ['hd1080']), '{"event":"command","func":"setPlaybackQuality","args":["hd1080"]}')
+assert.match(youtube, /vq:\s*['"]hd720['"]/, 'browser embeds request 720p')
+assert.match(read('src-tauri/src/iptv/proxy.rs'), /vq=hd720/, 'the Tauri YouTube relay requests 720p')
+assert.equal(youtubeCommand('setPlaybackQuality', ['hd720']), '{"event":"command","func":"setPlaybackQuality","args":["hd720"]}')
 assert.equal(youtubePlaying('{"info":{"playerState":1}}'), true)
 assert.equal(youtubePlaying('{"info":{"playerState":3}}'), false)
-assert.equal(youtubeEnded('{"info":{"playerState":0}}'), true)
-assert.equal(youtubeEnded('{"info":{"playerState":1}}'), false)
 assert.equal(youtubeError('{"event":"onError","info":150}'), true)
 assert.equal(youtubeError('{"info":{"playerState":1}}'), false)
 

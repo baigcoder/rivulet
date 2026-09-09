@@ -73,12 +73,9 @@ function rebuildRows(): void {
 }
 
 let prevLen = 0
-let prevKind: 'movie' | 'series' | null = null
-
-watch([() => props.kind, items], ([kind, next]) => {
+watch(items, next => {
   const c = cols.value
-  if (kind !== prevKind || next.length < prevLen) {
-    prevKind = kind
+  if (next.length < prevLen) {
     prevLen = next.length
     rebuildRows()
     return

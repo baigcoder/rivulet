@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import type { LiveChannel } from '~/utils/iptv'
 import { mdiPlay, mdiStar, mdiTelevision } from '@mdi/js'
-import { useLiveTvStore } from '~/stores/liveTv'
-
 import { proxyLogo } from '~/utils/premiumTv'
 
 const props = defineProps<{
@@ -17,18 +15,15 @@ const emit = defineEmits<{
   toggleFavorite: [channel: LiveChannel]
 }>()
 
-const liveTv = useLiveTvStore()
 const epg = computed(() => props.getEpg(props.channel.id))
 const nowProgram = computed(() => epg.value[0] ?? null)
 const fav = computed(() => props.isFavorite(props.channel))
 const dead = computed(() => {
-  const ch = props.channel
-  const s = ch.streamUrl
+  const s = props.channel.streamUrl
   if (!s || s === 'undefined' || s === 'null')
     return true
-  return liveTv.offlineIds.has(ch.id) || props.isOffline?.(ch) === true
+  return props.isOffline?.(props.channel) === true
 })
-const health = computed(() => dead.value ? 'offline' as const : liveTv.healthOf(props.channel.id))
 const imgError = ref(false)
 const proxyLogoUrl = computed(() => proxyLogo(props.channel.logoUrl))
 
@@ -69,7 +64,12 @@ const epgProgress = computed(() => {
 
     <div class="min-w-0 flex-1">
       <div class="flex min-w-0 items-center gap-1.5">
-        <live-tv-live-status-badge :health="health" compact />
+        <span
+          class="pointer-events-none shrink-0 rounded px-1 py-px text-[9px] font-semibold uppercase tracking-wide"
+          :class="dead ? 'bg-zinc-800 text-white/70' : 'bg-red-600 text-white'"
+        >
+          {{ dead ? $t('Offline') : $t('LIVE') }}
+        </span>
         <h3 class="truncate text-body-medium font-medium">
           {{ channel.name }}
         </h3>

@@ -13,7 +13,6 @@ import type {
 } from '~/types/premium'
 import { defineStore } from 'pinia'
 import { computed, ref, shallowRef, triggerRef, watch } from 'vue'
-import { createChannelHealth } from '~/utils/livehealth'
 import { premiumApi, PremiumApiError, setAuthToken } from '~/utils/premiumTv'
 
 /**
@@ -243,7 +242,7 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
   /**
    * Re-ask the provider for the account, for its live connection count.
    *
-   * Called after a playback refusal, not before every zap: it is one HTTP
+   * Called after a playback failure, not on a timer: it is one HTTP
    * round trip to the panel and its answer is only interesting when
    * something went wrong. Failures are swallowed on purpose — this is a
    * diagnostic, and the message it improves has to be shown either way.
@@ -378,7 +377,6 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
     // and a stale copy in `sessionStorage` buys nothing either.
     setAuthToken(null)
     resetBrowsing()
-    resetHealth()
     favoriteIds.value = new Set()
     favoriteChannels.value = []
     recent.value = []
@@ -670,8 +668,6 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
     view.value = 'all'
     searchQuery.value = ''
     searchDebounced.value = ''
-    vodTotal.value = 0
-    vodNextCursor.value = null
     if (section === 'live') {
       void loadChannels({ reset: true })
     }
@@ -903,21 +899,6 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
   }
 
   /**
-   * Channel health. Same book as Free TV (`createChannelHealth`): a
-   * picture marks live, a spent retry budget marks offline. Never filled
-   * by probing — this UI has no stream URL, and a GET would steal the
-   * account's connection slot.
-   */
-  const {
-    liveIds,
-    offlineIds,
-    healthOf,
-    markLive,
-    markOffline,
-    reset: resetHealth,
-  } = createChannelHealth()
-
-  /**
    * Ask for the next reconnect. Returns the delay to wait, or `null` when
    * the attempts are spent — at which point the caller moves to `error`
    * and says so once, rather than retrying forever.
@@ -1008,11 +989,5 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
     setPlayer,
     resetPlayer,
     nextReconnect,
-    // health
-    liveIds,
-    offlineIds,
-    healthOf,
-    markLive,
-    markOffline,
   }
 })

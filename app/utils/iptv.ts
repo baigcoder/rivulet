@@ -370,8 +370,10 @@ export function wrapFreeStreamUrl(
   if (/^https?:\/\/127\.0\.0\.1:3031\//i.test(src))
     return src
   let qs = `url=${encodeURIComponent(src)}`
-  if (userAgent)
-    qs += `&X-Rivulet-Ua=${encodeURIComponent(userAgent)}`
+  const ua = userAgent
+    || (/\/(?:live|timeshift|movie|series)\//i.test(src) ? 'VLC/3.0.18 LibVLC/3.0.18' : undefined)
+  if (ua)
+    qs += `&X-Rivulet-Ua=${encodeURIComponent(ua)}`
   if (referer)
     qs += `&X-Rivulet-Referer=${encodeURIComponent(referer)}`
   return `http://127.0.0.1:3031/stream?${qs}`
