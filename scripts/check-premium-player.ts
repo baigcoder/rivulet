@@ -163,6 +163,15 @@ check('dead channels auto-skip like Free TV', () => {
   assert.ok(watchSrc.includes('function autoSkip'), 'reconnect budget spent must try the next channel')
   assert.ok(watchSrc.includes('function skipChannel'), 'Next on an error must skip, not zap into the same dead one')
   assert.ok(watchSrc.includes('@next="onNext"'), 'the overlay Next button must take the smart path')
+  assert.ok(watchSrc.includes('holdChannel'), 'Retry must not spend that walk')
+  assert.ok(watchSrc.includes('@refresh='), 'Refresh remints; Retry alone reused a dead token')
+  assert.ok(watchSrc.includes('function onRetry'), 'Retry is a real restart, not only load() in the template')
+  assert.ok(watchSrc.includes('function onRefresh'), 'Refresh drops the cached token before minting')
+  assert.ok(watchSrc.includes('playback.forget'), 'Refresh must not replay the prefetch that just 401\'d')
+  assert.ok(
+    watchSrc.includes('overlayError.value || (busy.value && !playerPlaying.value)'),
+    'arrows on the error card must walk Retry, not zap',
+  )
 })
 
 check('browse stages identity so the player is not empty on first paint', () => {
@@ -177,6 +186,7 @@ check('prefetch cache outlives the browse page', () => {
   const s = read(COMPOSABLE)
   assert.ok(s.includes('prefetchCache'), 'tokens minted on browse must still be there when /watch mounts')
   assert.ok(s.includes('export function prefetchPremiumPlay'), 'browse warms tokens through a module-level helper')
+  assert.ok(s.includes('function forget'), 'Refresh must be able to drop a token that already failed')
 })
 
 check('a spent retry budget ends in one clear error', () => {

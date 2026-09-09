@@ -157,6 +157,10 @@ const channelLogo = computed(() => {
 })
 
 const autoSkips = ref(0)
+/**
+ * Retry/Refresh mean this channel, not the next one auto-skip would pick.
+ */
+const holdChannel = ref(false)
 const autoSkipping = computed(() =>
   !isVod.value
   && autoSkips.value > 0
@@ -490,6 +494,7 @@ function syncPlayerState(): void {
   if (playerPlaying.value && !wasPlaying) {
     clearLoadTimeout()
     autoSkips.value = 0
+    holdChannel.value = false
     premium.resetPlayer()
     premium.setPlayer('playing')
     playerCatchError.value = ''
@@ -580,6 +585,7 @@ function zapTo(index: number): void {
   const target = zapList.value[index]
   if (!target || target.id === channelId.value)
     return
+  holdChannel.value = false
   void router.replace({
     path: localePath('/live-tv/premium/watch'),
     query: {
@@ -617,6 +623,30 @@ function onNext(): void {
     zap(1)
 }
 
+async function onRetry(): Promise<void> {
+  holdChannel.value = true
+  autoSkips.value = 0
+  playerCatchError.value = ''
+  if (!isVod.value && channelId.value)
+    premium.markLive(channelId.value)
+  await load({ fresh: true })
+}
+
+async function onRefresh(): Promise<void> {
+  holdChannel.value = true
+  autoSkips.value = 0
+  playerCatchError.value = ''
+  if (!isVod.value && channelId.value) {
+    premium.markLive(channelId.value)
+    playback.forget(channelId.value)
+  }
+  else if (isVod.value && playId.value) {
+    playback.forget(`${playKind.value}:${playId.value}:${playExt.value}`)
+  }
+  playback.clear()
+  await load({ fresh: true })
+}
+
 /**
  * Bounded walk past dead channels, same contract as Free TV. A Premium
  * lineup is the user's package, but a channel that will not open is still
@@ -625,6 +655,8 @@ function onNext(): void {
  * stops and shows the error: the list is dead, not this channel.
  */
 function autoSkip(): boolean {
+  if (holdChannel.value)
+    return false
   if (isVod.value || channelIndex.value < 0 || autoSkips.value >= MAX_AUTO_SKIPS)
     return false
   const current = zapList.value[channelIndex.value]
@@ -648,8 +680,20 @@ function onKey(e: KeyboardEvent): void {
       return
     }
     goBack()
+    return
   }
-  else if ((e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === 'ChannelUp') && hasNext.value) {
+  if (overlayError.value || (busy.value && !playerPlaying.value)) {
+    if (e.key === 'ChannelUp' && hasNext.value) {
+      e.preventDefault()
+      onNext()
+    }
+    else if (e.key === 'ChannelDown' && hasPrev.value) {
+      e.preventDefault()
+      zap(-1)
+    }
+    return
+  }
+  if ((e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === 'ChannelUp') && hasNext.value) {
     e.preventDefault()
     zap(1)
   }
@@ -779,7 +823,8 @@ onUnmounted(() => {
       @prev="zap(-1)"
       @next="onNext"
       @zap-to="zapTo"
-      @retry="() => void load({ fresh: true })"
+      @retry="() => void onRetry()"
+      @refresh="() => void onRefresh()"
       @toggle-play="onTogglePlay"
       @go-live="onGoLive"
       @toggle-mute="onToggleMute"

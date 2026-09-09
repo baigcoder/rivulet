@@ -137,6 +137,11 @@ export function usePlaybackSource() {
     prefetchPremiumPlay(ids.filter(id => id && id !== channelId.value))
   }
 
+  /** Drop a cached token so Refresh cannot replay the one that just 401'd. */
+  function forget(id: string): void {
+    prefetchCache.delete(id)
+  }
+
   function clear(): void {
     if (controller)
       controller.abort()
@@ -153,5 +158,5 @@ export function usePlaybackSource() {
       controller.abort()
   })
 
-  return { source, loading, error, channelId, load, prefetch, clear }
+  return { source, loading, error, channelId, load, prefetch, forget, clear }
 }

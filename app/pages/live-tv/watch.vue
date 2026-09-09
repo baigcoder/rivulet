@@ -74,6 +74,12 @@ const resolveError = ref('')
 const errorMsg = ref('')
 const autoSkips = ref(0)
 const channelRetries = ref(0)
+/**
+ * A tap on Retry/Refresh is "this channel again". Without this, a spent
+ * auto-skip budget marks it offline and the next failure walks away, so
+ * Retry looked like Next.
+ */
+const holdChannel = ref(false)
 
 function syncPlayerState() {
   const p = playerRef.value
@@ -431,6 +437,7 @@ function zapTo(index: number) {
   const ch = channelList.value[index]
   if (!ch?.streamUrl)
     return
+  holdChannel.value = false
   liveTv.rememberChannel(ch.id)
   router.replace({
     path: localePath('/live-tv/watch'),
@@ -471,12 +478,15 @@ watch(locked, up => {
   clearConnectTimer()
   autoSkips.value = 0
   channelRetries.value = 0
+  holdChannel.value = false
   const id = channelId.value
   if (id)
     liveTv.markLive(id)
 })
 
 function autoSkip(): boolean {
+  if (holdChannel.value)
+    return false
   if (channelIndex.value < 0 || autoSkips.value >= MAX_AUTO_SKIPS)
     return false
   const current = channelList.value[channelIndex.value]
@@ -594,17 +604,40 @@ async function onPlaybackFailed() {
 }
 
 async function onRetry() {
+  holdChannel.value = true
+  autoSkips.value = 0
   errorMsg.value = ''
   resolveError.value = ''
   attemptedFallback.value = false
   channelRetries.value = 0
+  const current = channelList.value[channelIndex.value]
+  if (current)
+    liveTv.markLive(current.id)
   const id = channelId.value
   if (id)
     resolvedById.delete(id)
   const prev = streamUrl.value
   await resolveStreamUrl()
   // Same URL does not fire `watch(src)`, so the player has to be kicked.
-  if (streamUrl.value === prev)
+  if (streamUrl.value && streamUrl.value === prev)
+    await playerRef.value?.zapTo()
+}
+
+async function onRefresh() {
+  holdChannel.value = true
+  autoSkips.value = 0
+  errorMsg.value = ''
+  resolveError.value = ''
+  attemptedFallback.value = false
+  channelRetries.value = 0
+  const current = channelList.value[channelIndex.value]
+  if (current)
+    liveTv.markLive(current.id)
+  const id = channelId.value
+  if (id)
+    resolvedById.delete(id)
+  await resolveStreamUrl()
+  if (streamUrl.value)
     await playerRef.value?.zapTo()
 }
 
@@ -612,8 +645,22 @@ function onKey(e: KeyboardEvent) {
   if (e.key === 'Escape' || e.key === 'Backspace' || e.key === 'GoBack') {
     e.preventDefault()
     goBack()
+    return
   }
-  else if ((e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === 'ChannelUp') && hasNext.value) {
+  // Connecting / Playback Error own left/right/up/down so the card can
+  // be walked. Stealing those for a zap is why Retry looked like Next.
+  if (waiting.value || overlayError.value) {
+    if (e.key === 'ChannelUp' && hasNext.value) {
+      e.preventDefault()
+      onNext()
+    }
+    else if (e.key === 'ChannelDown' && hasPrev.value) {
+      e.preventDefault()
+      zap(-1)
+    }
+    return
+  }
+  if ((e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === 'ChannelUp') && hasNext.value) {
     e.preventDefault()
     zap(1)
   }
@@ -732,6 +779,7 @@ onUnmounted(() => {
       @next="onNext"
       @zap-to="zapTo"
       @retry="() => void onRetry()"
+      @refresh="() => void onRefresh()"
       @toggle-play="onTogglePlay"
       @go-live="onGoLive"
       @toggle-mute="onToggleMute"

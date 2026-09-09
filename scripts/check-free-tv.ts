@@ -184,6 +184,18 @@ assert.match(freePage, /saveLivePlay/, 'play must stage the stream before naviga
 assert.match(watchPage, /@retry="\(\) => void onRetry\(\)"/, 'Retry must restart the player, not only re-mint a cached proxy URL')
 assert.match(
   watchPage,
+  /if \(waiting\.value \|\| overlayError\.value\)/,
+  'arrows on Connecting / Playback Error must walk Retry, not zap the next channel',
+)
+assert.match(watchPage, /@refresh="\(\) => void onRefresh\(\)"/, 'Refresh must be wired — Retry alone walked to the next channel')
+assert.match(watchPage, /holdChannel/, 'Retry must keep this channel, not spend the auto-skip walk')
+assert.match(
+  watchPage,
+  /function autoSkip\(\)[\s\S]*if \(holdChannel\.value\)\s*return false/,
+  'a manual Retry must not auto-skip away from the channel the viewer asked to keep',
+)
+assert.match(
+  watchPage,
   /:resolving="waiting"/,
   'the player must not draw a second spinner while the page owns Connecting…',
 )
@@ -302,8 +314,8 @@ assert.match(
 )
 assert.match(
   overlaySrc,
-  /busy && !error[\s\S]*\$t\('Next channel'\)[\s\S]*\$t\('Retry'\)[\s\S]*\$t\('Back'\)/,
-  'Connecting must offer Skip, Retry and Back — a full-screen spinner with no actions trapped the viewer',
+  /busy && !error[\s\S]*\$t\('Next channel'\)[\s\S]*\$t\('Retry'\)[\s\S]*\$t\('Refresh'\)[\s\S]*\$t\('Back'\)/,
+  'Connecting must offer Skip, Retry, Refresh and Back — a full-screen spinner with no actions trapped the viewer',
 )
 assert.match(
   overlaySrc,
@@ -334,6 +346,26 @@ assert.match(
   overlaySrc,
   /ref="retryBtn"/,
   'Retry takes focus when playback fails so a remote is not stuck on Back',
+)
+assert.match(
+  overlaySrc,
+  /v-if="error"[\s\S]*\$t\('Retry'\)[\s\S]*\$t\('Refresh'\)[\s\S]*\$t\('Back'\)/,
+  'Playback Error offers Retry, Refresh and Back as full-width actions',
+)
+assert.match(
+  overlaySrc,
+  /emit\('refresh'\)/,
+  'Refresh is its own action, not a second label on Retry',
+)
+assert.match(
+  overlaySrc,
+  /:inert="centreModal"/,
+  'Connecting and Playback Error keep the d-pad on the card, not Hide or transport',
+)
+assert.match(
+  overlaySrc,
+  /min-height: 2\.5rem/,
+  'error actions are TV-sized, not compact wrap chips',
 )
 assert.match(
   overlaySrc,

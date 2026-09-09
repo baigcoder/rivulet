@@ -38,6 +38,7 @@ import {
   mdiMonitor,
   mdiPause,
   mdiPlay,
+  mdiRefresh,
   mdiReload,
   mdiSkipNext,
   mdiSkipPrevious,
@@ -144,6 +145,8 @@ const emit = defineEmits<{
   next: []
   back: []
   retry: []
+  /** Drop session health and ask the provider for a new stream. */
+  refresh: []
   zapTo: [index: number]
   toggleFavorite: []
   toggleFullscreen: []
@@ -197,6 +200,12 @@ const canSkipChannel = computed(() => isLiveVariant.value && (props.channelTotal
 
 const retryBtn = ref<HTMLButtonElement | null>(null)
 const connectingAction = ref<HTMLButtonElement | null>(null)
+/**
+ * Connecting and Playback Error own the d-pad. Header Back and the
+ * transport cluster are the same actions as the card, and leaving the
+ * card for them is how a remote got stuck on Hide.
+ */
+const centreModal = computed(() => !!props.error || (props.busy && !props.error))
 
 watch(() => props.error, err => {
   if (err)
@@ -411,6 +420,8 @@ function onCentreClick() {
     skipCentreClick = false
     return
   }
+  if (centreModal.value)
+    return
   if (isLiveVariant.value)
     triggerCenterPlayPulse()
 }
@@ -543,6 +554,7 @@ defineExpose({ show, hide, visible })
     <header
       data-cut
       class="pointer-events-auto relative z-30 flex items-center gap-3 px-5 py-3 transition-transform duration-300 sm:px-6 sm:py-3.5"
+      :inert="centreModal"
       :class="[
         overlay ? 'hud-solid-top' : 'hud-blur-top',
         visible ? 'translate-y-0 opacity-100' : '-translate-y-full opacity-0',
@@ -647,10 +659,10 @@ defineExpose({ show, hide, visible })
       >
         <div
           data-cut
-          class="pointer-events-auto flex w-max max-w-[min(18.5rem,calc(100%-2rem))] flex-col items-center gap-2.5 rounded-2xl border border-white/12 bg-[#0F1117] px-4 py-3.5 text-center"
+          class="pointer-events-auto flex w-[min(20rem,calc(100%-2rem))] flex-col items-stretch gap-3 rounded-2xl border border-white/12 bg-[#0F1117] px-5 py-4 text-center"
           @click.stop
         >
-          <div class="relative grid size-11 place-items-center">
+          <div class="relative mx-auto grid size-11 place-items-center">
             <div class="absolute inset-0 rounded-full border-[3px] border-primary/20" />
             <div class="absolute inset-0 animate-spin rounded-full border-[3px] border-primary border-t-transparent" />
             <div
@@ -667,21 +679,21 @@ defineExpose({ show, hide, visible })
           </div>
 
           <div class="max-w-full space-y-0.5">
-            <p class="text-balance text-label-large font-semibold leading-snug text-white">
+            <p class="text-balance text-title-small font-semibold leading-snug text-white">
               {{ busyText || $t('Connecting to live stream…') }}
             </p>
-            <p v-if="channelName" class="truncate text-label-small text-white/55">
+            <p v-if="channelName" class="truncate text-body-medium text-white/55">
               {{ channelName }}
             </p>
           </div>
 
-          <div class="flex flex-wrap items-center justify-center gap-1.5">
+          <div class="flex w-full flex-col gap-2">
             <button
               v-if="canSkipChannel"
               ref="connectingAction"
               type="button"
               data-dpad-start
-              class="inline-flex min-h-9 items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-label-large font-semibold text-on-primary transition-colors hover:brightness-110 focus-visible:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              class="status-btn bg-primary text-label-large font-semibold text-on-primary hover:brightness-110 focus-visible:brightness-110"
               @click.stop="emit('next')"
             >
               {{ $t('Next channel') }}
@@ -691,27 +703,36 @@ defineExpose({ show, hide, visible })
               ref="connectingAction"
               type="button"
               data-dpad-start
-              class="inline-flex min-h-9 items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-label-large font-semibold text-on-primary transition-colors hover:brightness-110 focus-visible:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              class="status-btn bg-primary text-label-large font-semibold text-on-primary hover:brightness-110 focus-visible:brightness-110"
               @click.stop="emit('retry')"
             >
-              <v-icon :icon="mdiReload" size="14" />
+              <v-icon :icon="mdiReload" size="18" />
               <span>{{ $t('Retry') }}</span>
             </button>
             <button
               v-if="canSkipChannel"
               type="button"
-              class="inline-flex min-h-9 items-center gap-1 rounded-lg bg-white/10 px-3 py-1.5 text-label-large font-semibold text-white/80 transition-colors hover:bg-white/16 hover:text-white focus-visible:bg-white/16 focus-visible:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              class="status-btn bg-white/10 text-label-large font-semibold text-white/88 hover:bg-white/16 hover:text-white focus-visible:bg-white/16 focus-visible:text-white"
               @click.stop="emit('retry')"
             >
-              <v-icon :icon="mdiReload" size="14" />
+              <v-icon :icon="mdiReload" size="18" />
               <span>{{ $t('Retry') }}</span>
             </button>
             <button
               type="button"
-              class="inline-flex min-h-9 items-center rounded-lg bg-white/10 px-3 py-1.5 text-label-large font-semibold text-white/80 transition-colors hover:bg-white/16 hover:text-white focus-visible:bg-white/16 focus-visible:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              class="status-btn bg-white/10 text-label-large font-semibold text-white/88 hover:bg-white/16 hover:text-white focus-visible:bg-white/16 focus-visible:text-white"
+              @click.stop="emit('refresh')"
+            >
+              <v-icon :icon="mdiRefresh" size="18" />
+              <span>{{ $t('Refresh') }}</span>
+            </button>
+            <button
+              type="button"
+              class="status-btn bg-white/10 text-label-large font-semibold text-white/88 hover:bg-white/16 hover:text-white focus-visible:bg-white/16 focus-visible:text-white"
               @click.stop="emit('back')"
             >
-              {{ $t('Back') }}
+              <v-icon :icon="mdiArrowLeft" size="18" />
+              <span>{{ $t('Back') }}</span>
             </button>
           </div>
         </div>
@@ -723,13 +744,13 @@ defineExpose({ show, hide, visible })
       >
         <div
           data-cut
-          class="pointer-events-auto flex w-max max-w-[min(18.5rem,calc(100%-2rem))] flex-col items-center gap-2.5 rounded-2xl border border-white/12 bg-[#0F1117] px-4 py-3.5 text-center"
+          class="pointer-events-auto flex w-[min(20rem,calc(100%-2rem))] flex-col items-stretch gap-3 rounded-2xl border border-white/12 bg-[#0F1117] px-5 py-4 text-center"
           @click.stop
         >
-          <div class="relative">
+          <div class="relative mx-auto">
             <div
               v-if="channelLogo"
-              class="size-10 overflow-hidden rounded-lg border border-white/10 bg-black p-1"
+              class="size-12 overflow-hidden rounded-lg border border-white/10 bg-black p-1"
             >
               <img
                 :src="proxyLogo(channelLogo)"
@@ -739,9 +760,9 @@ defineExpose({ show, hide, visible })
             </div>
             <div
               v-else
-              class="grid size-10 place-items-center rounded-full bg-red-950 text-red-400"
+              class="grid size-12 place-items-center rounded-full bg-red-950 text-red-400"
             >
-              <v-icon :icon="mdiAlertCircleOutline" size="22" />
+              <v-icon :icon="mdiAlertCircleOutline" size="26" />
             </div>
             <div
               v-if="channelLogo"
@@ -751,43 +772,52 @@ defineExpose({ show, hide, visible })
             </div>
           </div>
 
-          <div class="max-w-full space-y-0.5">
-            <h2 class="text-label-large font-semibold text-white">
+          <div class="max-w-full space-y-1">
+            <h2 class="text-title-small font-semibold text-white">
               {{ $t('Playback Error') }}
             </h2>
-            <p v-if="channelName" class="truncate text-label-small text-white/55">
+            <p v-if="channelName" class="truncate text-body-medium text-white/55">
               {{ channelName }}
             </p>
-            <p class="text-label-small leading-snug text-white/70">
+            <p class="text-body-medium leading-snug text-white/75">
               {{ friendlyErrorText }}
             </p>
           </div>
 
-          <div class="flex flex-wrap items-center justify-center gap-1.5">
+          <div class="flex w-full flex-col gap-2">
             <button
               ref="retryBtn"
               type="button"
               data-dpad-start
-              class="inline-flex min-h-9 items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-label-large font-semibold text-on-primary transition-colors hover:brightness-110 focus-visible:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              class="status-btn bg-primary text-label-large font-semibold text-on-primary hover:brightness-110 focus-visible:brightness-110"
               @click.stop="emit('retry')"
             >
-              <v-icon :icon="mdiReload" size="14" />
+              <v-icon :icon="mdiReload" size="18" />
               <span>{{ $t('Retry') }}</span>
+            </button>
+            <button
+              type="button"
+              class="status-btn bg-white/10 text-label-large font-semibold text-white/88 hover:bg-white/16 hover:text-white focus-visible:bg-white/16 focus-visible:text-white"
+              @click.stop="emit('refresh')"
+            >
+              <v-icon :icon="mdiRefresh" size="18" />
+              <span>{{ $t('Refresh') }}</span>
             </button>
             <button
               v-if="canSkipChannel"
               type="button"
-              class="inline-flex min-h-9 items-center rounded-lg bg-white/10 px-3 py-1.5 text-label-large font-semibold text-white transition-colors hover:bg-white/16 focus-visible:bg-white/16 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              class="status-btn bg-white/10 text-label-large font-semibold text-white/88 hover:bg-white/16 hover:text-white focus-visible:bg-white/16 focus-visible:text-white"
               @click.stop="emit('next')"
             >
               {{ $t('Next channel') }}
             </button>
             <button
               type="button"
-              class="inline-flex min-h-9 items-center rounded-lg bg-white/10 px-3 py-1.5 text-label-large font-semibold text-white/80 transition-colors hover:bg-white/16 hover:text-white focus-visible:bg-white/16 focus-visible:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              class="status-btn bg-white/10 text-label-large font-semibold text-white/88 hover:bg-white/16 hover:text-white focus-visible:bg-white/16 focus-visible:text-white"
               @click.stop="emit('back')"
             >
-              {{ $t('Back') }}
+              <v-icon :icon="mdiArrowLeft" size="18" />
+              <span>{{ $t('Back') }}</span>
             </button>
           </div>
         </div>
@@ -865,6 +895,7 @@ defineExpose({ show, hide, visible })
       v-if="isLiveVariant"
       data-cut
       class="pointer-events-auto relative z-30 px-5 pb-5 pt-8 transition-transform duration-300 sm:px-6 sm:pb-6"
+      :inert="centreModal"
       :class="[
         overlay ? 'hud-solid-bottom' : 'hud-blur-bottom',
         visible ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0',
@@ -1068,6 +1099,23 @@ defineExpose({ show, hide, visible })
 .glass-icon-btn:disabled {
   opacity: 0.35;
   pointer-events: none;
+}
+
+.status-btn {
+  display: inline-flex;
+  min-height: 2.5rem;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  border-radius: 0.75rem;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+}
+
+.status-btn:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
 }
 
 .live-jump {
