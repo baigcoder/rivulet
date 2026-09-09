@@ -576,8 +576,7 @@ class RivuletPlayer(private val activity: MainActivity) {
         JSONObject().put("w", vw).put("h", vh),
       )
     }
-    val audioTracks = p.audioTracks
-    if (audioTracks != null && audioTracks.isNotEmpty()) {
+    if (audioTracks.isNotEmpty()) {
       snap.put(
         "audio-params",
         JSONObject().put("samplerate", 48000).put("channel-count", audioTracks.size),
