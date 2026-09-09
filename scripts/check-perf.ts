@@ -467,6 +467,16 @@ assert.match(detail, /youtubeError/, 'YouTube onError must skip the blocked embe
 
 const youtube = read('app/utils/youtube.ts')
 assert.match(youtube, /vq:\s*['"]hd1080['"]/, 'browser embeds request 1080p')
+assert.match(youtube, /playYoutubeTrailer/, 'Linux trailers play in mpv; the YouTube iframe is error 153')
+assert.match(youtube, /play_url_mpv/, 'mpv is launched from Rust so AppImage LD_LIBRARY_PATH is stripped')
+assert.match(detail, /playYoutubeTrailer/, 'the title Trailer button must not open a YouTube iframe on Linux')
+assert.match(detail, /v-else-if="trailer && !isLinux\(\)"/, 'Linux must not fall back to the YouTube iframe')
+assert.match(read('app/pages/index.vue'), /playYoutubeTrailer/, 'the home Trailer button uses mpv on Linux')
+assert.match(
+  read('scripts/build/ytdlp.ts'),
+  /gstreamer1\.0-plugins-ugly/,
+  'Linux CI must install GStreamer before bundleMediaFramework copies it',
+)
 assert.doesNotMatch(
   youtube,
   /platform\(\) === 'linux'\)\s*return ''/,

@@ -197,6 +197,16 @@ export function isDesktop() {
   }
 }
 
+/** Linux Tauri — WebKitGTK, system mpv, AppImage LD_LIBRARY_PATH. */
+export function isLinux() {
+  try {
+    return platform() === 'linux'
+  }
+  catch {
+    return false
+  }
+}
+
 /**
  * Is this the installed Android application?
  *

@@ -69,9 +69,11 @@ watch(trailerKey, () => {
   trailerStreamFailed.value = false
 })
 
-function openFeaturedTrailer() {
+async function openFeaturedTrailer() {
   const key = trailerKey.value
   if (!key)
+    return
+  if (await playYoutubeTrailer(key))
     return
   trailerStreamFailed.value = false
   trailerDialog.value = true
@@ -397,7 +399,7 @@ const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
             @error="trailerStreamFailed = true"
           />
           <iframe
-            v-else
+            v-else-if="!isLinux()"
             :src="youtubeEmbedSrc(trailerKey)"
             class="absolute inset-0 h-full w-full"
             allow="autoplay; encrypted-media"

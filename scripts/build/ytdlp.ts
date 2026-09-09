@@ -90,12 +90,38 @@ export function ytdlpVersion(path: string): string {
   return r.stdout?.split('\n')[0]?.trim() ?? ''
 }
 
+let gstreamerReady = false
+
+function ensureCiGstreamer() {
+  if (gstreamerReady || process.env.GITHUB_ACTIONS !== 'true' || process.platform !== 'linux')
+    return
+  // bundleMediaFramework copies these into the AppImage. The workflow.yml apt
+  // line needs `workflow` scope to push; this runs from ytdlp.ts which CI
+  // already invokes before `tauri build`.
+  const pkgs = [
+    'gstreamer1.0-plugins-base',
+    'gstreamer1.0-plugins-good',
+    'gstreamer1.0-plugins-bad',
+    'gstreamer1.0-plugins-ugly',
+    'gstreamer1.0-libav',
+    'gstreamer1.0-gl',
+  ]
+  const update = spawnSync('sudo', ['apt-get', 'update'], { stdio: 'inherit' })
+  if (update.status !== 0)
+    throw new Error('apt-get update failed (GStreamer)')
+  const install = spawnSync('sudo', ['apt-get', 'install', '-y', ...pkgs], { stdio: 'inherit' })
+  if (install.status !== 0)
+    throw new Error('apt-get install failed (GStreamer)')
+  gstreamerReady = true
+}
+
 /**
  * Ensure the target platform's yt-dlp binary is in `src-tauri/ytdlp/`.
  * Idempotent: a file already its expected size is left alone, so repeated
  * builds after the first download do not re-fetch 40 MB.
  */
 export function ensureYtdlp(target: Target = targetPlatform(process.platform)): string {
+  ensureCiGstreamer()
   const bin = BUILD.binaries[target]
   const dest = join(destDir(), bin.member)
   if (existsSync(dest)) {

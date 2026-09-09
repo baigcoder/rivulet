@@ -491,9 +491,13 @@ async function openTrailer() {
   }
 }
 
-function showTrailer() {
+async function showTrailer() {
   const key = trailerKey.value || media.value?.trailer
   if (!key)
+    return
+  // WebKitGTK's YouTube iframe is error 153; AppImage GStreamer often cannot
+  // decode the proxied <video> either. Linux plays the trailer in system mpv.
+  if (await playYoutubeTrailer(key))
     return
   trailerVideoFailed.value = false
   trailer.value = true
@@ -938,7 +942,7 @@ watch(() => props.id, () => {
             @error="onTrailerVideoError"
           />
           <iframe
-            v-else-if="trailer"
+            v-else-if="trailer && !isLinux()"
             :src="trailerSrc"
             class="aspect-video w-full border-0"
             style="zoom: var(--frame-zoom, 1)"

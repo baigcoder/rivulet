@@ -420,7 +420,11 @@ pub fn player_start(
         // The source is always a local librqbit URL, so mpv's youtube-dl hook can
         // only ever fail (it spawns yt-dlp three times and logs errors).
         // YouTube trailer URLs need ytdl enabled so yt-dlp resolves the stream.
-        .arg(if is_youtube { "--ytdl" } else { "--no-ytdl" })
+        .arg(if is_youtube { "--ytdl" } else { "--no-ytdl" });
+    if is_youtube {
+        crate::apply_bundled_ytdlp(&mut command, &app);
+    }
+    command
         // Torrent streams stall (a piece isn't in yet) and librqbit sometimes
         // drops the connection outright. Cache what we have and reconnect
         // instead of ending playback.

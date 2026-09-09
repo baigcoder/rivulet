@@ -1,5 +1,5 @@
-import { isTauri } from '@tauri-apps/api/core'
-import { isDesktop } from './platform'
+import { isTauri, invoke } from '@tauri-apps/api/core'
+import { isDesktop, isLinux } from './platform'
 
 /** Loopback shim on the IPTV proxy port — see iptv/proxy.rs `/youtube-embed`. */
 const RELAY = 'http://127.0.0.1:3031/youtube-embed'
@@ -67,6 +67,23 @@ export function youtubeStreamSrc(key: string): string {
   if (!isTauri() || !isDesktop())
     return ''
   return `${STREAM}?${new URLSearchParams({ v: key })}`
+}
+
+/**
+ * Linux AppImage / WebKitGTK cannot play a YouTube iframe (error 153) and often
+ * cannot decode the proxied `<video>` either. System mpv plus the bundled yt-dlp
+ * can. Returns true when mpv was launched — the caller should not open a dialog.
+ */
+export async function playYoutubeTrailer(key: string): Promise<boolean> {
+  if (!isTauri() || !isLinux() || !key)
+    return false
+  try {
+    await invoke('play_url_mpv', { url: `https://www.youtube.com/watch?v=${key}` })
+    return true
+  }
+  catch {
+    return false
+  }
 }
 
 /** YouTube IFrame command. Quality lock stops the player climbing to 1080/4K. */
