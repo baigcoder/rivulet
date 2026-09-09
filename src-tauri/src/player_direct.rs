@@ -144,13 +144,21 @@ pub fn file_kv() -> &'static [(&'static str, &'static str)] {
 /// picture while audio (tiny frames) keeps playing — sound, a black
 /// window, a 1080p badge on a channel named 4K. Last-wins against
 /// `cache_cli`, so VOD stays fast.
+///
+/// `cache-pause-initial` stays `no` (the backends set it), so cache-secs
+/// fills *after* the first frame. Shrinking it to 8s was the live hitch:
+/// every hop through `:3031` (Premium 302 → proxy → provider) is extra
+/// latency Direct never sees, and Direct's 50ms pause-wait then flicker-
+/// paused on every underrun. Probe stays 8MB so a 4K IDR still fits;
+/// analyzeduration is the Connecting wait, not the picture.
 #[cfg_attr(target_os = "macos", allow(dead_code))]
 pub fn live_cli() -> &'static [&'static str] {
     &[
         "--cache-pause=yes",
-        "--cache-secs=8",
-        "--demuxer-readahead-secs=4",
-        "--demuxer-lavf-analyzeduration=2",
+        "--cache-pause-wait=1",
+        "--cache-secs=20",
+        "--demuxer-readahead-secs=10",
+        "--demuxer-lavf-analyzeduration=0.5",
         "--demuxer-lavf-probesize=8388608",
         "--demuxer-lavf-o=fflags=+genpts",
         "--vd-lavc-dr=no",
@@ -162,9 +170,10 @@ pub fn live_cli() -> &'static [&'static str] {
 pub fn live_kv() -> &'static [(&'static str, &'static str)] {
     &[
         ("cache-pause", "yes"),
-        ("cache-secs", "8"),
-        ("demuxer-readahead-secs", "4"),
-        ("demuxer-lavf-analyzeduration", "2"),
+        ("cache-pause-wait", "1"),
+        ("cache-secs", "20"),
+        ("demuxer-readahead-secs", "10"),
+        ("demuxer-lavf-analyzeduration", "0.5"),
         ("demuxer-lavf-probesize", "8388608"),
         ("demuxer-lavf-o", "fflags=+genpts"),
         ("vd-lavc-dr", "no"),

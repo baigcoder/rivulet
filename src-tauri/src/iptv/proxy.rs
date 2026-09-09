@@ -50,6 +50,11 @@ fn stream_http() -> &'static Client {
             .pool_idle_timeout(Duration::from_secs(90))
             .gzip(false)
             .brotli(false)
+            // Xtream / HLS panels often advertise HTTP/2 and then stall
+            // or reset streams. That is a channel that takes ages to
+            // start and hitches every few seconds. HTTP/1.1 is what
+            // those servers actually serve, and mpv talks it too.
+            .http1_only()
             .tcp_nodelay(true)
             .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
             .build()
