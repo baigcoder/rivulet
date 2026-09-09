@@ -494,6 +494,11 @@ assert.match(
   /HOST_OWNED = \[[^\]]*'libgst'/,
   'the AppImage must let the host own GStreamer, core and plugins together',
 )
+assert.match(
+  read('scripts/build/linux/appimage.ts'),
+  /'libglib-2.0'/,
+  'host GStreamer needs host GLib or it dies on g_once_init_leave_pointer',
+)
 assert.match(read('src-tauri/src/iptv/proxy.rs'), /vq=hd1080/, 'the Tauri YouTube relay requests 1080p')
 assert.match(
   read('src-tauri/src/iptv/proxy.rs'),

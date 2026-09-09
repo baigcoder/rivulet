@@ -42,6 +42,16 @@
  * 1.x ABI and every host is newer than Ubuntu 22.04, which is the same bet the
  * paragraph above makes about libwayland.
  *
+ * GLib has to go with it. AppRun still puts the bundle's `libglib-2.0` in
+ * front, and a host GStreamer built against GLib 2.80 then dies on the
+ * Ubuntu 22.04 copy the moment it loads:
+ *
+ *   rivulet: symbol lookup error: /usr/lib/libgstreamer-1.0.so.0:
+ *   undefined symbol: g_once_init_leave_pointer
+ *
+ * GLib's ABI runs forward: GTK/WebKit linked against 2.72 still work on
+ * the host's 2.80. The reverse is what crashed.
+ *
  *   bun scripts/build/linux/appimage.ts   → strip and repack whatever was built
  *
  * It runs *after* the bundler, because the AppDir it edits doesn't exist until
@@ -59,7 +69,15 @@ import process from 'node:process'
 const DIR = 'src-tauri/target/release/bundle/appimage'
 
 /** Libraries the host must own, not the bundle. See the header for each. */
-const HOST_OWNED = ['libwayland-', 'libgst']
+const HOST_OWNED = [
+  'libwayland-',
+  'libgst',
+  'libglib-2.0',
+  'libgobject-2.0',
+  'libgio-2.0',
+  'libgmodule-2.0',
+  'libgthread-2.0',
+]
 
 function die(msg: string): never {
   console.error(`\n✗ ${msg}\n`)
