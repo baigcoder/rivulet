@@ -499,6 +499,16 @@ assert.match(
   /'libglib-2.0'/,
   'host GStreamer needs host GLib or it dies on g_once_init_leave_pointer',
 )
+assert.match(
+  read('scripts/build/linux/appimage.ts'),
+  /'libpcre2-8'/,
+  'host GLib must not load the bundle\'s pcre2 (no version map)',
+)
+assert.match(
+  read('scripts/build/linux/appimage.ts'),
+  /'libmount'/,
+  'host GIO needs host libmount or it dies on MOUNT_2_40',
+)
 assert.match(read('src-tauri/src/iptv/proxy.rs'), /vq=hd1080/, 'the Tauri YouTube relay requests 1080p')
 assert.match(
   read('src-tauri/src/iptv/proxy.rs'),

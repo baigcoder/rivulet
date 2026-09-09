@@ -52,6 +52,19 @@
  * GLib's ABI runs forward: GTK/WebKit linked against 2.72 still work on
  * the host's 2.80. The reverse is what crashed.
  *
+ * Their *dependencies* have to go too. Leaving Ubuntu 22.04's `libpcre2-8`
+ * and `libmount` in `usr/lib` is the same bug one library down: host GLib
+ * and GIO load, then look for those names, and AppRun hands them the
+ * bundled copies first.
+ *
+ *   rivulet: …/usr/lib/libmount.so.1: version `MOUNT_2_40' not found
+ *   (required by /usr/lib/libgio-2.0.so.0)
+ *
+ * Host GIO (2.80) needs util-linux 2.40's libmount; the bundle's is 2.37.
+ * Host GLib needs a pcre2 that actually exports a version map. Host
+ * libmount then wants host libblkid and libsystemd, and GObject wants
+ * host libffi — strip those or the next missing symbol is one of theirs.
+ *
  *   bun scripts/build/linux/appimage.ts   → strip and repack whatever was built
  *
  * It runs *after* the bundler, because the AppDir it edits doesn't exist until
@@ -77,6 +90,12 @@ const HOST_OWNED = [
   'libgio-2.0',
   'libgmodule-2.0',
   'libgthread-2.0',
+  'libpcre2-8',
+  'libffi',
+  'libmount',
+  'libblkid',
+  'libsystemd',
+  'libudev',
 ]
 
 function die(msg: string): never {
