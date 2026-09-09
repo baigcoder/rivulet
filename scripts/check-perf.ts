@@ -486,6 +486,14 @@ assert.doesNotMatch(
   /bundleMediaFramework/,
   'a bundled GStreamer wedges WebKit on the detail page; the host has one',
 )
+// linuxdeploy copies the core in anyway, because WebKit links it — and a core
+// hunting for plugins in Ubuntu's directory finds none on Arch or Fedora, which
+// is a trailer that plays in `tauri:dev` and not in the AppImage.
+assert.match(
+  read('scripts/build/linux/appimage.ts'),
+  /HOST_OWNED = \[[^\]]*'libgst'/,
+  'the AppImage must let the host own GStreamer, core and plugins together',
+)
 assert.match(read('src-tauri/src/iptv/proxy.rs'), /vq=hd1080/, 'the Tauri YouTube relay requests 1080p')
 assert.match(
   read('src-tauri/src/iptv/proxy.rs'),

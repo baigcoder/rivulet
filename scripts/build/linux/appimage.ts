@@ -1,5 +1,8 @@
 /**
- * Take libwayland back out of the .AppImage.
+ * Take libwayland and GStreamer back out of the .AppImage.
+ *
+ * Both are the same bug twice: a library the bundle carries from the build box
+ * that has to match something on the *host*, and can't.
  *
  * An AppImage's AppRun puts the bundle's own usr/lib in front of the entire
  * system on LD_LIBRARY_PATH, and linuxdeploy copies libwayland-* in because GTK
@@ -24,6 +27,21 @@
  * any host that can run the app at all already has its own libwayland-client —
  * without one, Mesa's EGL doesn't load and there is nothing to render into.
  *
+ * GStreamer is the media half of it, and it is why a trailer played under
+ * `bun run tauri:dev` and not in the bundle. linuxdeploy copies libgstreamer
+ * in because WebKit links it, but a GStreamer core finds its *plugins* through
+ * a directory compiled into it — Ubuntu's `/usr/lib/x86_64-linux-gnu/
+ * gstreamer-1.0`, which does not exist on Arch, Fedora or openSUSE. The bundled
+ * core therefore loads no decoders at all and YouTube says "your browser can't
+ * play this video" on a machine whose own GStreamer plays it fine. Shipping the
+ * plugins too (`bundleMediaFramework`) is worse, not better: WebKit brings the
+ * pipeline up on the main thread, and that scan wedged the detail page.
+ *
+ * So the host's GStreamer is the one to use, core and plugins together, which
+ * only works if the bundle stops shadowing the core. GStreamer keeps a stable
+ * 1.x ABI and every host is newer than Ubuntu 22.04, which is the same bet the
+ * paragraph above makes about libwayland.
+ *
  *   bun scripts/build/linux/appimage.ts   → strip and repack whatever was built
  *
  * It runs *after* the bundler, because the AppDir it edits doesn't exist until
@@ -40,12 +58,15 @@ import process from 'node:process'
 
 const DIR = 'src-tauri/target/release/bundle/appimage'
 
+/** Libraries the host must own, not the bundle. See the header for each. */
+const HOST_OWNED = ['libwayland-', 'libgst']
+
 function die(msg: string): never {
   console.error(`\n✗ ${msg}\n`)
   process.exit(1)
 }
 
-function unbundleWayland() {
+function unbundleHostLibraries() {
   const built = existsSync(DIR) ? readdirSync(DIR) : []
   const image = built.find(f => f.endsWith('.AppImage'))
   if (!image)
@@ -59,13 +80,14 @@ function unbundleWayland() {
   if (!appdir || !existsSync(tool)) {
     die(
       `Built ${image}, but it still carries the build machine's libwayland and\n`
-      + '  will abort on startup on any newer distro. Repacking it needs the\n'
-      + `  AppDir and ${tool}, and one of those is missing.`,
+      + '  GStreamer: it will abort on startup on any newer distro, and play no\n'
+      + '  video on one that lays its plugins out differently. Repacking it needs\n'
+      + `  the AppDir and ${tool}, and one of those is missing.`,
     )
   }
 
   const libs = join(DIR, appdir, 'usr/lib')
-  const dropped = readdirSync(libs).filter(f => f.startsWith('libwayland-'))
+  const dropped = readdirSync(libs).filter(f => HOST_OWNED.some(p => f.startsWith(p)))
   // Nothing to do twice: re-running this, or a linuxdeploy that has learnt to
   // leave them out, should not rewrite the artifact for the sake of it.
   if (!dropped.length)
@@ -113,4 +135,4 @@ function resign(image: string) {
 
 // Called unconditionally by the build script; only Linux has an AppImage.
 if (process.platform === 'linux')
-  unbundleWayland()
+  unbundleHostLibraries()
