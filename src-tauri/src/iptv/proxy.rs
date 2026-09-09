@@ -256,6 +256,9 @@ fn ytdlp_path() -> &'static Mutex<Option<PathBuf>> {
 /// Spawn yt-dlp without the AppImage's library path. The bundled binary is
 /// self-extracting; inheriting Ubuntu 22.04's libs from LD_LIBRARY_PATH is
 /// how a trailer sat on "Starting…" until the 12s timeout.
+///
+/// yt-dlp.exe is a console app. Without CREATE_NO_WINDOW, every trailer
+/// resolve flashes a terminal — same flag mpv/ffmpeg use on Windows.
 fn ytdlp_command(bin: &Path) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new(bin);
     if std::env::var_os("APPIMAGE").is_some() {
@@ -263,6 +266,12 @@ fn ytdlp_command(bin: &Path) -> tokio::process::Command {
         cmd.env_remove("APPDIR");
         cmd.env_remove("PYTHONHOME");
         cmd.env_remove("PYTHONPATH");
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.as_std_mut()
+            .creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
     }
     cmd
 }
@@ -332,8 +341,9 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
 
     // YouTube direct stream — resolves a video ID via yt-dlp and proxies the
     // actual video bytes. GTK WebKit can play a direct <video> stream but not
-    // a YouTube iframe embed.
-    if request.starts_with("GET /youtube-stream") {
+    // a YouTube iframe embed. HEAD is the same resolve as GET: WebView2 probes
+    // with HEAD before the element plays.
+    if request.starts_with("GET /youtube-stream") || request.starts_with("HEAD /youtube-stream") {
         serve_youtube_stream(stream, &request).await?;
         return Ok(());
     }

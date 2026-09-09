@@ -554,6 +554,19 @@ assert.match(proxySrc, /\.http1_only\(\)/, 'live IPTV over HTTP/2 is the slow st
 assert.match(proxySrc, /fn sort_hls_master/, 'a master that lists 720p first must not be left in that order')
 assert.match(proxySrc, /is_head/, 'lavf HEAD must not become a full GET of the file')
 assert.match(proxySrc, /no reachable streams in playlist/, 'a master of unresolvable hosts is 502, not Connecting forever')
+assert.match(proxySrc, /HEAD \/youtube-stream/, 'HEAD /youtube-stream must take the same path as GET')
+assert.match(
+  proxySrc,
+  /fn ytdlp_command[\s\S]*?CREATE_NO_WINDOW/,
+  'Windows yt-dlp must not flash a console on every trailer resolve',
+)
+assert.match(proxySrc, /env_remove\("LD_LIBRARY_PATH"\)/, 'AppImage yt-dlp must not inherit the bundle\'s libraries')
+const youtubeSrc = readFileSync(new URL('../app/utils/youtube.ts', import.meta.url), 'utf8')
+assert.match(
+  youtubeSrc,
+  /platform\(\) === 'linux' \|\| platform\(\) === 'windows'\)\s*return ''/,
+  'cover + Trailer use the iframe on Linux and Windows, not /youtube-stream',
+)
 
 // eslint-disable-next-line no-console
 console.log('player: ok')

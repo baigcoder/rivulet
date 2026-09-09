@@ -64,12 +64,16 @@ export function youtubeEmbedSrc(key: string, opts: { mute?: boolean, loop?: bool
  * detail page. The iframe embed (via the `/youtube-embed` relay) works
  * reliably there thanks to the Chrome UA spoofing in lib.rs, which makes
  * YouTube serve the Chromium player config WebKitGTK can run.
+ *
+ * Windows is excluded too: WebView2 plays the embed; yt-dlp console windows
+ * and a failed native `<video>` (cover never fell back to the iframe) were
+ * the Windows bug. macOS stays on the stream path.
  */
 export function youtubeStreamSrc(key: string): string {
   if (!isTauri() || !isDesktop())
     return ''
   try {
-    if (platform() === 'linux')
+    if (platform() === 'linux' || platform() === 'windows')
       return ''
   }
   catch {

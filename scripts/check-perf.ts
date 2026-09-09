@@ -467,14 +467,16 @@ assert.match(detail, /youtubeError/, 'YouTube onError must skip the blocked embe
 
 const youtube = read('app/utils/youtube.ts')
 assert.match(youtube, /vq:\s*['"]hd1080['"]/, 'browser embeds request 1080p')
-// Linux keeps the iframe and stays off the /youtube-stream <video>. WebKitGTK
-// *waits* on that endpoint while it mounts the element, so a slow resolve
-// freezes the whole detail page — and a frozen page runs no `error` handler and
-// no timeout, so nothing in the app can recover it (66ce479).
+// Linux and Windows keep the iframe and stay off the /youtube-stream <video>.
+// WebKitGTK *waits* on that endpoint while it mounts the element, so a slow
+// resolve freezes the whole detail page — and a frozen page runs no `error`
+// handler and no timeout, so nothing in the app can recover it (66ce479).
+// WebView2 plays the embed; the Windows native `<video>` spawned yt-dlp.exe
+// consoles and never fell back to the iframe.
 assert.match(
   youtube,
-  /platform\(\) === 'linux'\)\s*return ''/,
-  'the Linux <video> wedges the detail page: the embed is what plays there',
+  /platform\(\) === 'linux' \|\| platform\(\) === 'windows'\)\s*return ''/,
+  'Linux and Windows keep the iframe; the stream path is not those two',
 )
 // And it must not carry its own GStreamer. `bundleMediaFramework` puts the
 // build box's plugins in front of the host's on LD_LIBRARY_PATH, and WebKit
