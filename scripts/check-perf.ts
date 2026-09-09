@@ -476,13 +476,15 @@ assert.match(
   /platform\(\) === 'linux'\)\s*return ''/,
   'the Linux <video> wedges the detail page: the embed is what plays there',
 )
-// What the embed needs is codecs. `bun run tauri:dev` borrows the machine's
-// GStreamer and plays; an AppImage carries its own libraries, so without these
-// YouTube answers "your browser can't play this video" and the cover is blank.
-assert.match(
-  read('scripts/build/ytdlp.ts'),
-  /gstreamer1\.0-plugins-ugly/,
-  'Linux CI must install GStreamer before bundleMediaFramework copies it',
+// And it must not carry its own GStreamer. `bundleMediaFramework` puts the
+// build box's plugins in front of the host's on LD_LIBRARY_PATH, and WebKit
+// initialises that pipeline on the main thread the moment a media element
+// appears — a plugin scan that stalls there freezes the page before it can
+// paint. The host has codecs; the same rule as libwayland (appimage.ts).
+assert.doesNotMatch(
+  read('src-tauri/tauri.conf.json'),
+  /bundleMediaFramework/,
+  'a bundled GStreamer wedges WebKit on the detail page; the host has one',
 )
 assert.match(read('src-tauri/src/iptv/proxy.rs'), /vq=hd1080/, 'the Tauri YouTube relay requests 1080p')
 assert.match(
