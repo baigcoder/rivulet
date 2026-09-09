@@ -580,9 +580,21 @@ pub fn insert_channels_batch(
             let group = category_name.clone();
             statement
                 .execute(params![
-                    source_id, c.id, c.name, stream_url, c.logo_url, c.category_id,
-                    category_name, group, c.country, c.country_code, c.language, c.epg_id,
-                    c.stream_type, c.user_agent, c.referer,
+                    source_id,
+                    c.id,
+                    c.name,
+                    stream_url,
+                    c.logo_url,
+                    c.category_id,
+                    category_name,
+                    group,
+                    c.country,
+                    c.country_code,
+                    c.language,
+                    c.epg_id,
+                    c.stream_type,
+                    c.user_agent,
+                    c.referer,
                 ])
                 .map_err(|e| IptvError::Database(e.to_string()))?;
         }
@@ -1140,8 +1152,11 @@ pub fn upsert_recent(
 }
 
 pub fn clear_recent(conn: &Connection, source_id: &str) -> Result<(), IptvError> {
-    conn.execute("DELETE FROM iptv_recent WHERE source_id=?1", params![source_id])
-        .map_err(|e| IptvError::Database(e.to_string()))?;
+    conn.execute(
+        "DELETE FROM iptv_recent WHERE source_id=?1",
+        params![source_id],
+    )
+    .map_err(|e| IptvError::Database(e.to_string()))?;
     Ok(())
 }
 

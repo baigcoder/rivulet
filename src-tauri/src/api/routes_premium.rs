@@ -32,8 +32,8 @@ use super::ApiState;
 use crate::premium::errors::PremiumError;
 use crate::premium::models::{
     CatalogState, CategoryCount, EpgProgram, IPTVCategory, IPTVChannel, IPTVChannelPage,
-    PlaybackSource, PremiumAccount, PremiumDashboard, PremiumSeriesDetail,
-    PremiumSeriesItem, PremiumVodItem, SyncReport, VodCategory, VodPage,
+    PlaybackSource, PremiumAccount, PremiumDashboard, PremiumSeriesDetail, PremiumSeriesItem,
+    PremiumVodItem, SyncReport, VodCategory, VodPage,
 };
 use crate::premium::repository::PremiumRepository;
 use crate::premium::storage::{self, ProviderConfig};
@@ -81,8 +81,7 @@ fn require_auth(headers: &axum::http::HeaderMap) -> Result<auth::ApiClaims, supe
 fn ensure_premium(state: &ApiState) -> Result<(), super::ApiError> {
     if state.entitlement.is_premium() {
         Ok(())
-    }
-    else {
+    } else {
         Err(super::ApiError::PremiumRequired)
     }
 }
@@ -136,14 +135,20 @@ pub async fn status(
         storage::active_connection(&conn)?
     };
     let Some(id) = id else {
-        return Ok(Json(StatusResponse { account: None, catalog: None }));
+        return Ok(Json(StatusResponse {
+            account: None,
+            catalog: None,
+        }));
     };
     let row = {
         let conn = lock(&state)?;
         storage::get_connection(&conn, &id)?
     };
     let Some(row) = row else {
-        return Ok(Json(StatusResponse { account: None, catalog: None }));
+        return Ok(Json(StatusResponse {
+            account: None,
+            catalog: None,
+        }));
     };
     let catalog = sync::catalog_state(&state.premium, &id)?;
     Ok(Json(StatusResponse {
@@ -311,7 +316,11 @@ fn provider_candidates(req: &ConnectRequest) -> Result<Vec<ProviderConfig>, supe
     if let ProviderConfig::M3u { url } = &cfg {
         if let Some((server_url, username, password)) = credentials_from_playlist_url(url) {
             return Ok(vec![
-                ProviderConfig::Xtream { server_url, username, password },
+                ProviderConfig::Xtream {
+                    server_url,
+                    username,
+                    password,
+                },
                 cfg,
             ]);
         }
@@ -339,14 +348,18 @@ fn provider_config(req: &ConnectRequest) -> Result<ProviderConfig, super::ApiErr
     let m3u_url = trimmed(&req.m3u_url);
 
     if server_url.is_some() || username.is_some() || password.is_some() {
-        let server_url =
-            server_url.ok_or_else(|| super::ApiError::BadRequest("server URL is required".into()))?;
+        let server_url = server_url
+            .ok_or_else(|| super::ApiError::BadRequest("server URL is required".into()))?;
         let username =
             username.ok_or_else(|| super::ApiError::BadRequest("username is required".into()))?;
         let password =
             password.ok_or_else(|| super::ApiError::BadRequest("password is required".into()))?;
         require_http_url(&server_url)?;
-        return Ok(ProviderConfig::Xtream { server_url, username, password });
+        return Ok(ProviderConfig::Xtream {
+            server_url,
+            username,
+            password,
+        });
     }
     let url = m3u_url.ok_or_else(|| {
         super::ApiError::BadRequest("need either Xtream credentials or a playlist URL".into())
@@ -367,8 +380,7 @@ fn require_http_url(url: &str) -> Result<(), super::ApiError> {
     let lower = url.to_ascii_lowercase();
     if lower.starts_with("http://") || lower.starts_with("https://") {
         Ok(())
-    }
-    else {
+    } else {
         Err(super::ApiError::BadRequest(
             "the URL must start with http:// or https://".into(),
         ))
@@ -470,7 +482,9 @@ pub async fn category_counts(
 ) -> Result<Json<Vec<CategoryCount>>, super::ApiError> {
     guard(&state, &headers)?;
     let id = active_connection(&state)?;
-    Ok(Json(repo(&state).category_counts(&id, q.hide_adult.unwrap_or(false))?))
+    Ok(Json(
+        repo(&state).category_counts(&id, q.hide_adult.unwrap_or(false))?,
+    ))
 }
 
 #[derive(Deserialize, Default)]
@@ -795,7 +809,10 @@ pub async fn vod_play_movie(
     guard(&state, &headers)?;
     let cid = active_connection(&state)?;
     factory::xtream_for(state.premium.clone(), &cid)?;
-    let ext = q.ext.filter(|e| !e.is_empty()).unwrap_or_else(|| "mkv".into());
+    let ext = q
+        .ext
+        .filter(|e| !e.is_empty())
+        .unwrap_or_else(|| "mkv".into());
     let play_id = format!("movie:{id}:{ext}");
     let source = player::build_vod_source(state.premium.clone(), &cid, &play_id, &ext)?;
     Ok(Json(source))
@@ -810,7 +827,10 @@ pub async fn vod_play_episode(
     guard(&state, &headers)?;
     let cid = active_connection(&state)?;
     factory::xtream_for(state.premium.clone(), &cid)?;
-    let ext = q.ext.filter(|e| !e.is_empty()).unwrap_or_else(|| "mkv".into());
+    let ext = q
+        .ext
+        .filter(|e| !e.is_empty())
+        .unwrap_or_else(|| "mkv".into());
     let play_id = format!("series:{id}:{ext}");
     let source = player::build_vod_source(state.premium.clone(), &cid, &play_id, &ext)?;
     Ok(Json(source))
@@ -830,9 +850,17 @@ pub async fn vod_play_episode(
 ///
 /// The upstream URL is asked of the adapter (`resolve_stream_url`),
 /// which is the only code that knows how its protocol builds one. For
-/// Xtream that means the password appears in this function's `Location`
-/// header and nowhere else: not in the response body, not in a log line,
-/// not in the token, and not in anything the client can read.
+/// Xtream that means the password is used here to mint a loopback
+/// proxy URL (`:3031`) and nowhere else: not in the response body, not
+/// in a log line, not in the token, and not in anything the client can
+/// read. mpv follows this 302 onto the same proxy Free TV uses, so HLS
+/// rewrite and upstream UA match that path instead of lavf talking to
+/// the provider itself (the "connection error" that never happened on
+/// a public playlist).
+fn proxied_location(url: String, ua: Option<String>, referer: Option<String>) -> String {
+    crate::iptv::commands::proxy_free_stream_url(url, ua, referer)
+}
+
 pub async fn stream_redirect(
     State(state): State<ApiState>,
     Path(token): Path<String>,
@@ -850,7 +878,7 @@ pub async fn stream_redirect(
             "series" => xtream.resolve_series_episode_url(id, ext).await?,
             _ => return Err(super::ApiError::NotFound("stream not found".into())),
         };
-        return Ok(Redirect::temporary(&upstream).into_response());
+        return Ok(Redirect::temporary(&proxied_location(upstream, None, None)).into_response());
     }
 
     // The stored URL first, because for an M3U it is the answer and no
@@ -874,12 +902,15 @@ pub async fn stream_redirect(
         }
     };
 
-    // A bare 302. The upstream headers are not set here: a header on a
-    // redirect describes the redirect, not the request the client makes
-    // to the `Location` it names — so they travel in the `PlaybackSource`
-    // for the player to apply to the request that actually reaches the
-    // provider.
-    Ok(Redirect::temporary(&upstream).into_response())
+    // 302 onto the IPTV proxy, not the provider. A header on a 302
+    // describes the redirect, not the request the client then makes —
+    // so UA/Referer travel as query args the proxy already understands.
+    Ok(Redirect::temporary(&proxied_location(
+        upstream,
+        stored.user_agent,
+        stored.referer,
+    ))
+    .into_response())
 }
 
 // ── Helpers ────────────────────────────────────────────────────────

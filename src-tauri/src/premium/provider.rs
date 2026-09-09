@@ -20,9 +20,7 @@
 use async_trait::async_trait;
 
 use super::errors::PremiumError;
-use super::models::{
-    EpgProgram, IPTVCategory, IPTVChannel, PremiumAccount,
-};
+use super::models::{EpgProgram, IPTVCategory, IPTVChannel, PremiumAccount};
 
 /// Both halves of a catalog import. Returned together because for an
 /// M3U they come from a single pass over one download — asking for
@@ -52,13 +50,20 @@ pub trait IPTVProvider: Send + Sync {
     async fn get_catalog(&self) -> Result<Catalog, PremiumError> {
         let categories = self.get_categories().await?;
         let channels = self.get_channels().await?;
-        Ok(Catalog { categories, channels })
+        Ok(Catalog {
+            categories,
+            channels,
+        })
     }
 
     /// Per-channel EPG, the next `limit` programs. The fallback for
     /// providers that don't ship a bulk XMLTV. Returning an empty
     /// list is *not* an error — "no EPG" is a valid answer.
-    async fn get_epg(&self, channel_id: &str, limit: usize) -> Result<Vec<EpgProgram>, PremiumError>;
+    async fn get_epg(
+        &self,
+        channel_id: &str,
+        limit: usize,
+    ) -> Result<Vec<EpgProgram>, PremiumError>;
 
     /// Bulk EPG, when the provider has one (Xtream `xmltv.php`, or an
     /// M3U's `x-tvg-url` header). Returns the raw gzipped or plain
@@ -77,8 +82,5 @@ pub trait IPTVProvider: Send + Sync {
     /// to the client. An adapter whose catalog already carries a
     /// per-channel URL (M3U) returns `None` and lets the caller use
     /// the stored one.
-    async fn resolve_stream_url(
-        &self,
-        channel_id: &str,
-    ) -> Result<Option<String>, PremiumError>;
+    async fn resolve_stream_url(&self, channel_id: &str) -> Result<Option<String>, PremiumError>;
 }

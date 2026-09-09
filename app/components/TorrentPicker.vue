@@ -94,9 +94,8 @@ function tierOf(t: Release) {
 
 const tiers = computed(() => ['all', ...new Set(torrents.value.map(tierOf))])
 
-// Same pick the Play button would make, storage budget included — picking by
-// hand can still exceed it, and eviction will make room.
-const best = computed(() => pickBest(torrents.value, downloads.budget))
+// Same pick the Play button would make for the current How Play mode.
+const best = computed(() => pickPlay(torrents.value, downloads.budget, !hasNativePlayer(), settings.allowTorrents))
 
 /**
     * Too big for the drive to hold at all — a FAT32 stick stops at 4 GiB. Unlike
@@ -115,6 +114,9 @@ function tooBig(t: Release) {
 function canSave(t: Release) {
   return !!t.magnet && !(t.bytes > downloads.fileLimit)
 }
+
+/** Best magnet — what the title Download button files, even in Direct mode. */
+const bestSave = computed(() => pickBest(torrents.value.filter(canSave), downloads.budget, false, true))
 
 function inEngine(t: Release) {
   const hash = t.hash.toLowerCase()
@@ -174,8 +176,6 @@ async function download(t: Release) {
     })
     if (started.id < 0 || !started.hash)
       throw new Error($t('Torrent engine offline. Launch the native desktop or Android app to play torrents.'))
-    if (!downloads.torrents.some(x => x.info_hash.toLowerCase() === started.hash.toLowerCase()))
-      throw new Error($t('The torrent engine accepted the magnet but Downloads is still empty — wait a moment and try again, or restart the app.'))
     added.value = [...added.value, releaseKey(t)]
   }
   catch (e) {
@@ -185,6 +185,16 @@ async function download(t: Release) {
     busy.value = ''
     step.value = ''
   }
+}
+
+async function playBest() {
+  if (best.value)
+    await play(best.value)
+}
+
+async function downloadBest() {
+  if (bestSave.value)
+    await download(bestSave.value)
 }
 
 function saveHint(t: Release) {
@@ -381,6 +391,25 @@ defineExpose({
           {{ $t('Sizes in amber cost more bandwidth than the picture is worth.') }}
         </span>
         <v-spacer />
+        <v-btn
+          variant="tonal"
+          size="small"
+          :prepend-icon="mdiPlay"
+          :disabled="!best"
+          @click="playBest"
+        >
+          {{ $t('Play best') }}
+        </v-btn>
+        <v-btn
+          variant="tonal"
+          size="small"
+          :prepend-icon="mdiDownload"
+          :disabled="!bestSave || (bestSave && isAdded(bestSave))"
+          :loading="!!bestSave && busy === releaseKey(bestSave)"
+          @click="downloadBest"
+        >
+          {{ $t('Download best') }}
+        </v-btn>
         <v-btn variant="text" size="small" :to="localePath('/downloads')">
           {{ $t('Downloads') }}
         </v-btn>

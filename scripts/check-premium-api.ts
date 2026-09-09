@@ -215,6 +215,11 @@ await check('the entitlement defaults to denied', () => {
   assert.ok(/PremiumRequired|premium_required/i.test(body), 'the refusal must be the premium error')
 })
 
+await check('the redirector 302s onto the IPTV proxy, not the provider host', () => {
+  assert.ok(HANDLERS.includes('proxy_free_stream_url'), 'premium Location must be the :3031 proxy wrap')
+  assert.ok(!/Redirect::temporary\(&upstream\)/.test(HANDLERS), 'mpv must not be sent at the raw Xtream URL')
+})
+
 // ── Credentials never leave the Rust side ────────────────────────
 
 /**

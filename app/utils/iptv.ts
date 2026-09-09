@@ -354,16 +354,35 @@ export function getFreeTvEpg(tvgId: string): Promise<EpgProgram[]> {
 
 // ── CORS proxy (Free TV only) ──────────────────────────────────────
 
+/**
+ * Same string Rust's `proxy_free_stream_url` returns. Built here so Play
+ * does not wait on an IPC round-trip before mpv starts — the command is
+ * a format string, not a network call.
+ */
+export function wrapFreeStreamUrl(
+  url: string,
+  userAgent?: string | null,
+  referer?: string | null,
+): string {
+  const src = url.trim()
+  if (!src || src === 'undefined' || src === 'null')
+    return ''
+  if (/^https?:\/\/127\.0\.0\.1:3031\//i.test(src))
+    return src
+  let qs = `url=${encodeURIComponent(src)}`
+  if (userAgent)
+    qs += `&X-Rivulet-Ua=${encodeURIComponent(userAgent)}`
+  if (referer)
+    qs += `&X-Rivulet-Referer=${encodeURIComponent(referer)}`
+  return `http://127.0.0.1:3031/stream?${qs}`
+}
+
 export function proxyFreeStreamUrl(
   url: string,
   userAgent?: string,
   referer?: string,
 ): Promise<string> {
-  return invoke<string>('proxy_free_stream_url', {
-    url,
-    userAgent: userAgent ?? null,
-    referer: referer ?? null,
-  })
+  return Promise.resolve(wrapFreeStreamUrl(url, userAgent, referer))
 }
 
 export function iptvProxyHealth(): Promise<boolean> {

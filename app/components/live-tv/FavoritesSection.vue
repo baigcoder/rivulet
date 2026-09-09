@@ -23,6 +23,9 @@ function isDead(ch: LiveChannel): boolean {
     return true
   return liveTv.offlineIds.has(ch.id)
 }
+function healthOf(ch: LiveChannel) {
+  return isDead(ch) ? 'offline' as const : liveTv.healthOf(ch.id)
+}
 </script>
 
 <template>
@@ -52,12 +55,7 @@ function isDead(ch: LiveChannel): boolean {
           </div>
 
           <div class="pointer-events-none absolute start-1.5 top-1.5 z-10">
-            <span
-              class="rounded px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide"
-              :class="isDead(ch) ? 'bg-zinc-800/90 text-white/75' : 'bg-red-600 text-white'"
-            >
-              {{ isDead(ch) ? $t('Offline') : $t('LIVE') }}
-            </span>
+            <live-tv-live-status-badge :health="healthOf(ch)" compact />
           </div>
         </div>
         <div class="p-2">

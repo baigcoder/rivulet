@@ -4,15 +4,9 @@
 //! intermediate proxy log, or a player command line. `build_source`
 //! returns a short-lived signed redirector URL; the player opens it;
 //! the redirector resolves the real upstream URL server-side and
-//! answers with a 302 to it.
-//!
-//! The two upstream headers travel in the `PlaybackSource`, not on the
-//! redirect response. A header on a 302 describes that response — it
-//! says nothing about the request the client makes to the `Location`
-//! it names, which is the request the upstream actually sees. So the
-//! player is told what to send, and sends it (`--user-agent=` /
-//! `--referrer=` for mpv, the proxy's query parameters for the
-//! webview fallback).
+//! 302s onto the local IPTV proxy (`:3031`) that Free TV already uses.
+//! HLS rewrite and the upstream User-Agent stay on that proxy; mpv
+//! never talks to the provider host itself.
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -49,12 +43,8 @@ pub fn mint_redirector_token(
         .map_err(|e| PremiumError::ServerError(format!("clock: {e}")))?;
     let ttl = ttl_ms.unwrap_or(DEFAULT_TTL_MS);
     let expires_at = now + ttl;
-    let token = crate::api::auth::mint_stream_token(
-        &state.vault,
-        connection_id,
-        channel_id,
-        expires_at,
-    )?;
+    let token =
+        crate::api::auth::mint_stream_token(&state.vault, connection_id, channel_id, expires_at)?;
     Ok(SignedRedirect { token, expires_at })
 }
 
@@ -94,7 +84,11 @@ pub fn build_source(
     };
     let redirect = mint_redirector_token(&state, connection_id, channel_id, None)?;
     Ok(super::models::PlaybackSource {
-        url: format!("http://{}/premium-stream/{}", crate::api::ADDR, redirect.token),
+        url: format!(
+            "http://{}/premium-stream/{}",
+            crate::api::ADDR,
+            redirect.token
+        ),
         // Both providers are asked for HLS: Xtream's `.m3u8` endpoint,
         // and an M3U line that is overwhelmingly one. It is a hint for
         // picking a player path, not a promise — a provider that
@@ -120,7 +114,11 @@ pub fn build_vod_source(
     let redirect = mint_redirector_token(&state, connection_id, play_id, None)?;
     let mime = vod_mime(ext);
     Ok(super::models::PlaybackSource {
-        url: format!("http://{}/premium-stream/{}", crate::api::ADDR, redirect.token),
+        url: format!(
+            "http://{}/premium-stream/{}",
+            crate::api::ADDR,
+            redirect.token
+        ),
         mime_type: Some(mime),
         expires_at: Some(redirect.expires_at),
         user_agent: None,

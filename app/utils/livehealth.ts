@@ -1,25 +1,31 @@
 /**
- * Free-TV channel health.
+ * Live-channel health, Free TV and Premium TV.
  *
- * A public playlist is a snapshot of what answered when someone last
- * looked, so some fraction of it is dead at any moment and no amount of
- * curation changes that. Two mitigations, both deliberately lazy:
+ * A playlist is a snapshot of what answered when someone last looked, so
+ * some fraction of it is dead at any moment. Two rules follow, and they
+ * are the same on both libraries:
  *
- * - **Do not probe the browse grid.** Opening twenty strangers' streams
- *   while someone scrolls saturates the local proxy and freezes the page
- *   — Back stops answering. The player marks a channel dead when it
- *   fails to open, and that is enough.
- * - **Zap past a failure.** A channel that will not open is one the player
- *   should leave, not one the viewer should stare at. `nextPlayable` picks
- *   the next channel that is not already known-dead, and `MAX_AUTO_SKIPS`
- *   bounds it — five black channels in a row is a broken *list*, and
- *   walking a hundred of them is worse than saying so.
+ * - **Playback is the source of truth.** A GET through the proxy is not:
+ *   these CDNs refuse a ranged fetch (403/404) and then serve the other
+ *   container, which is exactly the log line that used to mark a working
+ *   channel offline. Opening twenty strangers while someone scrolls also
+ *   saturates the proxy and freezes Back. So the player marks a channel
+ *   when a *picture* arrives (live) or when retries and the format
+ *   fallback are spent (offline). A probe stays advisory and is never a
+ *   gate on the click.
+ * - **Zap past a failure.** `nextPlayable` picks the next channel that is
+ *   not already known-dead, and `MAX_AUTO_SKIPS` bounds it — five black
+ *   channels in a row is a broken *list*, and walking a hundred of them
+ *   is worse than saying so.
  *
- * A probe is advisory, never a gate: it goes through the local proxy with
- * the proxy's own headers, and an upstream that refuses that request can
- * still open in mpv. So an offline verdict dims a card and reorders the
- * zap list; it never disables the click.
+ * Verdicts are session-only. A channel that was dead this morning is
+ * worth trying again tonight; a persisted tag would hide it for good.
+ *
+ * Premium never probes from the page at all: the UI must not see a
+ * provider URL, and a background GET would steal the account's one
+ * connection slot. Same book, filled only from the player.
  */
+import { ref } from 'vue'
 
 /** A stream that has not answered in 3.5 seconds is not worth a card. */
 export const PROBE_TIMEOUT_MS = 3500
@@ -30,15 +36,39 @@ export const PROBE_CONCURRENCY = 4
 /** Consecutive automatic zaps before the player admits defeat. */
 export const MAX_AUTO_SKIPS = 5
 
-export type Health = 'live' | 'offline'
+export type Health = 'unknown' | 'live' | 'offline'
 
 /**
  * Anything that answered with a status the player could follow counts as
  * live. The proxy turns a refused connection into 502 and passes every
  * other upstream status through, so this reads both.
+ *
+ * Advisory only — see the file header. A 403 here is "this GET was
+ * refused", not "mpv cannot play it".
  */
-export function probeVerdict(status: number): Health {
+export function probeVerdict(status: number): Exclude<Health, 'unknown'> {
   return status >= 200 && status < 400 ? 'live' : 'offline'
+}
+
+/**
+ * mpv's `audio-params` once a decoder is up. Live HLS often has sound
+ * before `video-params` (and hiding the window until a frame exists
+ * can keep `video-params` at zero forever) — treating that as "still
+ * connecting" is what auto-skipped a channel the viewer could already
+ * hear.
+ */
+export function audioParamsReady(params: unknown): boolean {
+  if (!params || typeof params !== 'object')
+    return false
+  const o = params as Record<string, unknown>
+  const sr = o.samplerate
+  const cc = o['channel-count'] ?? o.channelCount
+  return (typeof sr === 'number' && sr > 0) || (typeof cc === 'number' && cc > 0)
+}
+
+/** Picture or sound: either means this channel is up. */
+export function liveLocked(videoWidth: number, hasAudio: boolean): boolean {
+  return videoWidth > 0 || hasAudio
 }
 
 /**
@@ -85,7 +115,7 @@ export async function pool<T>(
 export async function probeStream(
   proxiedUrl: string,
   timeoutMs: number = PROBE_TIMEOUT_MS,
-): Promise<Health> {
+): Promise<Exclude<Health, 'unknown'>> {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), timeoutMs)
   try {
@@ -101,4 +131,56 @@ export async function probeStream(
   finally {
     clearTimeout(timer)
   }
+}
+
+/**
+ * Session map both live-TV stores keep. Replacing the Set (not mutating
+ * it) is what makes a card's computed re-run: a Set is not deeply
+ * reactive.
+ */
+export function createChannelHealth() {
+  const liveIds = ref<Set<string>>(new Set())
+  const offlineIds = ref<Set<string>>(new Set())
+
+  function healthOf(id: string): Health {
+    if (!id)
+      return 'unknown'
+    if (offlineIds.value.has(id))
+      return 'offline'
+    if (liveIds.value.has(id))
+      return 'live'
+    return 'unknown'
+  }
+
+  function markOffline(channelId: string): void {
+    if (!channelId || offlineIds.value.has(channelId))
+      return
+    offlineIds.value = new Set(offlineIds.value).add(channelId)
+    if (!liveIds.value.has(channelId))
+      return
+    const next = new Set(liveIds.value)
+    next.delete(channelId)
+    liveIds.value = next
+  }
+
+  function markLive(channelId: string): void {
+    if (!channelId)
+      return
+    if (!liveIds.value.has(channelId))
+      liveIds.value = new Set(liveIds.value).add(channelId)
+    if (!offlineIds.value.has(channelId))
+      return
+    const next = new Set(offlineIds.value)
+    next.delete(channelId)
+    offlineIds.value = next
+  }
+
+  function reset(): void {
+    if (liveIds.value.size === 0 && offlineIds.value.size === 0)
+      return
+    liveIds.value = new Set()
+    offlineIds.value = new Set()
+  }
+
+  return { liveIds, offlineIds, healthOf, markLive, markOffline, reset }
 }

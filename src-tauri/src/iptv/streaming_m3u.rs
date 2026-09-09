@@ -478,9 +478,7 @@ where
                                 // The comma title, before falling back to the URL:
                                 // iptv-org's per-country playlists write no
                                 // `tvg-name` at all.
-                                .or_else(|| {
-                                    extinf.title.clone().filter(|s| !s.is_empty())
-                                })
+                                .or_else(|| extinf.title.clone().filter(|s| !s.is_empty()))
                                 .or_else(|| extract_name_from_url(&stream_url))
                                 .unwrap_or_else(|| "Unknown Channel".to_string());
                             let country_code = extinf
@@ -532,14 +530,13 @@ where
                                 // and leave no Pakistan entry to click.
                                 // "Undefined" is iptv-org's placeholder and
                                 // is worth less than no category at all.
-                                category_name: country_hint
-                                    .and(country_name.clone())
-                                    .or_else(|| {
+                                category_name: country_hint.and(country_name.clone()).or_else(
+                                    || {
                                         extinf.group.filter(|s| {
-                                            !s.is_empty()
-                                                && !s.eq_ignore_ascii_case("undefined")
+                                            !s.is_empty() && !s.eq_ignore_ascii_case("undefined")
                                         })
-                                    }),
+                                    },
+                                ),
                                 country: country_name,
                                 language: extinf.language.filter(|s| !s.is_empty()),
                                 epg_id: extinf.tvg_id.filter(|s| !s.is_empty()),

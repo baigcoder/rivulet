@@ -108,18 +108,12 @@ impl EntitlementState {
     }
 
     pub fn get(&self) -> SubscriptionInfo {
-        self.inner
-            .read()
-            .map(|g| g.clone())
-            .unwrap_or_default()
+        self.inner.read().map(|g| g.clone()).unwrap_or_default()
     }
 
     /// The gate itself.
     pub fn is_premium(&self) -> bool {
-        self.inner
-            .read()
-            .map(|g| g.is_premium())
-            .unwrap_or(false)
+        self.inner.read().map(|g| g.is_premium()).unwrap_or(false)
     }
 }
 
@@ -169,6 +163,9 @@ mod tests {
         });
         assert!(state.is_premium());
         state.set(SubscriptionInfo::default());
-        assert!(!state.is_premium(), "a revoked entitlement is denied at once");
+        assert!(
+            !state.is_premium(),
+            "a revoked entitlement is denied at once"
+        );
     }
 }

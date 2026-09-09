@@ -22,7 +22,6 @@ const props = defineProps<{
   size?: string
 }>()
 
-const emit = defineEmits<{ pick: [] }>()
 const downloads = useDownloadsStore()
 
 const key = computed(() => props.type && props.id
@@ -32,7 +31,18 @@ const key = computed(() => props.type && props.id
 const state = ref<'idle' | 'busy' | 'done'>('idle')
 const error = ref('')
 
-const done = computed(() => state.value === 'done')
+// Filed under this title and still in the engine — coming back to the
+// page must not look like Download again, or a second start 400s
+// "already live" and the button turns into Retry.
+const held = computed(() => {
+  const filed = key.value ? downloads.cachedFor(key.value) : null
+  if (!filed?.hash)
+    return false
+  const want = canonHash(filed.hash)
+  return downloads.torrents.some(t => canonHash(t.info_hash) === want)
+})
+
+const done = computed(() => state.value === 'done' || held.value)
 
 // Picking another episode makes the previous "In downloads" a lie.
 watch(() => [props.imdbId, props.season, props.episode].join('|'), () => {
@@ -48,19 +58,20 @@ async function download() {
       imdbId: props.imdbId,
       season: props.season,
       episode: props.episode,
+      // How Play works only gates Play. Download always picks the best
+      // magnet — Direct mode must still leave a copy on disk.
       allowTorrents: true,
       save: true,
     })
     if (started.id < 0 || !started.hash)
       throw new Error($t('Nothing here is a download — these sources only stream this title.'))
-    if (!downloads.torrents.some(x => x.info_hash.toLowerCase() === started.hash.toLowerCase()))
-      throw new Error($t('The torrent engine accepted the magnet but Downloads is still empty — wait a moment and try again, or restart the app.'))
     state.value = 'done'
   }
   catch (e) {
+    // Stay on this button. Opening Releases here made Download look
+    // like a picker — Releases is its own control.
     error.value = e instanceof Error ? e.message : String(e)
     state.value = 'idle'
-    emit('pick')
   }
 }
 </script>
@@ -69,7 +80,7 @@ async function download() {
   <v-btn
     :prepend-icon="done ? mdiCheck : mdiDownload"
     :loading="state === 'busy'"
-    :color="error ? 'error' : undefined"
+    :color="done || !error ? undefined : 'error'"
     :to="done ? localePath('/downloads') : undefined"
     :disabled="!imdbId"
     :size="size"
@@ -77,6 +88,6 @@ async function download() {
     @click="!done && download()"
   >
     {{ done ? $t('In downloads') : error ? $t('Retry download') : $t('Download') }}
-    <v-tooltip v-if="error" activator="parent" :text="error" />
+    <v-tooltip v-if="error && !done" activator="parent" :text="error" />
   </v-btn>
 </template>

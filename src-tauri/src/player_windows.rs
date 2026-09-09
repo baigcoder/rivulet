@@ -43,35 +43,35 @@ use windows_sys::Win32::Foundation::{ERROR_PIPE_BUSY, HWND, LPARAM, LRESULT, POI
 
 use crate::player_direct;
 use windows_sys::Win32::Graphics::Gdi::{
-	CombineRgn, CreateRectRgn, DeleteObject, GetStockObject, ScreenToClient, SetWindowRgn,
-	BLACK_BRUSH, RGN_DIFF,
+    CombineRgn, CreateRectRgn, DeleteObject, GetStockObject, ScreenToClient, SetWindowRgn,
+    BLACK_BRUSH, RGN_DIFF,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Pipes::WaitNamedPipeW;
 use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-	CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW,
-	GetWindow, GetWindowRect, LoadCursorW, PostMessageW, PostQuitMessage, RegisterClassExW,
-	SetWindowPos, ShowWindow, TranslateMessage, GW_CHILD, HWND_TOP, IDC_ARROW, MSG,
-	SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE,
-	SW_SHOWNOACTIVATE, WM_CLOSE, WM_DESTROY, WM_LBUTTONDOWN, WM_MOUSEACTIVATE, WM_MOUSEWHEEL,
-	WM_SETFOCUS, WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_EX_NOPARENTNOTIFY,
-	WS_VISIBLE,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW,
+    GetWindow, GetWindowRect, LoadCursorW, PostMessageW, PostQuitMessage, RegisterClassExW,
+    SetWindowPos, ShowWindow, TranslateMessage, GW_CHILD, HWND_TOP, IDC_ARROW, MSG,
+    SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE,
+    SW_SHOWNOACTIVATE, WM_CLOSE, WM_DESTROY, WM_LBUTTONDOWN, WM_MOUSEACTIVATE, WM_MOUSEWHEEL,
+    WM_SETFOCUS, WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_EX_NOPARENTNOTIFY,
+    WS_VISIBLE,
 };
 
 /// A rectangle of the video window the frontend wants punched out, in physical
 /// pixels relative to the video box's top-left.
 #[derive(serde::Deserialize, Clone, Copy)]
 pub struct Cutout {
-	x: i32,
-	y: i32,
-	width: u32,
-	height: u32,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
 }
 
 /// Null-terminated UTF-16: every Win32 call here takes a wide string.
 fn wide(s: &str) -> Vec<u16> {
-	s.encode_utf16().chain(std::iter::once(0)).collect()
+    s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
 // ----------------------------------------------------------------------------
@@ -90,11 +90,11 @@ static REACTIVATING: AtomicBool = AtomicBool::new(false);
 /// controls do about it. mpv answers these itself on X11; here its window is
 /// disabled and never sees them (see the header).
 fn notify(event: &str, payload: i32) {
-	if let Some(page) = PAGE.get() {
-		// `emit` posts to the event loop from any thread, so the pump below is
-		// never left waiting on the main thread — which would deadlock it.
-		let _ = page.emit(event, payload);
-	}
+    if let Some(page) = PAGE.get() {
+        // `emit` posts to the event loop from any thread, so the pump below is
+        // never left waiting on the main thread — which would deadlock it.
+        let _ = page.emit(event, payload);
+    }
 }
 
 /// Put the keyboard focus back in the page.
@@ -111,91 +111,91 @@ fn notify(event: &str, payload: i32) {
 /// rather than a window call, and it is dispatched to the main thread, which is
 /// the only one that may talk to the controller.
 fn focus_page() {
-	if let Some(page) = PAGE.get() {
-		let webview: &tauri::Webview = page.as_ref();
-		let _ = webview.set_focus();
-	}
+    if let Some(page) = PAGE.get() {
+        let webview: &tauri::Webview = page.as_ref();
+        let _ = webview.set_focus();
+    }
 }
 
 unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
-	match msg {
-		// Focus lands here when the app is re-activated with the pointer over
-		// the picture. Give it straight back, or the page stops seeing keys.
-		WM_SETFOCUS => {
-			focus_page();
-			0
-		}
-		// Sent ahead of the click, and only while the app is in the background.
-		// HIWORD(lParam) is the mouse message that is about to follow.
-		WM_MOUSEACTIVATE => {
-			if ((lp >> 16) & 0xffff) as u32 == WM_LBUTTONDOWN {
-				REACTIVATING.store(true, Ordering::Relaxed);
-			}
-			DefWindowProcW(hwnd, msg, wp, lp)
-		}
-		WM_LBUTTONDOWN => {
-			// Unconditional, not just on the way back from another app: the
-			// document can be left without the focus by anything that took it
-			// out of the window, and clicking the picture is how a mouse user
-			// says "I am driving this again".
-			focus_page();
-			// A click that brings the window forward only does that — it is not
-			// also a play/pause. Every desktop player treats the first click
-			// after another app as activation, and pausing a film because
-			// someone came back from Discord is the wrong answer.
-			if !REACTIVATING.swap(false, Ordering::Relaxed) {
-				notify("player:click", 0);
-			}
-			0
-		}
-		// One notch, signed. Windows delivers this to whichever window the
-		// pointer is over as long as "scroll inactive windows" is on, which it
-		// is by default.
-		WM_MOUSEWHEEL => {
-			let delta = ((wp >> 16) & 0xffff) as u16 as i16;
-			notify("player:wheel", if delta > 0 { 1 } else { -1 });
-			0
-		}
-		WM_CLOSE => {
-			DestroyWindow(hwnd);
-			0
-		}
-		// Ends the pump below, which is how the thread is joined.
-		WM_DESTROY => {
-			PostQuitMessage(0);
-			0
-		}
-		_ => DefWindowProcW(hwnd, msg, wp, lp),
-	}
+    match msg {
+        // Focus lands here when the app is re-activated with the pointer over
+        // the picture. Give it straight back, or the page stops seeing keys.
+        WM_SETFOCUS => {
+            focus_page();
+            0
+        }
+        // Sent ahead of the click, and only while the app is in the background.
+        // HIWORD(lParam) is the mouse message that is about to follow.
+        WM_MOUSEACTIVATE => {
+            if ((lp >> 16) & 0xffff) as u32 == WM_LBUTTONDOWN {
+                REACTIVATING.store(true, Ordering::Relaxed);
+            }
+            DefWindowProcW(hwnd, msg, wp, lp)
+        }
+        WM_LBUTTONDOWN => {
+            // Unconditional, not just on the way back from another app: the
+            // document can be left without the focus by anything that took it
+            // out of the window, and clicking the picture is how a mouse user
+            // says "I am driving this again".
+            focus_page();
+            // A click that brings the window forward only does that — it is not
+            // also a play/pause. Every desktop player treats the first click
+            // after another app as activation, and pausing a film because
+            // someone came back from Discord is the wrong answer.
+            if !REACTIVATING.swap(false, Ordering::Relaxed) {
+                notify("player:click", 0);
+            }
+            0
+        }
+        // One notch, signed. Windows delivers this to whichever window the
+        // pointer is over as long as "scroll inactive windows" is on, which it
+        // is by default.
+        WM_MOUSEWHEEL => {
+            let delta = ((wp >> 16) & 0xffff) as u16 as i16;
+            notify("player:wheel", if delta > 0 { 1 } else { -1 });
+            0
+        }
+        WM_CLOSE => {
+            DestroyWindow(hwnd);
+            0
+        }
+        // Ends the pump below, which is how the thread is joined.
+        WM_DESTROY => {
+            PostQuitMessage(0);
+            0
+        }
+        _ => DefWindowProcW(hwnd, msg, wp, lp),
+    }
 }
 
 /// Register the window class once per process. A black background means the box
 /// is black rather than uninitialised in the moment before mpv paints into it.
 fn register_class() -> Result<(), String> {
-	static CLASS: OnceLock<bool> = OnceLock::new();
-	let registered = *CLASS.get_or_init(|| unsafe {
-		let name = wide(CLASS_NAME);
-		let class = WNDCLASSEXW {
-			cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
-			style: 0,
-			lpfnWndProc: Some(wnd_proc),
-			cbClsExtra: 0,
-			cbWndExtra: 0,
-			hInstance: GetModuleHandleW(ptr::null()),
-			hIcon: ptr::null_mut(),
-			hCursor: LoadCursorW(ptr::null_mut(), IDC_ARROW),
-			hbrBackground: GetStockObject(BLACK_BRUSH),
-			lpszMenuName: ptr::null(),
-			lpszClassName: name.as_ptr(),
-			hIconSm: ptr::null_mut(),
-		};
-		RegisterClassExW(&class) != 0
-	});
-	if registered {
-		Ok(())
-	} else {
-		Err("could not register the video window class".into())
-	}
+    static CLASS: OnceLock<bool> = OnceLock::new();
+    let registered = *CLASS.get_or_init(|| unsafe {
+        let name = wide(CLASS_NAME);
+        let class = WNDCLASSEXW {
+            cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+            style: 0,
+            lpfnWndProc: Some(wnd_proc),
+            cbClsExtra: 0,
+            cbWndExtra: 0,
+            hInstance: GetModuleHandleW(ptr::null()),
+            hIcon: ptr::null_mut(),
+            hCursor: LoadCursorW(ptr::null_mut(), IDC_ARROW),
+            hbrBackground: GetStockObject(BLACK_BRUSH),
+            lpszMenuName: ptr::null(),
+            lpszClassName: name.as_ptr(),
+            hIconSm: ptr::null_mut(),
+        };
+        RegisterClassExW(&class) != 0
+    });
+    if registered {
+        Ok(())
+    } else {
+        Err("could not register the video window class".into())
+    }
 }
 
 const CLASS_NAME: &str = "RivuletVideo";
@@ -203,181 +203,200 @@ const CLASS_NAME: &str = "RivuletVideo";
 /// The child window mpv renders into. It lives on its own thread, which owns it
 /// and pumps its messages until the window is destroyed.
 struct Embed {
-	/// The HWND as a plain integer, so the state it lives in stays `Send`.
-	hwnd: isize,
+    /// The HWND as a plain integer, so the state it lives in stays `Send`.
+    hwnd: isize,
 }
 
 impl Embed {
-	/// Create the video window on a thread of its own and start its message
-	/// pump. Everything after this can be called from any thread: the window
-	/// operations below go to that pump.
-	fn spawn(parent: isize, x: i32, y: i32, width: u32, height: u32) -> Result<Embed, String> {
-		let (tx, rx) = mpsc::channel::<Result<isize, String>>();
-		std::thread::Builder::new()
-			.name("rivulet-video".into())
-			.spawn(move || {
-				let created = unsafe { create_window(parent as HWND, x, y, width, height) };
-				let ok = created.is_ok();
-				let _ = tx.send(created);
-				if !ok {
-					return;
-				}
-				unsafe {
-					let mut msg: MSG = std::mem::zeroed();
-					while GetMessageW(&mut msg, ptr::null_mut(), 0, 0) > 0 {
-						TranslateMessage(&msg);
-						DispatchMessageW(&msg);
-					}
-				}
-			})
-			.map_err(|e| format!("could not start the video window thread: {e}"))?;
+    /// Create the video window on a thread of its own and start its message
+    /// pump. Everything after this can be called from any thread: the window
+    /// operations below go to that pump.
+    fn spawn(parent: isize, x: i32, y: i32, width: u32, height: u32) -> Result<Embed, String> {
+        let (tx, rx) = mpsc::channel::<Result<isize, String>>();
+        std::thread::Builder::new()
+            .name("rivulet-video".into())
+            .spawn(move || {
+                let created = unsafe { create_window(parent as HWND, x, y, width, height) };
+                let ok = created.is_ok();
+                let _ = tx.send(created);
+                if !ok {
+                    return;
+                }
+                unsafe {
+                    let mut msg: MSG = std::mem::zeroed();
+                    while GetMessageW(&mut msg, ptr::null_mut(), 0, 0) > 0 {
+                        TranslateMessage(&msg);
+                        DispatchMessageW(&msg);
+                    }
+                }
+            })
+            .map_err(|e| format!("could not start the video window thread: {e}"))?;
 
-		// Waiting here is only safe because creating the window sends the parent
-		// thread nothing — see WS_EX_NOPARENTNOTIFY in `create_window`.
-		match rx.recv() {
-			Ok(Ok(hwnd)) => Ok(Embed { hwnd }),
-			Ok(Err(e)) => Err(e),
-			Err(_) => Err("the video window thread died before creating a window".into()),
-		}
-	}
+        // Waiting here is only safe because creating the window sends the parent
+        // thread nothing — see WS_EX_NOPARENTNOTIFY in `create_window`.
+        match rx.recv() {
+            Ok(Ok(hwnd)) => Ok(Embed { hwnd }),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err("the video window thread died before creating a window".into()),
+        }
+    }
 
-	fn hwnd(&self) -> HWND {
-		self.hwnd as HWND
-	}
+    fn hwnd(&self) -> HWND {
+        self.hwnd as HWND
+    }
 
-	fn move_resize(&self, x: i32, y: i32, w: u32, h: u32) {
-		let (w, h) = (w.max(1) as i32, h.max(1) as i32);
-		unsafe {
-			// HWND_TOP every time, not just at creation: the webview is a sibling
-			// and it does not stay put — anything that raises it would leave the
-			// video playing behind an opaque page.
-			SetWindowPos(self.hwnd(), HWND_TOP, x, y, w, h, SWP_NOACTIVATE);
-			// mpv sizes its window to the parent when it creates it; keeping it
-			// filled afterwards is our job. It is our only direct child, and it
-			// belongs to mpv's thread — SWP_ASYNCWINDOWPOS posts the request
-			// rather than waiting on a process that may be busy decoding.
-			let video = GetWindow(self.hwnd(), GW_CHILD);
-			if !video.is_null() {
-				SetWindowPos(
-					video,
-					ptr::null_mut(),
-					0,
-					0,
-					w,
-					h,
-					SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS,
-				);
-			}
-		}
-	}
+    fn move_resize(&self, x: i32, y: i32, w: u32, h: u32) {
+        let (w, h) = (w.max(1) as i32, h.max(1) as i32);
+        unsafe {
+            // HWND_TOP every time, not just at creation: the webview is a sibling
+            // and it does not stay put — anything that raises it would leave the
+            // video playing behind an opaque page.
+            SetWindowPos(self.hwnd(), HWND_TOP, x, y, w, h, SWP_NOACTIVATE);
+            // mpv sizes its window to the parent when it creates it; keeping it
+            // filled afterwards is our job. It is our only direct child, and it
+            // belongs to mpv's thread — SWP_ASYNCWINDOWPOS posts the request
+            // rather than waiting on a process that may be busy decoding.
+            let video = GetWindow(self.hwnd(), GW_CHILD);
+            if !video.is_null() {
+                SetWindowPos(
+                    video,
+                    ptr::null_mut(),
+                    0,
+                    0,
+                    w,
+                    h,
+                    SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS,
+                );
+            }
+        }
+    }
 
-	/// Show/hide the video window. Hiding is how we get the native surface out
-	/// of the way when its DOM box scrolls off screen — otherwise it would keep
-	/// painting over whatever the webview draws in that region.
-	fn set_visible(&self, visible: bool) {
-		unsafe {
-			ShowWindow(self.hwnd(), if visible { SW_SHOWNOACTIVATE } else { SW_HIDE });
-		}
-	}
+    /// Show/hide the video window. Hiding is how we get the native surface out
+    /// of the way when its DOM box scrolls off screen — otherwise it would keep
+    /// painting over whatever the webview draws in that region.
+    fn set_visible(&self, visible: bool) {
+        unsafe {
+            ShowWindow(
+                self.hwnd(),
+                if visible { SW_SHOWNOACTIVATE } else { SW_HIDE },
+            );
+        }
+    }
 
-	/// Cut each overlay rectangle out of the window. The holes let the page
-	/// underneath show through — clicks included, since a window region bounds
-	/// hit testing as well as painting. Re-applied on every geometry change: a
-	/// region is in window coordinates and does not grow when the window does.
-	fn set_shape(&self, w: u32, h: u32, cutouts: &[Cutout]) {
-		unsafe {
-			// No overlays: back to a plain rectangle, and no region to keep.
-			if cutouts.is_empty() {
-				SetWindowRgn(self.hwnd(), ptr::null_mut(), 1);
-				return;
-			}
-			let region = CreateRectRgn(0, 0, w.max(1) as i32, h.max(1) as i32);
-			for c in cutouts.iter().filter(|c| c.width > 0 && c.height > 0) {
-				let hole =
-					CreateRectRgn(c.x, c.y, c.x + c.width as i32, c.y + c.height as i32);
-				CombineRgn(region, region, hole, RGN_DIFF);
-				DeleteObject(hole);
-			}
-			// The system owns a region it accepts; one it rejects is still ours.
-			if SetWindowRgn(self.hwnd(), region, 1) == 0 {
-				DeleteObject(region);
-			}
-		}
-	}
+    /// Cut each overlay rectangle out of the window. The holes let the page
+    /// underneath show through — clicks included, since a window region bounds
+    /// hit testing as well as painting. Re-applied on every geometry change: a
+    /// region is in window coordinates and does not grow when the window does.
+    fn set_shape(&self, w: u32, h: u32, cutouts: &[Cutout]) {
+        unsafe {
+            // No overlays: back to a plain rectangle, and no region to keep.
+            if cutouts.is_empty() {
+                SetWindowRgn(self.hwnd(), ptr::null_mut(), 1);
+                return;
+            }
+            let region = CreateRectRgn(0, 0, w.max(1) as i32, h.max(1) as i32);
+            for c in cutouts.iter().filter(|c| c.width > 0 && c.height > 0) {
+                let hole = CreateRectRgn(c.x, c.y, c.x + c.width as i32, c.y + c.height as i32);
+                CombineRgn(region, region, hole, RGN_DIFF);
+                DeleteObject(hole);
+            }
+            // The system owns a region it accepts; one it rejects is still ours.
+            if SetWindowRgn(self.hwnd(), region, 1) == 0 {
+                DeleteObject(region);
+            }
+        }
+    }
 
-	/// Where the cursor is relative to this window, and whether it is over the
-	/// picture at all.
-	///
-	/// Nothing here asks mpv, and nothing here needs a message: the cursor is
-	/// system-wide state on Win32, so it can be read no matter which window the
-	/// pointer messages went to.
-	fn pointer(&self) -> Option<(i32, i32, bool)> {
-		unsafe {
-			let mut pt = POINT { x: 0, y: 0 };
-			if GetCursorPos(&mut pt) == 0 {
-				return None; // no cursor to read (locked session, secure desktop)
-			}
-			// The bounding rect of the mpv window is the only "over" we trust:
-			// anywhere inside it is the picture except for the cutouts, and
-			// `WindowFromPoint` returns the webview over a cutout (the region
-			// punches a hole through to it), which is not the mpv HWND and not
-			// its child — so the previous `IsChild` test only matched the
-			// picture itself, not the cutouts, and the auto-hide timer hid the
-			// chrome and never brought it back. Both cases mean the user is at
-			// the screen looking at the film.
-			let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
-			GetWindowRect(self.hwnd(), &mut rect);
-			let over = pt.x >= rect.left && pt.x < rect.right && pt.y >= rect.top && pt.y < rect.bottom;
-			ScreenToClient(self.hwnd(), &mut pt);
-			Some((pt.x, pt.y, over))
-		}
-	}
+    /// Where the cursor is relative to this window, and whether it is over the
+    /// picture at all.
+    ///
+    /// Nothing here asks mpv, and nothing here needs a message: the cursor is
+    /// system-wide state on Win32, so it can be read no matter which window the
+    /// pointer messages went to.
+    fn pointer(&self) -> Option<(i32, i32, bool)> {
+        unsafe {
+            let mut pt = POINT { x: 0, y: 0 };
+            if GetCursorPos(&mut pt) == 0 {
+                return None; // no cursor to read (locked session, secure desktop)
+            }
+            // The bounding rect of the mpv window is the only "over" we trust:
+            // anywhere inside it is the picture except for the cutouts, and
+            // `WindowFromPoint` returns the webview over a cutout (the region
+            // punches a hole through to it), which is not the mpv HWND and not
+            // its child — so the previous `IsChild` test only matched the
+            // picture itself, not the cutouts, and the auto-hide timer hid the
+            // chrome and never brought it back. Both cases mean the user is at
+            // the screen looking at the film.
+            let mut rect = RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            };
+            GetWindowRect(self.hwnd(), &mut rect);
+            let over =
+                pt.x >= rect.left && pt.x < rect.right && pt.y >= rect.top && pt.y < rect.bottom;
+            ScreenToClient(self.hwnd(), &mut pt);
+            Some((pt.x, pt.y, over))
+        }
+    }
 
-	/// Tear the window down. Its thread ends with it (WM_DESTROY posts the quit
-	/// message), and we deliberately don't wait for that: a thread pumping
-	/// messages can be sent one by the window manager at any moment, and a
-	/// caller blocked on `join` would not be answering.
-	fn destroy(self) {
-		unsafe { PostMessageW(self.hwnd(), WM_CLOSE, 0, 0) };
-	}
+    /// Tear the window down. Its thread ends with it (WM_DESTROY posts the quit
+    /// message), and we deliberately don't wait for that: a thread pumping
+    /// messages can be sent one by the window manager at any moment, and a
+    /// caller blocked on `join` would not be answering.
+    fn destroy(self) {
+        unsafe { PostMessageW(self.hwnd(), WM_CLOSE, 0, 0) };
+    }
 }
 
 unsafe fn create_window(
-	parent: HWND,
-	x: i32,
-	y: i32,
-	width: u32,
-	height: u32,
+    parent: HWND,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
 ) -> Result<isize, String> {
-	register_class()?;
-	// WS_CLIPSIBLINGS keeps the webview from painting over us, WS_CLIPCHILDREN
-	// keeps us from painting over mpv.
-	//
-	// WS_EX_NOPARENTNOTIFY is the load-bearing one: without it, creating and
-	// destroying this window *sends* WM_PARENTNOTIFY to the thread that owns the
-	// app window — which is the same thread the command asking for the window is
-	// usually running on. It would wait for itself.
-	let hwnd = CreateWindowExW(
-		WS_EX_NOPARENTNOTIFY,
-		wide(CLASS_NAME).as_ptr(),
-		ptr::null(),
-		WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
-		x,
-		y,
-		width.max(1) as i32,
-		height.max(1) as i32,
-		parent,
-		ptr::null_mut(),
-		GetModuleHandleW(ptr::null()),
-		ptr::null(),
-	);
-	if hwnd.is_null() {
-		return Err(format!("could not create the video window: {}", std::io::Error::last_os_error()));
-	}
-	// A new child does not land in front of the webview on its own — measured,
-	// not assumed: without this the video plays behind the page.
-	SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-	Ok(hwnd as isize)
+    register_class()?;
+    // WS_CLIPSIBLINGS keeps the webview from painting over us, WS_CLIPCHILDREN
+    // keeps us from painting over mpv.
+    //
+    // WS_EX_NOPARENTNOTIFY is the load-bearing one: without it, creating and
+    // destroying this window *sends* WM_PARENTNOTIFY to the thread that owns the
+    // app window — which is the same thread the command asking for the window is
+    // usually running on. It would wait for itself.
+    let hwnd = CreateWindowExW(
+        WS_EX_NOPARENTNOTIFY,
+        wide(CLASS_NAME).as_ptr(),
+        ptr::null(),
+        WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
+        x,
+        y,
+        width.max(1) as i32,
+        height.max(1) as i32,
+        parent,
+        ptr::null_mut(),
+        GetModuleHandleW(ptr::null()),
+        ptr::null(),
+    );
+    if hwnd.is_null() {
+        return Err(format!(
+            "could not create the video window: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    // A new child does not land in front of the webview on its own — measured,
+    // not assumed: without this the video plays behind the page.
+    SetWindowPos(
+        hwnd,
+        HWND_TOP,
+        0,
+        0,
+        0,
+        0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+    );
+    Ok(hwnd as isize)
 }
 
 // ----------------------------------------------------------------------------
@@ -392,14 +411,15 @@ unsafe fn create_window(
 /// one abandoned thread, which unblocks by itself once mpv exits and the pipe
 /// breaks.
 fn with_deadline<T: Send + 'static>(
-	timeout: Duration,
-	job: impl FnOnce() -> Result<T, String> + Send + 'static,
+    timeout: Duration,
+    job: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
-	let (tx, rx) = mpsc::sync_channel(1);
-	std::thread::spawn(move || {
-		let _ = tx.send(job());
-	});
-	rx.recv_timeout(timeout).unwrap_or_else(|_| Err("mpv did not answer in time".into()))
+    let (tx, rx) = mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let _ = tx.send(job());
+    });
+    rx.recv_timeout(timeout)
+        .unwrap_or_else(|_| Err("mpv did not answer in time".into()))
 }
 
 /// Open mpv's IPC pipe. mpv keeps one free instance and only creates the next
@@ -407,19 +427,19 @@ fn with_deadline<T: Send + 'static>(
 /// pipe is busy rather than missing — wait for a free instance instead of
 /// failing the call.
 fn connect(path: &str) -> Result<File, String> {
-	let deadline = Instant::now() + Duration::from_millis(500);
-	loop {
-		match OpenOptions::new().read(true).write(true).open(path) {
-			Ok(pipe) => return Ok(pipe),
-			Err(e)
-				if e.raw_os_error() == Some(ERROR_PIPE_BUSY as i32)
-					&& Instant::now() < deadline =>
-			{
-				unsafe { WaitNamedPipeW(wide(path).as_ptr(), 100) };
-			}
-			Err(e) => return Err(format!("mpv not ready: {e}")),
-		}
-	}
+    let deadline = Instant::now() + Duration::from_millis(500);
+    loop {
+        match OpenOptions::new().read(true).write(true).open(path) {
+            Ok(pipe) => return Ok(pipe),
+            Err(e)
+                if e.raw_os_error() == Some(ERROR_PIPE_BUSY as i32)
+                    && Instant::now() < deadline =>
+            {
+                unsafe { WaitNamedPipeW(wide(path).as_ptr(), 100) };
+            }
+            Err(e) => return Err(format!("mpv not ready: {e}")),
+        }
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -428,39 +448,41 @@ fn connect(path: &str) -> Result<File, String> {
 
 #[derive(Default)]
 struct Player {
-	mpv: Option<Child>,
-	pipe: Option<String>,
-	embed: Option<Embed>,
-	log: Option<PathBuf>,
+    mpv: Option<Child>,
+    pipe: Option<String>,
+    embed: Option<Embed>,
+    log: Option<PathBuf>,
+    url: Option<String>,
 }
 
 /// What the frontend polls to tell "playing" apart from "mpv died silently".
 #[derive(serde::Serialize)]
 pub struct PlayerStatus {
-	/// False once the mpv process has exited (or was never started).
-	running: bool,
-	/// Tail of mpv's own log, so a failure can be reported instead of a black box.
-	log_tail: Option<String>,
+    /// False once the mpv process has exited (or was never started).
+    running: bool,
+    /// Tail of mpv's own log, so a failure can be reported instead of a black box.
+    log_tail: Option<String>,
 }
 
 #[derive(Default)]
 pub struct PlayerState(Mutex<Player>);
 
 impl Player {
-	fn stop(&mut self) {
-		if let Some(mut mpv) = self.mpv.take() {
-			let _ = mpv.kill();
-			let _ = mpv.wait();
-		}
-		if let Some(embed) = self.embed.take() {
-			embed.destroy();
-		}
-		// The pipe is mpv's own; it goes when the process does.
-		self.pipe = None;
-		if let Some(log) = self.log.take() {
-			let _ = std::fs::remove_file(log);
-		}
-	}
+    fn stop(&mut self) {
+        if let Some(mut mpv) = self.mpv.take() {
+            let _ = mpv.kill();
+            let _ = mpv.wait();
+        }
+        if let Some(embed) = self.embed.take() {
+            embed.destroy();
+        }
+        // The pipe is mpv's own; it goes when the process does.
+        self.pipe = None;
+        if let Some(log) = self.log.take() {
+            let _ = std::fs::remove_file(log);
+        }
+        self.url = None;
+    }
 }
 
 /// Nothing to prepare: no display connection and no toolkit backend to force.
@@ -470,14 +492,14 @@ pub fn init() {}
 /// exactly the webview's viewport, so the frontend's coordinates carry over
 /// untranslated.
 fn parent_window(window: &tauri::WebviewWindow) -> Result<isize, String> {
-	let raw = window
-		.window_handle()
-		.map_err(|e| format!("no window handle: {e}"))?
-		.as_raw();
-	match raw {
-		RawWindowHandle::Win32(h) => Ok(h.hwnd.get()),
-		_ => Err("the app window is not a Win32 window".into()),
-	}
+    let raw = window
+        .window_handle()
+        .map_err(|e| format!("no window handle: {e}"))?
+        .as_raw();
+    match raw {
+        RawWindowHandle::Win32(h) => Ok(h.hwnd.get()),
+        _ => Err("the app window is not a Win32 window".into()),
+    }
 }
 
 /// Which mpv to run. Windows has none of its own, so the build embeds one
@@ -485,16 +507,16 @@ fn parent_window(window: &tauri::WebviewWindow) -> Result<isize, String> {
 /// launch. That wins over the Tauri's bundle-resources path (what an
 /// installer-built copy would set up) and a system `mpv.exe` on PATH.
 fn mpv_binary(app: &tauri::AppHandle) -> std::ffi::OsString {
-	use tauri::Manager;
-	if let Some(p) = crate::embedded_binaries::extracted_mpv_path(app) {
-		return p.into_os_string();
-	}
-	app.path()
-		.resolve("mpv/mpv.exe", tauri::path::BaseDirectory::Resource)
-		.ok()
-		.filter(|p| p.is_file())
-		.map(Into::into)
-		.unwrap_or_else(|| "mpv.exe".into())
+    use tauri::Manager;
+    if let Some(p) = crate::embedded_binaries::extracted_mpv_path(app) {
+        return p.into_os_string();
+    }
+    app.path()
+        .resolve("mpv/mpv.exe", tauri::path::BaseDirectory::Resource)
+        .ok()
+        .filter(|p| p.is_file())
+        .map(Into::into)
+        .unwrap_or_else(|| "mpv.exe".into())
 }
 
 /// Start the embedded player: create the child video window and launch mpv.
@@ -512,139 +534,195 @@ fn mpv_binary(app: &tauri::AppHandle) -> std::ffi::OsString {
 /// would also reject mpv's `User-Agent: Lavf/...` string.
 #[tauri::command]
 pub fn player_start(
-	app: tauri::AppHandle,
-	window: tauri::WebviewWindow,
-	state: tauri::State<'_, PlayerState>,
-	url: String,
-	x: i32,
-	y: i32,
-	width: u32,
-	height: u32,
-	user_agent: Option<String>,
-	referer: Option<String>,
-	live: Option<bool>,
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, PlayerState>,
+    url: String,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    user_agent: Option<String>,
+    referer: Option<String>,
+    live: Option<bool>,
+    seekable: Option<bool>,
 ) -> Result<(), String> {
-	// A degenerate box means the webview hadn't laid out yet. Embedding mpv into
-	// a 1x1 window makes it fail to bring up its video output and exit silently
-	// (a black box with a frozen 0:00 timer), so refuse and let the caller retry
-	// once the DOM box has a real size.
-	if width < 16 || height < 16 {
-		return Err(format!("player box not laid out yet ({width}x{height}px) — retrying"));
-	}
+    // A degenerate box means the webview hadn't laid out yet. Embedding mpv into
+    // a 1x1 window makes it fail to bring up its video output and exit silently
+    // (a black box with a frozen 0:00 timer), so refuse and let the caller retry
+    // once the DOM box has a real size.
+    if width < 16 || height < 16 {
+        return Err(format!(
+            "player box not laid out yet ({width}x{height}px) — retrying"
+        ));
+    }
 
-	let ua = user_agent.filter(|s| !s.is_empty());
-	let rf = referer.filter(|s| !s.is_empty());
-	let url = player_direct::play_url(&url, ua.as_deref(), rf.as_deref());
-	let engine = player_direct::is_engine_stream(&url);
-	let is_youtube = url.contains("youtube.com/watch") || url.contains("youtu.be/") || url.contains("youtube.com/shorts/");
+    let ua = user_agent.filter(|s| !s.is_empty());
+    let rf = referer.filter(|s| !s.is_empty());
+    let url = player_direct::play_url(&url, ua.as_deref(), rf.as_deref());
+    let engine = player_direct::is_engine_stream(&url);
+    let local_file = player_direct::is_local_file(&url);
+    let is_youtube = url.contains("youtube.com/watch")
+        || url.contains("youtu.be/")
+        || url.contains("youtube.com/shorts/");
 
-	let parent = parent_window(&window)?;
+    let parent = parent_window(&window)?;
 
-	// The video window's thread has no other way to reach the page.
-	let _ = PAGE.set(window.clone());
+    // The video window's thread has no other way to reach the page.
+    let _ = PAGE.set(window.clone());
 
-	let mut player = state.0.lock().unwrap();
-	player.stop();
+    let mut player = state.0.lock().unwrap();
+    let still = match player.mpv.as_mut() {
+        Some(child) => matches!(child.try_wait(), Ok(None)),
+        None => false,
+    };
+    if player_direct::reuse_engine_process(player.url.as_deref(), &url, still) {
+        return Ok(());
+    }
+    player.stop();
 
-	let embed = Embed::spawn(parent, x, y, width, height)?;
+    let embed = Embed::spawn(parent, x, y, width, height)?;
 
-	let pipe = format!(r"\\.\pipe\rivulet-mpv-{}", std::process::id());
-	// mpv writes its own diagnostics here so `player_status` can report *why* it
-	// died rather than leaving the user staring at a black box.
-	let log = std::env::temp_dir().join(format!("rivulet-mpv-{}.log", std::process::id()));
-	let _ = std::fs::remove_file(&log);
+    let pipe = format!(r"\\.\pipe\rivulet-mpv-{}", std::process::id());
+    // mpv writes its own diagnostics here so `player_status` can report *why* it
+    // died rather than leaving the user staring at a black box.
+    let log = std::env::temp_dir().join(format!("rivulet-mpv-{}.log", std::process::id()));
+    let _ = std::fs::remove_file(&log);
 
-	let mut command = std::process::Command::new(mpv_binary(&app));
-	command
-		.arg(format!("--wid={}", embed.hwnd))
-		.arg("--force-window=yes")
-		.arg("--no-config") // ignore any user mpv config for predictability
-		.arg("--no-osc") // we draw our own controls
-		.arg("--osd-level=0")
-		.arg("--no-input-default-bindings")
-		.arg("--hwdec=auto-safe")
-		// The source is always a local librqbit URL, so mpv's youtube-dl hook can
-		// only ever fail (it spawns yt-dlp three times and logs errors).
-		// YouTube trailer URLs need ytdl enabled so yt-dlp resolves the stream.
-		.arg(if is_youtube { "--ytdl" } else { "--no-ytdl" })
-		// Torrent streams stall (a piece isn't in yet) and librqbit sometimes
-		// drops the connection outright. Cache what we have and reconnect
-		// instead of ending playback.
-		.arg("--cache=yes")
-		// Start the picture as soon as a frame is decoded — do not sit on
-		// "Buffering" while lavf probes a remote HTTP file for several seconds.
-		.arg("--cache-pause-initial=no");
-	for flag in player_direct::cache_cli(engine) {
-		command.arg(*flag);
-	}
-	if live.unwrap_or(false) {
-		for flag in player_direct::live_cli() {
-			command.arg(*flag);
-		}
-	}
-	command
-		.arg(format!("--stream-lavf-o={}", player_direct::stream_lavf_o(engine)))
-		.arg("--keep-open=no")
-		.arg("--no-terminal")
-		.arg("--msg-level=all=warn")
-		.arg(format!("--input-ipc-server={pipe}"))
-		.arg(format!("--log-file={}", log.display()))
-		// mpv.exe is a GUI binary and would not open one anyway, but a console
-		// flashing up on every play is not worth risking.
-		.creation_flags(CREATE_NO_WINDOW);
-	if let Some(ua) = ua.as_deref() {
-		command.arg(format!("--user-agent={ua}"));
-	}
-	if let Some(rf) = rf.as_deref() {
-		command.arg(format!("--referrer={rf}"));
-	}
-	let spawn = command.arg(&url).spawn();
+    let mut command = std::process::Command::new(mpv_binary(&app));
+    command
+        .arg(format!("--wid={}", embed.hwnd))
+        .arg("--force-window=yes")
+        .arg("--no-config") // ignore any user mpv config for predictability
+        .arg("--no-osc") // we draw our own controls
+        .arg("--osd-level=0")
+        .arg("--no-input-default-bindings")
+        .arg("--hwdec=auto-safe")
+        // The source is always a local librqbit URL, so mpv's youtube-dl hook can
+        // only ever fail (it spawns yt-dlp three times and logs errors).
+        // YouTube trailer URLs need ytdl enabled so yt-dlp resolves the stream.
+        .arg(if is_youtube { "--ytdl" } else { "--no-ytdl" })
+        // Torrent streams stall (a piece isn't in yet) and librqbit sometimes
+        // drops the connection outright. Cache what we have and reconnect
+        // instead of ending playback.
+        .arg("--cache=yes")
+        // keep-open=yes below already keeps mpv alive through the first
+        // empty read. cache-pause-initial waits for a second of timeline
+        // before the first frame — on HEVC that is a whole GOP, the
+        // "starts at 1%" wait. Start as soon as a frame decodes.
+        .arg("--cache-pause-initial=no");
+    if local_file {
+        for flag in player_direct::file_cli() {
+            command.arg(*flag);
+        }
+    } else {
+        for flag in player_direct::cache_cli(engine) {
+            command.arg(*flag);
+        }
+    }
+    if live.unwrap_or(false) {
+        for flag in player_direct::live_cli() {
+            command.arg(*flag);
+        }
+    }
+    if engine || local_file {
+        command.arg("--hwdec=no");
+        command.arg("--vd-lavc-dr=no");
+        command.arg("--target-trc=bt.1886");
+        command.arg("--target-colorspace-hint=no");
+    }
+    if !local_file {
+        command.arg(format!(
+            "--stream-lavf-o={}",
+            player_direct::stream_lavf_o(engine, live.unwrap_or(false), seekable.unwrap_or(false))
+        ));
+    }
+    command
+        .arg(if engine {
+            "--keep-open=yes"
+        } else {
+            "--keep-open=no"
+        })
+        .arg("--no-terminal")
+        .arg("--msg-level=all=warn")
+        .arg(format!("--input-ipc-server={pipe}"))
+        .arg(format!("--log-file={}", log.display()))
+        // mpv.exe is a GUI binary and would not open one anyway, but a console
+        // flashing up on every play is not worth risking.
+        .creation_flags(CREATE_NO_WINDOW);
+    if let Some(ua) = ua.as_deref() {
+        command.arg(format!("--user-agent={ua}"));
+    }
+    if let Some(rf) = rf.as_deref() {
+        command.arg(format!("--referrer={rf}"));
+    }
+    let spawn = command.arg(&url).spawn();
 
-	match spawn {
-		Ok(mpv) => {
-			player.mpv = Some(mpv);
-			player.pipe = Some(pipe);
-			player.embed = Some(embed);
-			player.log = Some(log);
-			Ok(())
-		}
-		Err(e) => {
-			embed.destroy();
-			Err(format!("failed to launch mpv: {e} — mpv.exe should sit in the app's mpv folder"))
-		}
-	}
+    match spawn {
+        Ok(mut mpv) => {
+            std::thread::sleep(std::time::Duration::from_millis(80));
+            match mpv.try_wait() {
+                Ok(Some(status)) => {
+                    embed.destroy();
+                    let why = player_socket::log_tail(&log)
+                        .unwrap_or_else(|| status.to_string());
+                    Err(format!("mpv exited immediately: {why}"))
+                }
+                _ => {
+                    player.mpv = Some(mpv);
+                    player.pipe = Some(pipe);
+                    player.embed = Some(embed);
+                    player.log = Some(log);
+                    player.url = Some(url);
+                    Ok(())
+                }
+            }
+        }
+        Err(e) => {
+            embed.destroy();
+            Err(format!(
+                "failed to launch mpv: {e} — mpv.exe should sit in the app's mpv folder"
+            ))
+        }
+    }
 }
 
 /// Stop the embedded player and tear down its window.
 #[tauri::command]
 pub fn player_stop(state: tauri::State<'_, PlayerState>) {
-	state.0.lock().unwrap().stop();
+    state.0.lock().unwrap().stop();
 }
 
 /// Relay one JSON command to mpv's IPC pipe and return its response line.
 /// `command` is a full mpv IPC object, e.g. `{"command":["cycle","pause"]}`.
 #[tauri::command]
 pub fn player_ipc(state: tauri::State<'_, PlayerState>, command: String) -> Result<String, String> {
-	let path = state.0.lock().unwrap().pipe.clone().ok_or("player not running")?;
-	// Most commands answer in microseconds, but `sub-add` downloads the subtitle
-	// file over http before replying, so the window has to cover a slow server.
-	with_deadline(Duration::from_secs(5), move || {
-		let mut pipe = connect(&path)?;
-		let mut line = command.trim().to_string();
-		line.push('\n');
-		pipe.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
+    let path = state
+        .0
+        .lock()
+        .unwrap()
+        .pipe
+        .clone()
+        .ok_or("player not running")?;
+    // Most commands answer in microseconds, but `sub-add` downloads the subtitle
+    // file over http before replying, so the window has to cover a slow server.
+    with_deadline(Duration::from_secs(5), move || {
+        let mut pipe = connect(&path)?;
+        let mut line = command.trim().to_string();
+        line.push('\n');
+        pipe.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
 
-		// Command responses carry an "error" field and no "event" field; async
-		// event lines carry "event" (and some, like end-file, even contain
-		// "reason":"error"). Skip events and return the first real response.
-		for line in BufReader::new(pipe).lines() {
-			let line = line.map_err(|e| e.to_string())?;
-			if !line.contains("\"event\"") && line.contains("\"error\"") {
-				return Ok(line);
-			}
-		}
-		Err("no response from mpv".into())
-	})
+        // Command responses carry an "error" field and no "event" field; async
+        // event lines carry "event" (and some, like end-file, even contain
+        // "reason":"error"). Skip events and return the first real response.
+        for line in BufReader::new(pipe).lines() {
+            let line = line.map_err(|e| e.to_string())?;
+            if !line.contains("\"event\"") && line.contains("\"error\"") {
+                return Ok(line);
+            }
+        }
+        Err("no response from mpv".into())
+    })
 }
 
 /// Read several mpv properties over a single pipe connection.
@@ -655,43 +733,55 @@ pub fn player_ipc(state: tauri::State<'_, PlayerState>, command: String) -> Resu
 /// by `request_id`; a property that fails comes back as null.
 #[tauri::command]
 pub fn player_props(
-	state: tauri::State<'_, PlayerState>,
-	names: Vec<String>,
+    state: tauri::State<'_, PlayerState>,
+    names: Vec<String>,
 ) -> Result<String, String> {
-	let path = state.0.lock().unwrap().pipe.clone().ok_or("player not running")?;
-	with_deadline(Duration::from_secs(2), move || {
-		let mut pipe = connect(&path)?;
+    let path = state
+        .0
+        .lock()
+        .unwrap()
+        .pipe
+        .clone()
+        .ok_or("player not running")?;
+    with_deadline(Duration::from_secs(2), move || {
+        let mut pipe = connect(&path)?;
 
-		let mut req = String::new();
-		for (i, name) in names.iter().enumerate() {
-			req.push_str(
-				&serde_json::json!({ "command": ["get_property", name], "request_id": i })
-					.to_string(),
-			);
-			req.push('\n');
-		}
-		pipe.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
+        let mut req = String::new();
+        for (i, name) in names.iter().enumerate() {
+            req.push_str(
+                &serde_json::json!({ "command": ["get_property", name], "request_id": i })
+                    .to_string(),
+            );
+            req.push('\n');
+        }
+        pipe.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
 
-		let mut out = serde_json::Map::new();
-		for line in BufReader::new(pipe).lines() {
-			let Ok(line) = line else { break };
-			let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
-			// Async event lines carry no request_id and are not answers to anything.
-			let Some(id) = msg.get("request_id").and_then(|v| v.as_u64()) else { continue };
-			let Some(name) = names.get(id as usize) else { continue };
-			let ok = msg.get("error").and_then(|e| e.as_str()) == Some("success");
-			let value = if ok {
-				msg.get("data").cloned().unwrap_or(serde_json::Value::Null)
-			} else {
-				serde_json::Value::Null
-			};
-			out.insert(name.clone(), value);
-			if out.len() == names.len() {
-				break;
-			}
-		}
-		Ok(serde_json::Value::Object(out).to_string())
-	})
+        let mut out = serde_json::Map::new();
+        for line in BufReader::new(pipe).lines() {
+            let Ok(line) = line else { break };
+            let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) else {
+                continue;
+            };
+            // Async event lines carry no request_id and are not answers to anything.
+            let Some(id) = msg.get("request_id").and_then(|v| v.as_u64()) else {
+                continue;
+            };
+            let Some(name) = names.get(id as usize) else {
+                continue;
+            };
+            let ok = msg.get("error").and_then(|e| e.as_str()) == Some("success");
+            let value = if ok {
+                msg.get("data").cloned().unwrap_or(serde_json::Value::Null)
+            } else {
+                serde_json::Value::Null
+            };
+            out.insert(name.clone(), value);
+            if out.len() == names.len() {
+                break;
+            }
+        }
+        Ok(serde_json::Value::Object(out).to_string())
+    })
 }
 
 /// Move/resize the embedded video window to track the frontend's DOM box, and
@@ -702,32 +792,32 @@ pub fn player_props(
 /// surface stops painting over the rest of the UI.
 #[tauri::command]
 pub fn player_set_geometry(
-	state: tauri::State<'_, PlayerState>,
-	x: i32,
-	y: i32,
-	width: u32,
-	height: u32,
-	visible: bool,
-	cutouts: Vec<Cutout>,
+    state: tauri::State<'_, PlayerState>,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    visible: bool,
+    cutouts: Vec<Cutout>,
 ) {
-	let player = state.0.lock().unwrap();
-	if let Some(embed) = player.embed.as_ref() {
-		if visible {
-			embed.move_resize(x, y, width, height);
-			embed.set_shape(width, height, &cutouts);
-		}
-		embed.set_visible(visible);
-	}
+    let player = state.0.lock().unwrap();
+    if let Some(embed) = player.embed.as_ref() {
+        if visible {
+            embed.move_resize(x, y, width, height);
+            embed.set_shape(width, height, &cutouts);
+        }
+        embed.set_visible(visible);
+    }
 }
 
 /// Where the mouse is, in physical pixels relative to the video window.
 #[derive(serde::Serialize)]
 pub struct Pointer {
-	x: i32,
-	y: i32,
-	/// The cursor is on the picture — not on a control cutout, not on another
-	/// window in front of ours, not outside the app.
-	over: bool,
+    x: i32,
+    y: i32,
+    /// The cursor is on the picture — not on a control cutout, not on another
+    /// window in front of ours, not outside the app.
+    over: bool,
 }
 
 /// Poll the cursor, since the webview never sees one that is over the native
@@ -741,65 +831,90 @@ pub struct Pointer {
 /// system — that answers whether or not mpv ever saw the pointer.
 #[tauri::command]
 pub fn player_pointer(state: tauri::State<'_, PlayerState>) -> Option<Pointer> {
-	let player = state.0.lock().unwrap();
-	let (x, y, over) = player.embed.as_ref()?.pointer()?;
-	Some(Pointer { x, y, over })
+    let player = state.0.lock().unwrap();
+    let (x, y, over) = player.embed.as_ref()?.pointer()?;
+    Some(Pointer { x, y, over })
 }
 
 /// Is mpv still alive? If not, hand back the tail of its log so the frontend can
 /// show a real error instead of a silent black rectangle.
 #[tauri::command]
 pub fn player_status(state: tauri::State<'_, PlayerState>) -> PlayerStatus {
-	let mut player = state.0.lock().unwrap();
-	let running = match player.mpv.as_mut() {
-		// try_wait returns Ok(None) while the child is still running.
-		Some(child) => matches!(child.try_wait(), Ok(None)),
-		None => false,
-	};
+    let mut player = state.0.lock().unwrap();
+    let running = match player.mpv.as_mut() {
+        // try_wait returns Ok(None) while the child is still running.
+        Some(child) => matches!(child.try_wait(), Ok(None)),
+        None => false,
+    };
 
-	let log_tail = player.log.as_ref().and_then(|p| std::fs::read_to_string(p).ok()).map(|s| {
-		// mpv tags every line with its level — "[ 2.06][e][stream] Failed to
-		// open …". Match on that rather than on the word "error", which also
-		// occurs in the build flags mpv prints in its header (-Wno-error=…)
-		// and would push the real failure out of the excerpt.
-		let lines: Vec<&str> =
-			s.lines().filter(|l| l.contains("][e]") || l.contains("][fatal]")).collect();
-		let tail = if lines.is_empty() {
-			s.lines().rev().take(8).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>()
-		} else {
-			lines
-		};
-		// See player_socket::log_tail — a live stream URL has the account's
-		// password in its path and this string leaves the process.
-		crate::log_redact::redact(&tail.join("\n")).chars().take(1200).collect()
-	});
+    let log_tail = player
+        .log
+        .as_ref()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|s| {
+            // mpv tags every line with its level — "[ 2.06][e][stream] Failed to
+            // open …". Match on that rather than on the word "error", which also
+            // occurs in the build flags mpv prints in its header (-Wno-error=…)
+            // and would push the real failure out of the excerpt.
+            let lines: Vec<&str> = s
+                .lines()
+                .filter(|l| l.contains("][e]") || l.contains("][fatal]"))
+                .collect();
+            let tail = if lines.is_empty() {
+                s.lines()
+                    .rev()
+                    .take(8)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect::<Vec<_>>()
+            } else {
+                lines
+            };
+            // See player_socket::log_tail — a live stream URL has the account's
+            // password in its path and this string leaves the process.
+            crate::log_redact::redact(&tail.join("\n"))
+                .chars()
+                .take(1200)
+                .collect()
+        });
 
-	PlayerStatus { running, log_tail }
+    PlayerStatus { running, log_tail }
 }
 
 /// Capture the current video frame as a JPEG data-URL via mpv's `screenshot-to-file`.
 #[tauri::command]
 pub fn player_screenshot(state: tauri::State<'_, PlayerState>) -> Result<String, String> {
-	let path = state.0.lock().unwrap().pipe.clone().ok_or("player not running")?;
-	let tmp = std::env::temp_dir().join(format!("rivulet-screenshot-{}.jpg", std::process::id()));
-	let cmd = serde_json::json!({
-		"command": ["screenshot-to-file", tmp.to_string_lossy(), "video"]
-	}).to_string();
-	with_deadline(Duration::from_secs(5), move || {
-		let mut pipe = connect(&path)?;
-		let mut line = cmd.trim().to_string();
-		line.push('\n');
-		pipe.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
-		for line in BufReader::new(pipe).lines() {
-			let line = line.map_err(|e| e.to_string())?;
-			if !line.contains("\"event\"") && line.contains("\"error\"") {
-				return Ok(line);
-			}
-		}
-		Err("no response from mpv".into())
-	})?;
-	let bytes = std::fs::read(&tmp).map_err(|e| e.to_string())?;
-	let _ = std::fs::remove_file(&tmp);
-	use base64::Engine;
-	Ok(format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(&bytes)))
+    let path = state
+        .0
+        .lock()
+        .unwrap()
+        .pipe
+        .clone()
+        .ok_or("player not running")?;
+    let tmp = std::env::temp_dir().join(format!("rivulet-screenshot-{}.jpg", std::process::id()));
+    let cmd = serde_json::json!({
+        "command": ["screenshot-to-file", tmp.to_string_lossy(), "video"]
+    })
+    .to_string();
+    with_deadline(Duration::from_secs(5), move || {
+        let mut pipe = connect(&path)?;
+        let mut line = cmd.trim().to_string();
+        line.push('\n');
+        pipe.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
+        for line in BufReader::new(pipe).lines() {
+            let line = line.map_err(|e| e.to_string())?;
+            if !line.contains("\"event\"") && line.contains("\"error\"") {
+                return Ok(line);
+            }
+        }
+        Err("no response from mpv".into())
+    })?;
+    let bytes = std::fs::read(&tmp).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_file(&tmp);
+    use base64::Engine;
+    Ok(format!(
+        "data:image/jpeg;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(&bytes)
+    ))
 }

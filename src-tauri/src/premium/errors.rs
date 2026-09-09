@@ -106,11 +106,9 @@ impl From<reqwest::Error> for PremiumError {
     fn from(err: reqwest::Error) -> Self {
         if err.is_timeout() {
             PremiumError::Timeout
-        }
-        else if err.is_connect() {
+        } else if err.is_connect() {
             PremiumError::Network(err.to_string())
-        }
-        else if err.is_status() {
+        } else if err.is_status() {
             let status = err.status();
             match status {
                 Some(s) if s.as_u16() == 401 || s.as_u16() == 403 => PremiumError::AuthFailed,
@@ -119,8 +117,7 @@ impl From<reqwest::Error> for PremiumError {
                 Some(s) if s.is_server_error() => PremiumError::ServerError(s.to_string()),
                 _ => PremiumError::Network(err.to_string()),
             }
-        }
-        else {
+        } else {
             PremiumError::Network(err.to_string())
         }
     }

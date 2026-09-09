@@ -33,8 +33,20 @@ import { isDesktop } from './platform'
  * `<video>` element below.
  */
 export function hasNativePlayer() {
-  // Not running under Tauri at all counts as no, which `isDesktop` already says.
-  return isDesktop()
+  try {
+    const os = platform()
+    return os === 'linux' || os === 'windows' || os === 'macos'
+  }
+  catch {
+    // The OS plugin can throw before Tauri is ready. Desktop still has mpv;
+    // Android's user agent says so, and it uses libVLC instead.
+    try {
+      return isTauri() && !/android/i.test(navigator.userAgent)
+    }
+    catch {
+      return false
+    }
+  }
 }
 
 /**
@@ -377,6 +389,12 @@ export function videoEngine(video: HTMLVideoElement): PlayerEngine {
     // warn wrongly.
     'silent': () => 'webkitAudioDecodedByteCount' in video
       && !(video as unknown as { webkitAudioDecodedByteCount: number }).webkitAudioDecodedByteCount,
+    'audio-params': () => {
+      const n = (video as unknown as { webkitAudioDecodedByteCount?: number }).webkitAudioDecodedByteCount
+      if (typeof n === 'number' && n > 0)
+        return { 'samplerate': 48000, 'channel-count': 2 }
+      return { 'samplerate': 0, 'channel-count': 0 }
+    },
     // Video dimensions for the resolution badge — Chromium/Safari expose the
     // decoded size once the first frame is painted.
     'video-params': () => ({

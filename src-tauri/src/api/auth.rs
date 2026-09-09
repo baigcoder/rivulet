@@ -75,8 +75,8 @@ fn load_or_create_jwt_key() -> Result<Vec<u8>, ApiError> {
             .map_err(|e| ApiError::Internal(e.to_string()))?;
         match entry.get_password() {
             Ok(hex) => {
-                let bytes = hex::decode(hex.trim())
-                    .map_err(|e| ApiError::Internal(format!("hex: {e}")))?;
+                let bytes =
+                    hex::decode(hex.trim()).map_err(|e| ApiError::Internal(format!("hex: {e}")))?;
                 if bytes.len() != 32 {
                     return Err(ApiError::Internal("jwt key wrong length".into()));
                 }
@@ -102,8 +102,8 @@ fn load_or_create_jwt_key() -> Result<Vec<u8>, ApiError> {
         std::fs::create_dir_all(&base).ok();
         let path = base.join("rivulet-api-jwt.bin");
         if path.exists() {
-            let mut file = std::fs::File::open(&path)
-                .map_err(|e| ApiError::Internal(e.to_string()))?;
+            let mut file =
+                std::fs::File::open(&path).map_err(|e| ApiError::Internal(e.to_string()))?;
             let mut bytes = Vec::new();
             file.read_to_end(&mut bytes)
                 .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -174,12 +174,8 @@ pub fn mint_api_token() -> Result<(String, i64), ApiError> {
         exp,
         iat: now,
     };
-    let token = encode(
-        &Header::default(),
-        &claims,
-        &EncodingKey::from_secret(key),
-    )
-    .map_err(|e| ApiError::Internal(format!("encode: {e}")))?;
+    let token = encode(&Header::default(), &claims, &EncodingKey::from_secret(key))
+        .map_err(|e| ApiError::Internal(format!("encode: {e}")))?;
     Ok((token, exp))
 }
 
@@ -215,12 +211,8 @@ pub fn mint_stream_token(
         channel_id: channel_id.to_string(),
         jti: hex::encode(nonce),
     };
-    encode(
-        &Header::default(),
-        &claims,
-        &EncodingKey::from_secret(key),
-    )
-    .map_err(|e| ApiError::Internal(format!("encode: {e}")))
+    encode(&Header::default(), &claims, &EncodingKey::from_secret(key))
+        .map_err(|e| ApiError::Internal(format!("encode: {e}")))
 }
 
 pub fn verify_stream_token(

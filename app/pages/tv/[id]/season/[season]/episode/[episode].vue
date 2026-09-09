@@ -111,7 +111,6 @@ const playHandoff = computed(() => ({
                 :season="seasonNumber"
                 :episode="episodeNumber"
                 size="large"
-                @pick="torrentPickerRef?.open()"
               />
               <torrent-picker
                 :id="id"

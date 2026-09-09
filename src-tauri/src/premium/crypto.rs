@@ -153,8 +153,8 @@ fn load_or_create_master_key_android() -> Result<[u8; 32], PremiumError> {
     use std::io::{Read, Write};
     let path = master_key_path_android()?;
     if path.exists() {
-        let mut file = std::fs::File::open(&path)
-            .map_err(|e| PremiumError::CredentialError(e.to_string()))?;
+        let mut file =
+            std::fs::File::open(&path).map_err(|e| PremiumError::CredentialError(e.to_string()))?;
         let mut bytes = [0u8; 32];
         file.read_exact(&mut bytes)
             .map_err(|e| PremiumError::CredentialError(e.to_string()))?;

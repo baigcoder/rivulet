@@ -7,7 +7,7 @@
 // it is not), and both are pure, so both are checkable without a network.
 import assert from 'node:assert'
 import { readFileSync } from 'node:fs'
-import { MAX_AUTO_SKIPS, nextPlayable, pool, probeVerdict } from '../app/utils/livehealth'
+import { audioParamsReady, createChannelHealth, liveLocked, MAX_AUTO_SKIPS, nextPlayable, pool, probeVerdict } from '../app/utils/livehealth'
 import { liveTvBackPath, liveTvFrom, readLivePlay, saveLivePlay } from '../app/utils/liveNav'
 import { connectionLimitMessage, fmtHudTime, friendlyPlaybackError, isProviderConnectionLimit, isProviderVodSlateDuration } from '../app/utils/playbackError'
 import '../scripts/i18n-stub.ts'
@@ -23,6 +23,14 @@ assert.equal(probeVerdict(403), 'offline', 'geoblocked is offline here')
 assert.equal(probeVerdict(404), 'offline', 'gone is gone')
 assert.equal(probeVerdict(502), 'offline', 'the proxy answers 502 when the upstream refuses the connection')
 
+assert.equal(audioParamsReady(null), false)
+assert.equal(audioParamsReady({}), false)
+assert.equal(audioParamsReady({ samplerate: 48000 }), true, 'sound is a lock-on')
+assert.equal(audioParamsReady({ 'channel-count': 2 }), true)
+assert.equal(liveLocked(0, false), false, 'HLS unpaused with no decoder is not live')
+assert.equal(liveLocked(0, true), true, 'audio without video-params must not auto-skip')
+assert.equal(liveLocked(1920, false), true)
+
 // --- The skip ---------------------------------------------------------------
 
 const list = [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }]
@@ -34,6 +42,26 @@ assert.equal(nextPlayable(list, 0, new Set(['b', 'c', 'd'])), -1, 'a dead tail i
 assert.equal(nextPlayable(list, 3, new Set()), -1, 'the end of the list is the end of the list')
 assert.equal(nextPlayable(list, 3, new Set(['c']), -1), 1, 'and it walks backwards for channel-down')
 assert.equal(nextPlayable(list, -1, new Set()), 0, 'from nowhere, the first')
+
+// --- The book ----------------------------------------------------------------
+// Playback writes the map; the cards only read it. A GET 403 is not a
+// verdict (those CDNs refuse a fetch and still play), so the only writer
+// the UI trusts is markLive / markOffline.
+
+const book = createChannelHealth()
+assert.equal(book.healthOf('a'), 'unknown', 'unseen is unknown, not live')
+book.markLive('a')
+assert.equal(book.healthOf('a'), 'live')
+book.markOffline('a')
+assert.equal(book.healthOf('a'), 'offline', 'a later failure wins')
+assert.ok(book.offlineIds.value.has('a'))
+assert.ok(!book.liveIds.value.has('a'), 'offline and live are exclusive')
+book.markLive('a')
+assert.equal(book.healthOf('a'), 'live', 'a picture this session clears offline')
+book.markOffline('b')
+book.reset()
+assert.equal(book.healthOf('a'), 'unknown', 'disconnect / new session forgets')
+assert.equal(book.healthOf('b'), 'unknown')
 
 // The bound is the point: a whole dead category must not flash the player
 // through the entire list and land somewhere the viewer never chose.
@@ -96,6 +124,20 @@ assert.ok(
   'and one identifies the set, so adding a playlist re-imports once',
 )
 
+// iptv-org retired the hosted XMLTV tree. The old URLs 404; a miss is an
+// empty guide, not a connection error, and the 25MB replacement is not
+// fetched on every boot.
+const epg = readFileSync(new URL('../src-tauri/src/iptv/epg.rs', import.meta.url), 'utf8')
+const libRs = readFileSync(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8')
+assert.doesNotMatch(epg, /api\/epg\/channels\.json/, 'iptv-org retired epg/channels.json')
+assert.doesNotMatch(epg, /api\/epg\/guides\//, 'and the per-channel XMLTV files')
+assert.match(epg, /api\/guides\.json/, 'guides.json is the replacement map')
+assert.doesNotMatch(
+  libRs,
+  /epg::fetch_channel_mapping/,
+  'do not download 25MB of guides.json on boot',
+)
+
 // Browse must not probe streams. Each visible batch used to open four
 // upstreams through the proxy; that froze the page and made Back dead.
 const freePage = readFileSync(new URL('../app/pages/live-tv/free.vue', import.meta.url), 'utf8')
@@ -105,9 +147,19 @@ const liveCard = readFileSync(new URL('../app/components/live-tv/LiveChannelCard
 assert.match(liveCard, /\$t\('LIVE'\)/, 'each Free TV card shows a LIVE tag')
 assert.match(liveCard, /\$t\('Offline'\)/, 'and flips it to Offline when the stream is dead')
 assert.match(liveCard, /absolute start-1\.5 top-1\.5/, 'the health tag sits on the artwork, top start')
+assert.match(liveCard, /live-tv-live-status-badge/, 'LIVE / Offline is one chip, shared with Premium')
+const liveBadge = readFileSync(new URL('../app/components/live-tv/LiveStatusBadge.vue', import.meta.url), 'utf8')
+assert.match(liveBadge, /health === 'offline'/, 'the chip reads the session book, not a probe')
+assert.match(liveBadge, /\$t\('LIVE'\)/)
+assert.match(liveBadge, /\$t\('Offline'\)/)
 assert.match(freePage, /goHub|liveTvBackPath/, 'Free TV needs an explicit way back to the hub')
 
 const watchPage = readFileSync(new URL('../app/pages/live-tv/watch.vue', import.meta.url), 'utf8')
+const iptvSrc = readFileSync(new URL('../app/utils/iptv.ts', import.meta.url), 'utf8')
+assert.match(iptvSrc, /export function wrapFreeStreamUrl/, 'Play wraps in JS, not via IPC')
+assert.match(iptvSrc, /127\.0\.0\.1:3031\/stream/, 'the wrap is the existing loopback proxy')
+assert.ok(iptvSrc.includes('127\\.0\\.0\\.1:3031'), 'already-wrapped URLs must not nest')
+assert.match(iptvSrc, /Promise\.resolve\(wrapFreeStreamUrl/, 'the old async name is a wrap, not invoke')
 assert.doesNotMatch(watchPage, /\bAspectMode\b/, 'the free player must not auto-import AspectMode — that crashed setup')
 assert.match(watchPage, /from '~\/utils\/aspectRatio'/, 'aspect helpers are imported, not auto-injected')
 assert.match(watchPage, /:aspect="aspectRatio"/, 'Fit/Center/Stretch is a player prop, not a CSS-only guess')
@@ -118,7 +170,16 @@ assert.doesNotMatch(watchPage, /function flag\b/, 'local flag() collides with ut
 assert.match(watchPage, /readLivePlay/, 'the player must recover the staged stream if the zap list is gone')
 assert.match(watchPage, /@go-live=/, 'resume after pause must offer a jump back to the live edge')
 assert.doesNotMatch(watchPage, /playNow\(rawUrl/, 'the free player must never hand mpv a raw upstream URL')
-assert.match(watchPage, /proxyFreeStreamUrl\([\s\S]*\.ts/, 'm3u8 failure retries .ts through the loopback proxy')
+assert.match(watchPage, /wrapFreeStreamUrl/, 'Play wraps the M3U URL in-process, not via IPC')
+assert.match(watchPage, /playStagedNow/, 'a staged stream must start mpv on this tick')
+assert.match(watchPage, /wrapChannel\(\s*targetAlt/, 'm3u8 failure retries .ts through the loopback wrap')
+assert.doesNotMatch(watchPage, /logo: ch\.logoUrl/, 'artwork URLs must not go in the query string')
+assert.doesNotMatch(watchPage, /iptvProxyHealth/, 'a health ping that always returns true only delayed Play')
+assert.doesNotMatch(
+  freePage,
+  /path: localePath\('\/live-tv\/watch'\),\s*query: \{[^}]*logo:/,
+  'browse must not put artwork URLs in the player query',
+)
 assert.match(freePage, /saveLivePlay/, 'play must stage the stream before navigating')
 assert.match(watchPage, /@retry="\(\) => void onRetry\(\)"/, 'Retry must restart the player, not only re-mint a cached proxy URL')
 assert.match(
@@ -138,15 +199,10 @@ assert.match(
   /if \(!fromEngine\.value\) \{/,
   'Direct HTTP skips the HTTP probe — mpv starts instead of waiting on fetch',
 )
-assert.match(
+assert.doesNotMatch(
   playerSrc,
-  /if \(local\) \{[\s\S]*reader\.read\(\)/,
-  'a torrent probe waits for a real first byte, not merely its HTTP headers',
-)
-assert.match(
-  playerSrc,
-  /else \{[\s\S]*res\.body\?\.cancel/,
-  'a live-stream probe still releases its never-ending body instead of reading it',
+  /waitForStream\(props\.src/,
+  'engine must not GET the stream before mpv — that FileStream starves the first pieces',
 )
 assert.match(
   playerSrc,
@@ -155,12 +211,12 @@ assert.match(
 )
 assert.match(
   playerSrc,
-  /isLive\.value && props\.resolving/,
-  'live mode must not paint a centre overlay while the page owns the notice',
+  /if \(isLive\.value\)\s*return ''/,
+  'live mode must not paint a centre overlay — the page overlay owns connecting and errors',
 )
 assert.match(
   playerSrc,
-  /fromEngine\.value && started\.value && !duration\.value/,
+  /fromEngine\.value \|\| fromDisk\.value/,
   'unknown duration is a torrent stall, not Direct-play Buffering',
 )
 assert.match(
@@ -170,18 +226,152 @@ assert.match(
 )
 assert.match(
   playerSrc,
-  /opening = !fromEngine\.value && !!props\.src && \(/,
-  'the native surface hides until a frame exists, including free and premium live',
+  /opening = !!props\.src && \(/,
+  'the native surface hides until a frame exists — torrents included, or 0:00 covers Buffering',
+)
+assert.match(
+  playerSrc,
+  /isLive\.value && !!props\.resolving && awaitingFrame/,
+  'live Connecting keeps mpv unmapped so the overlay is not a black --wid window',
+)
+assert.match(
+  playerSrc,
+  /'audio-params'/,
+  'the player must poll audio-params — live often has sound before a frame',
+)
+assert.match(
+  playerSrc,
+  /videoWidth\.value === 0 && !hasAudio/,
+  'decoded audio maps the window and stops the skip timer',
+)
+assert.match(
+  playerSrc,
+  /isLive\.value && \(videoWidth\.value > 0 \|\| hasAudio\.value\)/,
+  'a live stream that already has sound must not emit failed',
+)
+assert.match(
+  playerSrc,
+  /native && !isLive && \(centre === 'loading'/,
+  'live Connecting must not punch the whole window — that hides the HUD under a black hole',
+)
+assert.doesNotMatch(
+  playerSrc,
+  /isLive\.value \|\| \(typeof p\['time-pos'\]/,
+  'live must not fake 1280p — HLS is unpaused with no frame',
 )
 assert.match(
   watchPage,
-  /hasPicture/,
+  /hasPicture\.value = videoW > 0/,
   'the free HUD must not call a black screen "playing"',
 )
 assert.match(
   watchPage,
-  /data-cut/,
-  'the connecting spinner must punch through the native mpv window',
+  /liveLocked/,
+  'sound or a frame stops Connecting — audio-only lock-on must not zap next',
+)
+assert.match(
+  watchPage,
+  /if \(locked\.value\)\s*return/,
+  'a playing channel must not enter onPlaybackFailed',
+)
+assert.match(
+  watchPage,
+  /!locked\.value && !overlayError/,
+  'the connect timer must not fire once sound or a frame exists',
+)
+assert.match(
+  watchPage,
+  /armConnectTimer/,
+  'a 404 loop that never kills mpv must still leave Connecting and then skip',
+)
+const overlaySrc = readFileSync(new URL('../app/components/live-tv/LivePlayerOverlay.vue', import.meta.url), 'utf8')
+assert.match(
+  overlaySrc,
+  /v-if="busy && !error"[\s\S]*?data-cut[\s\S]*?bg-\[#0F1117\]/,
+  'Connecting is a small opaque card, not a full-screen black sheet',
+)
+assert.doesNotMatch(
+  overlaySrc,
+  /v-if="busy && !error"[\s\S]{0,80}data-cut/,
+  'data-cut on the full-screen wrapper punches the whole player away',
+)
+assert.match(
+  overlaySrc,
+  /busy && !error[\s\S]*proxyLogo\(channelLogo\)/,
+  'Connecting names the channel with its mark, not only a spinner',
+)
+assert.match(
+  overlaySrc,
+  /busy && !error[\s\S]*\$t\('Next channel'\)[\s\S]*\$t\('Retry'\)[\s\S]*\$t\('Back'\)/,
+  'Connecting must offer Skip, Retry and Back — a full-screen spinner with no actions trapped the viewer',
+)
+assert.match(
+  overlaySrc,
+  /relative flex-1[\s\S]*v-if="busy && !error"[\s\S]*<!-- QUICKZAP/,
+  'Connecting sits in the middle band so Back and transport stay on screen',
+)
+assert.match(
+  overlaySrc,
+  /<header[\s\S]*?class="[^"]*relative z-30/,
+  'live Back stays above the connecting card',
+)
+assert.match(
+  overlaySrc,
+  /<footer[\s\S]*?class="[^"]*relative z-30/,
+  'live transport stays above the connecting card',
+)
+assert.match(
+  overlaySrc,
+  /v-if="error"[\s\S]*channelName/,
+  'Playback Error names the channel that failed',
+)
+assert.match(
+  overlaySrc,
+  /canSkipChannel[\s\S]*\$t\('Next channel'\)/,
+  'Playback Error Next is any other channel, not only a later index',
+)
+assert.match(
+  overlaySrc,
+  /ref="retryBtn"/,
+  'Retry takes focus when playback fails so a remote is not stuck on Back',
+)
+assert.match(
+  overlaySrc,
+  /offlineIds/,
+  'the zap list must know which channels this session already gave up on',
+)
+assert.match(
+  overlaySrc,
+  /health === 'offline'/,
+  'and tag those rows Offline so the lineup matches the grid',
+)
+assert.match(
+  watchPage,
+  /watch\(locked[\s\S]*liveTv\.markLive/,
+  'LIVE is a decoded frame or decoded audio, not an HLS clock that ticks on a black window',
+)
+assert.match(
+  watchPage,
+  /:offline-ids="liveTv.offlineIds"/,
+  'the overlay reads the same book the grid does',
+)
+const failFn = watchPage.slice(
+  watchPage.indexOf('async function onPlaybackFailed'),
+  watchPage.indexOf('async function onRetry'),
+)
+assert.ok(
+  failFn.includes('attemptedFallback') && failFn.indexOf('attemptedFallback') < failFn.indexOf('markOffline'),
+  'a .ts/.m3u8 swap must run before the channel is tagged Offline',
+)
+assert.match(
+  watchPage,
+  /function skipChannel/,
+  'a dead channel from Connecting wraps the zap list instead of no-op on the last item',
+)
+assert.doesNotMatch(
+  watchPage,
+  /v-if="waiting"/,
+  'Connecting… is the overlay once — a second page spinner stacked the same sentence twice',
 )
 assert.match(
   playerSrc,
@@ -204,7 +394,7 @@ assert.match(vlcPlayer, /fun applyVideoScale/, 'Fit/Center/Stretch must drive li
 assert.match(vlcPlayer, /SURFACE_FIT_SCREEN/, 'Center is crop-to-fill')
 assert.match(vlcPlayer, /setAspectRatio/, 'Stretch forces the picture to the view')
 assert.match(vlcPlayer, /http-user-agent=Mozilla/, 'libVLC must not hit debrid as Lavf')
-assert.match(vlcPlayer, /length <= 0 \|\| pos < duration/, 'opening a Direct URL is a stall, not a pause')
+assert.match(vlcPlayer, /else \(pos < duration\)/, 'opening a Direct URL is a stall, not a pause')
 assert.match(vlcPlayer, /video-params/, 'first frame is what dismisses Loading on Android')
 
 const androidMain = readFileSync(new URL('../src-tauri/gen/android/app/src/main/java/io/github/rivulet/rivulet/MainActivity.kt', import.meta.url), 'utf8')
@@ -278,12 +468,17 @@ saveLivePlay({
 assert.equal(readLivePlay()?.id, 'a', 'staged play survives a store reset')
 
 assert.match(
-  friendlyPlaybackError('[ffmpeg] tcp: Failed to resolve hostname dead.example: Name or service not known'),
+  friendlyPlaybackError('[ffmpeg] tcp: Failed to resolve hostname dead.example: Name or service not known', 'live'),
   /offline|could not be reached/i,
   'DNS failures become a viewer sentence, not a log tail',
 )
 assert.doesNotMatch(
-  friendlyPlaybackError('[stream] Failed to open https://example/playlist.m3u8'),
+  friendlyPlaybackError('[ffmpeg] tcp: Failed to resolve hostname dead.example: Name or service not known', 'vod'),
+  /channel/i,
+  'a film must not say try another channel',
+)
+assert.doesNotMatch(
+  friendlyPlaybackError('[stream] Failed to open https://example/playlist.m3u8', 'live'),
   /ffmpeg|\[stream\]/,
   'decoder noise is never echoed back',
 )

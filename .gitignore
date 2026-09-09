@@ -44,4 +44,3 @@ packaging/flatpak/generated
 *.msi
 *.dmg
 *.exe
-landing.html

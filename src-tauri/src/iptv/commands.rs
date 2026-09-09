@@ -310,7 +310,11 @@ pub async fn live_resolve_stream(
 
     let stream_url = row.stream_url.clone();
 
-    let proxied = proxy_free_stream_url(stream_url.clone(), row.user_agent.clone(), row.referer.clone());
+    let proxied = proxy_free_stream_url(
+        stream_url.clone(),
+        row.user_agent.clone(),
+        row.referer.clone(),
+    );
     Ok(LiveStream {
         id: row.id,
         name: row.name,

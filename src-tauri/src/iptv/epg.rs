@@ -1,18 +1,13 @@
 //! iptv-org EPG (Electronic Program Guide) for free TV channels.
 //!
-//! The pipeline is two steps:
+//! iptv-org used to host a small `epg/channels.json` map plus one XMLTV
+//! file per channel under `epg/guides/{id}.xml`. Both URLs 404 now. The
+//! replacement is `guides.json`: each row names an iptv-org channel id
+//! (the same `tvg-id` the playlist uses) and, when someone is actually
+//! publishing a guide, a `sources` list with an XML or gzip URL.
 //!
-//! 1. Fetch `https://iptv-org.github.io/api/epg/channels.json` once and
-//!    cache it for 7 days. The file maps an iptv-org `tvg-id`
-//!    (e.g. `"BBCNews.uk"`) to an XMLTV guide id
-//!    (e.g. `"BBC1.uk"`). Cached on disk; the file is small.
-//!
-//! 2. When the player asks for a channel's EPG, look up the XMLTV
-//!    guide id, fetch `https://iptv-org.github.io/api/epg/guides/{id}.xml`
-//!    (gzip-compressed XMLTV), decompress, parse, and return the
-//!    programs for the next 24 hours. The result is cached in memory
-//!    for 1 hour — guides are large and change on the order of days,
-//!    not seconds, so an in-memory cache is plenty.
+//! Most rows have no source — iptv-org no longer hosts the XML itself.
+//! A miss is an empty guide, not a connection error.
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -28,48 +23,79 @@ use tauri::Manager;
 use super::errors::IptvError;
 use super::models::EpgProgram;
 
-const CHANNELS_URL: &str = "https://iptv-org.github.io/api/epg/channels.json";
-const CHANNELS_CACHE: &str = "epg_channels.json";
-const CHANNELS_TTL: Duration = Duration::from_secs(7 * 24 * 3600);
+const GUIDES_URL: &str = "https://iptv-org.github.io/api/guides.json";
+const GUIDES_CACHE: &str = "epg_guide_urls.json";
+const GUIDES_TTL: Duration = Duration::from_secs(7 * 24 * 3600);
 const GUIDE_TTL: Duration = Duration::from_secs(3600);
 
 #[derive(Debug, Deserialize)]
-struct WireEpgChannel {
-    id: String,
+struct WireSource {
     #[serde(default)]
-    xmltv_id: Option<String>,
+    url: String,
+    #[serde(default)]
+    format: String,
 }
 
-/// Map of `tvg-id` -> XMLTV guide id, with the file cached on disk.
+#[derive(Debug, Deserialize)]
+struct WireGuide {
+    #[serde(default)]
+    channel: Option<String>,
+    #[serde(default)]
+    sources: Vec<WireSource>,
+}
+
+/// Prefer a gzip body (we already sniff it) then plain XML.
+fn pick_source_url(sources: &[WireSource]) -> Option<String> {
+    let usable = |want: &str| {
+        sources
+            .iter()
+            .find(|s| !s.url.is_empty() && s.format.eq_ignore_ascii_case(want))
+    };
+    usable("GZIP")
+        .or_else(|| usable("XML"))
+        .or_else(|| sources.iter().find(|s| !s.url.is_empty()))
+        .map(|s| s.url.clone())
+}
+
+/// Map of `tvg-id` -> guide URL, with the compact map cached on disk.
+/// The upstream JSON is tens of megabytes; we only keep rows that name
+/// a real source, so a cache hit is a small file and a miss is one
+/// download every seven days.
 #[allow(dead_code)] // Tauri command system — only invoked from JS.
 pub async fn fetch_channel_mapping(
     app: &tauri::AppHandle,
 ) -> Result<HashMap<String, String>, IptvError> {
-    let path = cache_path(app, CHANNELS_CACHE);
+    let path = cache_path(app, GUIDES_CACHE);
     if let Some(hit) = read_mapping_cache(&path) {
         return Ok(hit);
     }
 
     let body = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(60))
         .user_agent(concat!(
             "Rivulet/",
             env!("CARGO_PKG_VERSION"),
             " (iptv EPG data)"
         ))
         .build()?
-        .get(CHANNELS_URL)
+        .get(GUIDES_URL)
         .send()
         .await?
         .error_for_status()?
         .text()
         .await?;
 
-    let wire: Vec<WireEpgChannel> = serde_json::from_str(&body)?;
-    let map: HashMap<String, String> = wire
-        .into_iter()
-        .filter_map(|w| w.xmltv_id.map(|x| (w.id, x)))
-        .collect();
+    let wire: Vec<WireGuide> = serde_json::from_str(&body)?;
+    let mut map = HashMap::new();
+    for g in wire {
+        let Some(id) = g.channel.filter(|s| !s.is_empty()) else {
+            continue;
+        };
+        let Some(url) = pick_source_url(&g.sources) else {
+            continue;
+        };
+        map.entry(id).or_insert(url);
+    }
     write_mapping_cache(&path, &map)?;
     Ok(map)
 }
@@ -80,7 +106,7 @@ fn read_mapping_cache(path: &PathBuf) -> Option<HashMap<String, String>> {
     let age = std::time::SystemTime::now()
         .duration_since(modified)
         .unwrap_or(Duration::ZERO);
-    if age > CHANNELS_TTL {
+    if age > GUIDES_TTL {
         return None;
     }
     let text = std::fs::read_to_string(path).ok()?;
@@ -109,25 +135,31 @@ type GuideCache = HashMap<String, (Vec<EpgProgram>, std::time::Instant)>;
 
 static GUIDE_CACHE: Lazy<Mutex<GuideCache>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
-/// Look up the XMLTV guide id for a channel's `tvg-id`, then fetch and
-/// parse its guide. Returns programs for the next 24 hours, or an empty
-/// list if the channel has no guide or the network is unreachable.
+/// Look up a published XMLTV URL for this `tvg-id` and parse the next
+/// 24 hours. No row, or a dead URL, is an empty list — never a playback
+/// error. The playlist still plays without a guide.
 #[allow(dead_code)] // Tauri command system — only invoked from JS.
 pub async fn fetch_guide(
     app: &tauri::AppHandle,
     tvg_id: &str,
 ) -> Result<Vec<EpgProgram>, IptvError> {
-    let mapping = fetch_channel_mapping(app).await?;
-    let Some(xmltv_id) = mapping.get(tvg_id) else {
+    let mapping = match fetch_channel_mapping(app).await {
+        Ok(m) => m,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let Some(url) = mapping.get(tvg_id) else {
         return Ok(Vec::new());
     };
 
-    if let Some(hit) = read_guide_cache(xmltv_id) {
+    if let Some(hit) = read_guide_cache(tvg_id) {
         return Ok(hit);
     }
 
-    let programs = download_and_parse_guide(xmltv_id).await?;
-    write_guide_cache(xmltv_id, &programs);
+    let programs = match download_and_parse_guide(url, tvg_id).await {
+        Ok(p) => p,
+        Err(_) => Vec::new(),
+    };
+    write_guide_cache(tvg_id, &programs);
     Ok(programs)
 }
 
@@ -149,15 +181,12 @@ fn write_guide_cache(key: &str, programs: &[EpgProgram]) {
     }
 }
 
-#[allow(dead_code)]
-async fn download_and_parse_guide(xmltv_id: &str) -> Result<Vec<EpgProgram>, IptvError> {
-    let url = format!("https://iptv-org.github.io/api/epg/guides/{}.xml", xmltv_id);
-
+async fn download_and_parse_guide(url: &str, tvg_id: &str) -> Result<Vec<EpgProgram>, IptvError> {
     let body = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .user_agent(concat!("Rivulet/", env!("CARGO_PKG_VERSION")))
         .build()?
-        .get(&url)
+        .get(url)
         .send()
         .await?
         .error_for_status()?
@@ -178,5 +207,37 @@ async fn download_and_parse_guide(xmltv_id: &str) -> Result<Vec<EpgProgram>, Ipt
     };
 
     let xml = String::from_utf8(xml_bytes).map_err(|e| IptvError::ParseError(e.to_string()))?;
-    super::xmltv::parse_programs(&xml, xmltv_id)
+    super::xmltv::parse_programs(&xml, tvg_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gzip_beats_xml_and_empty_urls_are_skipped() {
+        let sources = vec![
+            WireSource {
+                url: String::new(),
+                format: "XML".into(),
+            },
+            WireSource {
+                url: "https://example/guide.xml".into(),
+                format: "XML".into(),
+            },
+            WireSource {
+                url: "https://example/guide.xml.gz".into(),
+                format: "GZIP".into(),
+            },
+        ];
+        assert_eq!(
+            pick_source_url(&sources).as_deref(),
+            Some("https://example/guide.xml.gz")
+        );
+    }
+
+    #[test]
+    fn no_source_is_no_guide() {
+        assert_eq!(pick_source_url(&[]), None);
+    }
 }

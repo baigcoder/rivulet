@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { mdiCheckCircle, mdiDeleteOutline, mdiDeleteSweepOutline, mdiFolderOpenOutline, mdiFolderSearchOutline, mdiRestore, mdiUsbFlashDrive } from '@mdi/js'
+import { invoke } from '@tauri-apps/api/core'
 
 const settings = useSettingsStore()
 const downloads = useDownloadsStore()
@@ -113,7 +114,7 @@ async function browse() {
 
 async function openFolder() {
   if (settings.downloadDir)
-    await useTauriShellOpen(settings.downloadDir).catch((e: unknown) => (error.value = `${e}`))
+    await invoke('reveal_path', { path: settings.downloadDir }).catch((e: unknown) => (error.value = `${e}`))
 }
 </script>
 

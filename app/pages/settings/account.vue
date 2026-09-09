@@ -6,7 +6,7 @@ import {
   mdiFolderOpenOutline,
   mdiRestore,
 } from '@mdi/js'
-import { isTauri } from '@tauri-apps/api/core'
+import { invoke, isTauri } from '@tauri-apps/api/core'
 import { documentDir } from '@tauri-apps/api/path'
 
 /**
@@ -57,6 +57,11 @@ async function save() {
   catch (e) {
     error.value = $t('Couldn\'t write the backup: {error}', { error: String(e) })
   }
+}
+
+async function showBackup() {
+  if (folder.value)
+    await invoke('reveal_path', { path: folder.value }).catch((e: unknown) => (error.value = `${e}`))
 }
 
 function stage(text: string) {
@@ -155,7 +160,7 @@ function apply() {
             size="small"
             variant="text"
             :prepend-icon="mdiFolderOpenOutline"
-            @click="useTauriShellOpen(folder)"
+            @click="showBackup"
           >
             {{ $t('Show') }}
           </v-btn>

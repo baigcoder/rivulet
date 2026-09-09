@@ -119,10 +119,7 @@ pub fn clean_channel_name(raw: &str) -> Option<String> {
     }
     // A single token that is nothing but decoration is not a name
     // either, whichever end it sits at.
-    let kept: Vec<&str> = words
-        .into_iter()
-        .filter(|w| !is_decor_run(w))
-        .collect();
+    let kept: Vec<&str> = words.into_iter().filter(|w| !is_decor_run(w)).collect();
     let name = kept.join(" ");
     let trimmed = name.trim_matches(|c: char| c.is_whitespace() || c == '|');
     let out = trimmed.trim();
@@ -193,7 +190,10 @@ mod tests {
 
     #[test]
     fn keeps_a_plain_name_unchanged() {
-        assert_eq!(clean_channel_name("BBC One HD UK").as_deref(), Some("BBC One HD UK"));
+        assert_eq!(
+            clean_channel_name("BBC One HD UK").as_deref(),
+            Some("BBC One HD UK")
+        );
     }
 
     /// The 58 rows a real lineup uses to draw section headings. They are
@@ -229,18 +229,36 @@ mod tests {
             clean_channel_name("QVC Beauty &amp; Style DE").as_deref(),
             Some("QVC Beauty & Style DE"),
         );
-        assert_eq!(clean_channel_name("A &lt;B&gt; C").as_deref(), Some("A <B> C"));
-        assert_eq!(clean_channel_name("It&#39;s TV").as_deref(), Some("It's TV"));
-        assert_eq!(clean_channel_name("Ampersand &amp;amp; twice").as_deref(), Some("Ampersand &amp; twice"));
+        assert_eq!(
+            clean_channel_name("A &lt;B&gt; C").as_deref(),
+            Some("A <B> C")
+        );
+        assert_eq!(
+            clean_channel_name("It&#39;s TV").as_deref(),
+            Some("It's TV")
+        );
+        assert_eq!(
+            clean_channel_name("Ampersand &amp;amp; twice").as_deref(),
+            Some("Ampersand &amp; twice")
+        );
     }
 
     /// An unknown or malformed entity is a literal, not something to
     /// guess at: a name is the user's to read, not ours to invent.
     #[test]
     fn leaves_unknown_entities_alone() {
-        assert_eq!(clean_channel_name("Rock & Roll TV").as_deref(), Some("Rock & Roll TV"));
-        assert_eq!(clean_channel_name("Sport &unknown; 1").as_deref(), Some("Sport &unknown; 1"));
-        assert_eq!(clean_channel_name("Cats & Dogs&").as_deref(), Some("Cats & Dogs&"));
+        assert_eq!(
+            clean_channel_name("Rock & Roll TV").as_deref(),
+            Some("Rock & Roll TV")
+        );
+        assert_eq!(
+            clean_channel_name("Sport &unknown; 1").as_deref(),
+            Some("Sport &unknown; 1")
+        );
+        assert_eq!(
+            clean_channel_name("Cats & Dogs&").as_deref(),
+            Some("Cats & Dogs&")
+        );
     }
 
     /// Quality and package tokens separate two real streams. Stripping
@@ -263,7 +281,13 @@ mod tests {
     /// Punctuation inside a name is not decoration.
     #[test]
     fn preserves_punctuation_inside_names() {
-        for name in ["E! Entertainment", "TV-3 Sport", "Sky Sports F1", "A&E HD", "Kanal 5 - Plus"] {
+        for name in [
+            "E! Entertainment",
+            "TV-3 Sport",
+            "Sky Sports F1",
+            "A&E HD",
+            "Kanal 5 - Plus",
+        ] {
             assert_eq!(clean_channel_name(name).as_deref(), Some(name), "{name}");
         }
     }
@@ -289,20 +313,38 @@ mod tests {
     /// heading — the label is kept and the furniture goes.
     #[test]
     fn strips_one_sided_decoration_but_keeps_the_channel() {
-        assert_eq!(clean_channel_name("### Sky Cinema").as_deref(), Some("Sky Cinema"));
-        assert_eq!(clean_channel_name("Sky Cinema ***").as_deref(), Some("Sky Cinema"));
+        assert_eq!(
+            clean_channel_name("### Sky Cinema").as_deref(),
+            Some("Sky Cinema")
+        );
+        assert_eq!(
+            clean_channel_name("Sky Cinema ***").as_deref(),
+            Some("Sky Cinema")
+        );
     }
 
     #[test]
     fn collapses_whitespace_and_control_characters() {
-        assert_eq!(clean_channel_name("  Sky   Sports \t 1 \n").as_deref(), Some("Sky Sports 1"));
-        assert_eq!(clean_channel_name("Sky\u{0000}Sports").as_deref(), Some("Sky Sports"));
-        assert_eq!(clean_channel_name("Sky \u{fffd} Sports").as_deref(), Some("Sky Sports"));
+        assert_eq!(
+            clean_channel_name("  Sky   Sports \t 1 \n").as_deref(),
+            Some("Sky Sports 1")
+        );
+        assert_eq!(
+            clean_channel_name("Sky\u{0000}Sports").as_deref(),
+            Some("Sky Sports")
+        );
+        assert_eq!(
+            clean_channel_name("Sky \u{fffd} Sports").as_deref(),
+            Some("Sky Sports")
+        );
     }
 
     #[test]
     fn detect_quality_labels() {
-        assert_eq!(detect_quality("Sky Sport 4K UHD").as_deref(), Some("4K UHD"));
+        assert_eq!(
+            detect_quality("Sky Sport 4K UHD").as_deref(),
+            Some("4K UHD")
+        );
         assert_eq!(detect_quality("DAZN 1 4K").as_deref(), Some("4K"));
         assert_eq!(detect_quality("Channel 2160p").as_deref(), Some("4K"));
         assert_eq!(detect_quality("beIN SPORTS 1 FHD").as_deref(), Some("FHD"));

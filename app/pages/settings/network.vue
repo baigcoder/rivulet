@@ -26,18 +26,18 @@ function label(value: number) {
         <div class="text-label-medium flex items-center gap-2 opacity-70">
           <v-icon :icon="mdiTrayArrowDown" size="18" /> {{ $t('Download') }} · {{ label(settings.downLimit) }}
         </div>
-        <v-slider v-model="settings.downLimit" :min="0" :max="50" :step="0.5" thumb-label />
+        <v-slider v-model="settings.downLimit" :min="0" :max="100" :step="0.5" thumb-label />
       </div>
 
       <div>
         <div class="text-label-medium flex items-center gap-2 opacity-70">
           <v-icon :icon="mdiArrowUp" size="18" /> {{ $t('Upload') }} · {{ label(settings.upLimit) }}
         </div>
-        <v-slider v-model="settings.upLimit" :min="0" :max="50" :step="0.5" thumb-label />
+        <v-slider v-model="settings.upLimit" :min="0" :max="100" :step="0.5" thumb-label />
       </div>
 
       <p class="text-body-small opacity-70">
-        {{ $t('A limit you set here holds during playback too, where the automatic ceiling would otherwise drop seeding to a quarter of the line so the stream keeps up.') }}
+        {{ $t('A limit you set here holds during playback too, where the automatic ceiling would otherwise drop seeding to half the line so the stream keeps up.') }}
       </p>
     </settings-section>
 
@@ -79,6 +79,14 @@ function label(value: number) {
           </div>
           <div class="text-label-medium opacity-70">
             {{ $t('Upload') }}
+          </div>
+        </div>
+        <div>
+          <div class="text-headline-small tabular-nums">
+            {{ downloads.peers }}
+          </div>
+          <div class="text-label-medium opacity-70">
+            {{ $t('Peers') }}
           </div>
         </div>
         <div>

@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import type { MediaType } from '~/utils/tmdb'
-import type { Release } from '~/utils/torrents'
+import type { PieceMap, Release } from '~/utils/torrents'
 import {
   mdiAccountGroup,
   mdiAlertCircleOutline,
@@ -10,7 +10,7 @@ import {
   mdiReload,
 } from '@mdi/js'
 import { useTitleImages } from '~/utils/titleImages'
-import { findReleasesFast, NoServerStream, releaseKey, releaseLangs, releaseQuality, serverCandidates } from '~/utils/torrents'
+import { canonHash, ENGINE, findReleasesFast, headBuffered, heldSrc, listTorrents, magnetForHash, NoServerStream, pickVideoFile, pieceMap, playUrl, releaseKey, releaseLangs, releaseQuality, serverCandidates, streamParts, streamUrl, torrentAction, torrentDetails, torrentHaves } from '~/utils/torrents'
 
 // The player owns the whole window: no app bar, no drawer, no page scroll.
 definePageMeta({ layout: false })
@@ -26,13 +26,14 @@ const season = computed(() => Number(route.query.s) || 0)
 const episode = computed(() => Number(route.query.e) || 0)
 // The downloads page knows exactly which file in a pack it wants played.
 const fileIndex = computed(() => route.query.file == null ? null : Number(route.query.file))
+const infoHash = computed(() => String(route.query.hash ?? ''))
 const picked = ref<{ url?: string, magnet?: string } | null>(null)
 watch(
   () => String(route.query.pick ?? ''),
   pick => { picked.value = pick ? takePendingRelease() : null },
   { immediate: true },
 )
-const magnet = computed(() => String(route.query.magnet ?? picked.value?.magnet ?? ''))
+const magnet = computed(() => String(route.query.magnet ?? picked.value?.magnet ?? (infoHash.value ? magnetForHash(infoHash.value) : '')))
 /** A release the picker resolved to a plain link — played as-is, no engine. */
 const link = computed(() => String(route.query.url ?? picked.value?.url ?? ''))
 
@@ -112,7 +113,10 @@ function viaHost(r: Release | null) {
 const qualityPromptPending = ref(false)
 
 /** Stream-only mode found nothing to stream — a different message, and fix, than a plain failure. */
+/** Stream-only mode found nothing to stream — a different message, and fix, than a plain failure. */
 const noServerStream = ref(false)
+const offerSources = computed(() =>
+  noServerStream.value || /sources have nothing/i.test(errorMsg.value))
 
 const settings = useSettingsStore()
 
@@ -140,18 +144,165 @@ const stats = computed(() => downloads.torrents.find(t => t.id === torrentId.val
 // the connection to something nobody is watching. (The trick useMediaFeed uses.)
 let generation = 0
 
+/**
+ * Open the engine HTTP stream the moment this hash is on the list.
+ * addTorrent used to wait for the file list (and the 180s POST) while
+ * Downloads already showed the torrent — first Play stuck on metadata,
+ * second Play streamed.
+ */
+async function openListedStream(hash: string, index: number | null, mine: number) {
+  const deadline = Date.now() + 180_000
+  while (Date.now() < deadline) {
+    if (mine !== generation || src.value)
+      return
+    const t = downloads.torrents.find(x => canonHash(x.info_hash) === canonHash(hash))
+      ?? (await listTorrents().catch(() => [])).find(x => canonHash(x.info_hash) === canonHash(hash))
+      ?? null
+    if (t) {
+      if (mine !== generation || src.value)
+        return
+      torrentId.value = t.id
+      step.value = $t('Buffering…')
+      await torrentAction(t.id, 'start').catch(() => {})
+      if (mine !== generation || src.value)
+        return
+      let file = index ?? 0
+      const listed = t.files?.length ? t.files : (await torrentDetails(t.id).catch(() => null))?.files
+      if (mine !== generation || src.value)
+        return
+      if (listed?.length) {
+        const picked = pickVideoFile(listed, index, { season: season.value, episode: episode.value })
+        if (picked != null)
+          file = picked
+      }
+      src.value = streamUrl(t.id, file)
+      resolving.value = false
+      void downloads.focus(t.id)
+      return
+    }
+    await new Promise(r => setTimeout(r, 150))
+  }
+}
+
 async function start() {
   const mine = ++generation
   const startedAt = Date.now()
   errorMsg.value = ''
   noServerStream.value = false
-  src.value = ''
-  resolving.value = true
+  failoverNotice.value = ''
+
+  // Torrent engine Play opens the stream as soon as we know the id. First
+  // pieces play while the rest downloads — no TMDB, no magnet re-add, no
+  // sparse file:// path. Downloads sends `src`/`tid`; a title already in
+  // the engine is in the downloads store.
+  const readySrc = String(route.query.src ?? '')
+  const readyTid = Number(route.query.tid)
+  const cached = key.value ? downloads.cachedFor(key.value) : null
+  const listed = (Number.isFinite(readyTid) ? downloads.torrents.find(t => t.id === readyTid) : null)
+    ?? (infoHash.value ? downloads.torrents.find(t => canonHash(t.info_hash) === canonHash(infoHash.value)) : null)
+    ?? (cached ? downloads.torrents.find(t => canonHash(t.info_hash) === canonHash(cached.hash)) : null)
+    ?? null
+  const named = streamParts(readySrc)
+  const fromDownloads = !!readySrc && (readySrc.startsWith(ENGINE) || readySrc.startsWith('file:') || readySrc.startsWith('/'))
+  const engineNow = listed ?? (named ? { id: named.id } : null)
+  const engineAsked = !!(magnet.value || infoHash.value || fromDownloads || settings.allowTorrents)
+  if (engineAsked && engineNow && (fromDownloads || listed)) {
+    const hint = fileIndex.value
+      ?? named?.index
+      ?? cached?.file
+      ?? null
+    let index = hint ?? 0
+    if (listed?.files?.length && fileIndex.value == null) {
+      index = pickVideoFile(listed.files, hint, { season: season.value, episode: episode.value }) ?? index
+    }
+    resolving.value = false
+    step.value = $t('Buffering…')
+    torrentId.value = engineNow.id
+    // File list is not on the poll. Downloads Play of a named `file://`
+    // still needs it; Title Play must not wait — that delay was the
+    // black first frame.
+    const detailsP = listed && !listed.files?.[index]
+      ? torrentDetails(listed.id)
+      : Promise.resolve(null)
+    const namedDisk = readySrc.startsWith('file:') || readySrc.startsWith('/')
+    // The list endpoint carries no files, and `heldSrc` cannot name a path
+    // without one. A finished copy has nothing to buffer while that request
+    // runs, so it is worth waiting for; anything still downloading must not,
+    // because that wait was the black first frame.
+    const wantDisk = namedDisk || !!listed?.stats?.finished
+    // Start the torrent before mpv opens the stream. Fire-and-forget here
+    // was a black first Play: the engine was still paused from the last
+    // leave() while player_start already ran.
+    await torrentAction(engineNow.id, 'start').catch(() => {})
+    if (mine !== generation)
+      return
+    let files = listed?.files
+    if (wantDisk && !files?.[index]) {
+      const extra = await detailsP
+      if (mine !== generation)
+        return
+      files = extra?.files ?? files
+    }
+    else {
+      void detailsP.then(extra => {
+        if (mine !== generation || !extra?.files?.[index] || !torrent.value)
+          return
+        torrent.value = { ...torrent.value, file: extra.files[index]!.name }
+      })
+    }
+    const hash = listed?.info_hash ?? infoHash.value ?? cached?.hash ?? ''
+    const name = listed?.name || String(route.query.title ?? '')
+    const playing = playingRelease(hash, name, {
+      fileIdx: index,
+      file: files?.[index]?.name ?? listed?.files?.[index]?.name ?? null,
+      magnet: magnet.value || (hash ? magnetForHash(hash) : ''),
+    })
+    torrent.value = playing
+    const playingHash = canonHash(hash)
+    if (!candidates.value.some(r => canonHash(r.hash) === playingHash))
+      candidates.value = [playing, ...candidates.value]
+    if (!candidates.value.length)
+      candidates.value = [playing]
+    activeCandidate.value = Math.max(0, candidates.value.findIndex(r => canonHash(r.hash) === playingHash))
+    userPicked.value = false
+    // Quality list on screen before mpv opens, or the first paint is a
+    // blank player with no 720p/1080p/4K control.
+    void loadEngineQualities(playing)
+    // Title Play always opens the engine HTTP stream first. A finished
+    // `file://` hung the first mpv (cover trailer still holding the
+    // decoder; 10-bit HEVC VO never mapped). Back then Play worked.
+    // Downloads may name a disk path via `?src=` so seeking still works
+    // there; `onDiskStuck` falls back to HTTP if that copy never frames.
+    const http = streamUrl(engineNow.id, index)
+    const disk = listed
+      ? heldSrc({ ...listed, files: files ?? listed.files }, index, files?.[index])
+      : http
+    // Growing copies stay on the engine HTTP stream — that is what plays
+    // from the first pieces, at whatever percent is on disk. A finished
+    // copy opens as a path so the seek bar has a duration. Downloads used
+    // to wait on the file list before navigating; the query `src` is already
+    // the stream, so reuse it until we know the file is complete.
+    const nextSrc = wantDisk ? disk : (readySrc.startsWith(ENGINE) ? readySrc : http)
+    // Same engine stream: only refresh the Quality list. Assigning `src`
+    // again (or clearing it first) remounts mpv onto a black 0:00.
+    if (src.value !== nextSrc)
+      src.value = nextSrc
+    // Pause siblings after the stream is already opening so the first
+    // frame does not wait on the downloads poll.
+    await downloads.focus(engineNow.id)
+    return
+  }
+
   torrent.value = null
   candidates.value = []
   activeCandidate.value = 0
   userPicked.value = false
-  failoverNotice.value = ''
+  // Do not blank an engine stream already opened by `onQueued`. That
+  // assignment is player_stop + a second `[player] start`, which is the
+  // Buffering 0% loop in the logs.
+  if (src.value && !src.value.startsWith(ENGINE))
+    src.value = ''
+  resolving.value = true
 
   try {
     // ?magnet=… hand-picks the release and skips the lookup — that's how the
@@ -178,26 +329,34 @@ async function start() {
       },
       // Read only once the lookup above has answered, so a download the app
       // never filed under this title can still be recognised by its name.
-      named: () => title.value,
+      named: () => title.value ?? (route.query.title ? { title: String(route.query.title) } : null),
       magnet: magnet.value,
+      hash: infoHash.value || undefined,
       url: link.value,
       season: season.value,
       episode: episode.value,
       fileIndex: fileIndex.value,
       // Default Play follows the toggle. A magnet (or URL) from the picker
       // is a source they named — it plays even while Play is Direct-only.
-      allowTorrents: !!(magnet.value || settings.allowTorrents),
+      allowTorrents: !!(magnet.value || infoHash.value || settings.allowTorrents),
+      // Title Play (no `?src=`) opens the engine HTTP stream even for a
+      // finished copy — the first `file://` spawn after the cover trailer
+      // is the black player. Downloads names a path and keeps seeking.
+      preferStream: !readySrc,
       // Race the sources: first healthy answer plays, slower ones join the
       // candidate list as they land (see below).
       fast: true,
       onAlternativesLate: late => {
+        if (mine !== generation || !late.length)
+          return
+        if (!torrent.value)
+          torrent.value = late[0]!
+        mergeEngineQualities(torrent.value, late)
+      },
+      onQueued: ({ hash, index }) => {
         if (mine !== generation)
           return
-        const known = new Set(candidates.value.map(releaseKey))
-        candidates.value = [...candidates.value, ...late.filter(r => !known.has(releaseKey(r)))]
-        // Re-ranking may shuffle indexes; the playing URL keeps its place.
-        candidates.value = serverCandidates(candidates.value)
-        activeCandidate.value = Math.max(0, candidates.value.findIndex(r => r.url === src.value))
+        void openListedStream(hash, index, mine)
       },
       onStep: value => (step.value = value),
     })
@@ -206,34 +365,39 @@ async function start() {
       return
 
     torrent.value = started.torrent
-    // A direct link has no torrent behind it, so there are no stats to read.
-    torrentId.value = started.url ? null : started.id
-
-    // Pause everything else before the stream starts, so the first buffer gets
-    // the whole connection. Nothing to pause for a finished torrent — see `focus`.
-    // Non-blocking: the player starts immediately while focus catches up.
-    void downloads.focus(started.id)
+    // Debrid links have no engine id; torrent playback keeps the id even off disk.
+    torrentId.value = started.id >= 0 ? started.id : null
 
     resolving.value = false
     step.value = $t('Buffering…')
-    src.value = started.url || streamUrl(started.id, started.index)
+    const nextSrc = playUrl(started)
+    if (src.value !== nextSrc)
+      src.value = nextSrc
+    // Pause siblings after the stream is already opening. Awaiting focus
+    // here was a black first Play: metadata had landed, Downloads showed
+    // the torrent, and mpv still had not been given a URL.
+    if (started.id >= 0)
+      void downloads.focus(started.id)
 
-    // Server playback carries the other answers with it; the player's menus and
-    // the failover below walk this list.
-    candidates.value = started.alternatives ?? []
-    activeCandidate.value = 0
-    // `serverCandidates` already ranks 1080p first (ahead of 4K, which is
-    // slower to start and more likely to buffer). Keep that automatic choice
-    // visible in the player pill, rather than opening a quality menu over the
-    // movie and preventing the desktop controls from fading away.
-    qualityPromptPending.value = false
-
-    // A hand-picked link (the release picker's play button) arrives without its
-    // siblings: the picker navigated straight here, so no ranking ever ran. Ask
-    // the sources once more, quietly, so the Server and Quality menus still have
-    // something to list — and a dead link still has somewhere to fail over to.
-    if (started.url && !candidates.value.length)
-      void fetchCandidates(started.url)
+    // Quality / source menus. Engine Play lists magnets so you can switch
+    // 720p/1080p/4K without leaving; Direct Play lists server URLs.
+    if (started.id >= 0) {
+      // Only reached when `started.torrent` is null, so it has no name to read.
+      const current = started.torrent ?? playingRelease(
+        started.hash,
+        listed?.name || String(route.query.title ?? ''),
+      )
+      torrent.value = current
+      mergeEngineQualities(current, started.alternatives ?? [])
+      void loadEngineQualities(current)
+    }
+    else {
+      candidates.value = started.alternatives ?? []
+      activeCandidate.value = 0
+      qualityPromptPending.value = false
+      if (started.url && !candidates.value.length)
+        void fetchCandidates(started.url)
+    }
   }
   catch (e) {
     if (mine !== generation)
@@ -254,37 +418,226 @@ async function start() {
   }
 }
 
+function playingRelease(hash: string, name: string, extra?: Partial<Release>): Release {
+  return {
+    name,
+    hash,
+    url: extra?.url ?? '',
+    fileIdx: extra?.fileIdx ?? fileIndex.value,
+    file: extra?.file ?? null,
+    seeders: extra?.seeders ?? 0,
+    size: extra?.size ?? '',
+    bytes: extra?.bytes ?? 0,
+    source: extra?.source ?? '',
+    quality: extra?.quality || releaseQuality({ name, file: extra?.file ?? null }),
+    magnet: extra?.magnet || (hash ? magnetForHash(hash) : ''),
+    via: extra?.via,
+  }
+}
+
+/**
+ * Fill the Quality menu for torrent engine Play. Playback already started;
+ * this only lists other magnets (and Direct URLs) so a 720p/1080p/4K switch
+ * is a pick, not a trip back to the title.
+ */
+async function loadEngineQualities(playing: Release) {
+  const mine = generation
+  // Always keep the playing copy in the menu, even with no 1080p token and
+  // no IMDb id yet — otherwise torrent Play has no Quality control at all.
+  if (!candidates.value.length)
+    candidates.value = [playing]
+
+  let imdbId = String(route.query.imdb ?? known.value?.imdbId ?? '')
+  if (!imdbId && id.value) {
+    await until(() => !!media.value || !!mediaError.value).toBe(true, { timeout: 8_000 }).catch(() => {})
+    if (mine !== generation)
+      return
+    imdbId = media.value?.imdbId ?? ''
+  }
+  if (!imdbId)
+    return
+
+  try {
+    const found = await findReleasesFast(imdbId, season.value, episode.value, {
+      graceMs: 0,
+      needMagnet: true,
+      onLate: late => {
+        if (mine !== generation)
+          return
+        mergeEngineQualities(playing, late)
+      },
+    })
+    if (mine !== generation)
+      return
+    mergeEngineQualities(playing, found)
+  }
+  catch {
+    // One quality from the playing name is enough; a miss leaves the menu thin.
+  }
+}
+
+function mergeEngineQualities(playing: Release, more: Release[]) {
+  // `ranked` drops 0-seeder stubs, which is every copy we are already
+  // playing from Downloads. Keep it, then append what the sources answered.
+  const pool = serverCandidates(more, undefined, !hasNativePlayer(), true)
+  const seen = new Set<string>()
+  const list: Release[] = []
+  const add = (r: Release) => {
+    const k = releaseKey(r) || `name:${r.name}`
+    if (seen.has(k))
+      return
+    seen.add(k)
+    list.push(r)
+  }
+  add(playing)
+  for (const r of [...candidates.value, ...pool])
+    add(r)
+  if (!list.length)
+    return
+  candidates.value = list
+  const current = canonHash(torrent.value?.hash || playing.hash)
+  const i = list.findIndex(r => canonHash(r.hash) === current)
+  if (i >= 0)
+    activeCandidate.value = i
+  else if (activeCandidate.value >= list.length)
+    activeCandidate.value = 0
+  if (new Set(list.map(qualityLabel)).size > 1)
+    qualityPromptPending.value = true
+}
+
+/**
+ * Throw away the copy a source switch left behind.
+ *
+ * Only ever an unfinished one: a part-downloaded 1080p of a film you are now
+ * watching in 4K is bytes nobody will ever read, while a *finished* copy is a
+ * whole film that plays offline, and deleting that because someone glanced at
+ * another source would be losing something they have. `delete` takes the files
+ * with it — `forget` would drop the torrent and leave them on the disk with
+ * nothing tracking them, which is worse than keeping it.
+ */
+async function dropSwitchedAway(id: number) {
+  const held = downloads.torrents.find(t => t.id === id)
+  if (!held || held.stats?.finished)
+    return
+  await torrentAction(id, 'delete').catch(() => {})
+  await downloads.refresh().catch(() => {})
+}
+
 /**
  * The playing server died (or you picked another one from the menu): move down
- * the candidate list and remount the player on that URL. The `:key="src"` on
- * `<mpv-player>` makes the swap a fresh start, and progress already recorded by
- * the old mount is what the new one resumes from — so a film continues where it
- * stopped, on a different server.
+ * the candidate list. The player's `src` watcher restarts mpv; do not key the
+ * component on `src`, or fetching the Quality list remounts a blank 0:00.
  */
-function useCandidate(index: number, manual = true) {
+async function useCandidate(index: number, manual = true) {
   const next = candidates.value[index]
-  if (!next || !next.url || index === activeCandidate.value)
+  if (!next)
     return
+  const pickMagnet = next.magnet || (next.hash ? magnetForHash(next.hash) : '')
+  if (!next.url && !pickMagnet)
+    return
+  const same = index === activeCandidate.value
   if (manual)
     userPicked.value = true
   activeCandidate.value = index
   torrent.value = next
-  torrentId.value = null
   errorMsg.value = ''
-  src.value = next.url
+
+  if (pickMagnet && (settings.allowTorrents || magnet.value || infoHash.value)) {
+    const mine = ++generation
+    // What we were watching, so it can be thrown away once the replacement is
+    // up. Read before the switch: `torrentId` is about to point at the new one.
+    const previous = torrentId.value
+    // Keep the current picture up while the other magnet is added.
+    // `resolving` punches the native window out — that is the blank player.
+    step.value = $t('Buffering…')
+    // A switch is a fresh open, so let the watcher act on the new URL even
+    // when it matches the one already playing (retrying the highlighted row).
+    src.value = ''
+    await nextTick()
+    if (mine !== generation)
+      return
+    try {
+      const started = await downloads.start(key.value, {
+        magnet: pickMagnet,
+        hash: next.hash || undefined,
+        fileIndex: next.fileIdx,
+        allowTorrents: true,
+        adopt: false,
+        preferStream: true,
+        cached: null,
+        named: () => title.value ?? (route.query.title ? { title: String(route.query.title) } : null),
+        // The same handoff first Play uses: open the stream the moment the
+        // engine lists the hash, rather than sitting on "Fetching metadata"
+        // until the whole add resolves. That wait was most of why picking
+        // another source felt like nothing had happened.
+        onQueued: ({ hash, index }) => {
+          if (mine === generation)
+            void openListedStream(hash, index, mine)
+        },
+        onStep: value => (step.value = value),
+      })
+      if (mine !== generation)
+        return
+      torrentId.value = started.id >= 0 ? started.id : null
+      if (started.id >= 0)
+        await downloads.focus(started.id)
+      if (mine !== generation)
+        return
+      const nextSrc = playUrl(started)
+      if (src.value !== nextSrc)
+        src.value = nextSrc
+      // The copy we walked away from is a part-downloaded file of a version
+      // nobody chose, so it is only taking up the disk the new one needs.
+      // A finished copy is a whole watchable film and is left for the usual
+      // eviction order to deal with.
+      if (previous != null && previous !== started.id)
+        void dropSwitchedAway(previous)
+    }
+    catch (e) {
+      if (mine === generation)
+        errorMsg.value = e instanceof Error ? e.message : String(e)
+    }
+    return
+  }
+
+  if (same && !next.url)
+    return
+
+  if (next.url) {
+    torrentId.value = null
+    if (src.value === next.url) {
+      src.value = ''
+      await nextTick()
+    }
+    src.value = next.url
+  }
 }
 
-/** Playback of the current server failed — silently move to the next one, if any. */
+/** Playback of the current server failed — walk the rest of the list. */
 function onPlaybackFailed() {
-  if (!candidates.value.length)
+  const list = candidates.value
+  if (!list.length)
     return
-  const following = activeCandidate.value + 1
-  const next = candidates.value[following]
-  if (!next)
+  for (let i = activeCandidate.value + 1; i < list.length; i++) {
+    const next = list[i]
+    if (!next || !(next.url || next.magnet))
+      continue
+    failoverNotice.value = `${$t('Switched to')} ${
+      hostOf(next.via ?? '') || next.source || qualityLabel(next)
+    }`
+    void useCandidate(i, false)
     return
-  // The swap itself is silent; the new player mount announces it (osd-on-start).
-  failoverNotice.value = `${$t('Switched to')} ${hostOf(next.via ?? '') || next.source}`
-  useCandidate(following, false)
+  }
+}
+
+/** A finished disk copy never produced a frame — play the engine stream instead. */
+function onDiskStuck() {
+  if (torrentId.value == null || src.value.startsWith(ENGINE))
+    return
+  const index = fileIndex.value ?? torrent.value?.fileIdx ?? 0
+  const http = streamUrl(torrentId.value, Number(index) || 0)
+  if (src.value !== http)
+    src.value = http
 }
 
 /**
@@ -393,7 +746,7 @@ const candidateMenus = computed(() => {
     const label = qualityLabel(r)
     if (!seen.has(label)) {
       seen.set(label, index)
-      qualities.push({ index, label })
+      qualities.push({ index, label, detail: r.size || undefined })
     }
   }
   return { servers, qualities }
@@ -403,7 +756,7 @@ const candidateMenus = computed(() => {
 // that a downloaded film never waits on TMDB. Fires again if you jump straight
 // to another episode without leaving the player.
 watch(
-  () => [key.value, magnet.value, link.value, fileIndex.value].join('|'),
+  () => [key.value, magnet.value, link.value, fileIndex.value, infoHash.value, String(route.query.src ?? ''), String(route.query.tid ?? '')].join('|'),
   () => start(),
   { immediate: true },
 )
@@ -435,13 +788,58 @@ const progressPct = computed(() => {
 
 const speed = computed(() => stats.value?.live?.download_speed.human_readable ?? '—')
 const peers = computed(() => stats.value?.live?.snapshot.peer_stats.live ?? 0)
+
+/**
+ * How much of the head of the file is in, while we are still waiting for a
+ * picture. The torrent-wide percentage is the wrong number to stare at during
+ * a cold start — it reads 1% while the pieces that decide when playback begins
+ * are nearly all here — so this replaces it until the first frame lands.
+ *
+ * Polled separately from the downloads store: the bitfield is a second request
+ * and only matters for these few seconds. `/haves` is a plain bitmap, not the
+ * stream, so it opens no second FileStream and takes nothing from mpv.
+ */
+const headPct = ref<number | null>(null)
+let headMap: PieceMap | null = null
+
+watch(src, () => {
+  headMap = null
+  headPct.value = null
+})
+
+useIntervalFn(async () => {
+  const parts = streamParts(src.value)
+  if (!parts || headPct.value === 100) {
+    if (!parts)
+      headPct.value = null
+    return
+  }
+  headMap ??= await pieceMap(parts.id, parts.index)
+  const haves = headMap ? await torrentHaves(parts.id) : null
+  if (!headMap || !haves || !streamParts(src.value))
+    return
+  headPct.value = Math.floor(headBuffered(headMap, haves) * 100)
+}, 1500, { immediateCallback: true })
+
 /**
  * One line for the player's "buffering" notice, where there's no room for a
  * table. Empty while a direct link plays: there is no swarm to report on, and
  * "0 peers" reads as a fault rather than as "not applicable".
  */
-const statusLine = computed(() =>
-  stats.value ? `${speed.value} · ${peers.value} peers · ${progressPct.value.toFixed(0)}%` : '')
+const statusLine = computed(() => {
+  if (stats.value) {
+    const done = headPct.value != null && headPct.value < 100
+      ? $t('{pct}% buffered', { pct: headPct.value })
+      : `${progressPct.value.toFixed(0)}%`
+    return `${speed.value} · ${peers.value} peers · ${done}`
+  }
+  if (src.value && torrent.value && torrentId.value == null) {
+    const q = qualityLabel(torrent.value)
+    const host = viaHost(torrent.value) || (torrent.value.source !== 'unknown' ? torrent.value.source : '')
+    return [q && q !== $t('Unknown') ? q : '', host].filter(Boolean).join(' · ')
+  }
+  return ''
+})
 
 const backdrop = computed(() => backdropUrl(title.value?.backdrop, 'w1280'))
 
@@ -479,9 +877,9 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
 <template>
   <v-app>
     <v-main class="h-dvh overflow-hidden bg-black text-white">
-      <!-- Always mounted — shows resolving/loading overlay while src is empty. -->
+      <!-- Always mounted — shows resolving/loading overlay while src is empty.
+           Not keyed on `src`: a Quality fetch must not remount mpv to idle. -->
       <mpv-player
-        :key="src || 'idle'"
         :src="src"
         :resolving="resolving"
         :step="step"
@@ -494,12 +892,13 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
         :logo="logo"
         :season="season"
         :episode="episode"
-        :quality="torrent?.quality"
+        :quality="torrent ? qualityLabel(torrent) : ''"
         :candidates="candidateMenus"
         :active-candidate="activeCandidate"
         :osd-on-start="failoverNotice"
         :auto-open-quality="qualityPromptPending && !userPicked"
         @failed="onPlaybackFailed"
+        @disk-stuck="onDiskStuck"
         @use-candidate="(i: number) => useCandidate(i)"
         @auto-opened="qualityPromptPending = false"
         @back="leave"
@@ -568,7 +967,7 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
             {{ failure }}
           </p>
           <!-- Stream-only mode's fixes: add a streaming source, or let torrents back in. -->
-          <div v-if="noServerStream" class="mt-2 flex flex-wrap justify-center gap-2">
+          <div v-if="offerSources" class="mt-2 flex flex-wrap justify-center gap-2">
             <v-btn
               variant="tonal"
               color="primary"
@@ -578,11 +977,15 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
               {{ $t('Add a source') }}
             </v-btn>
             <v-btn
+              v-if="noServerStream"
               variant="tonal"
               :prepend-icon="mdiDownload"
               @click="settings.allowTorrents = true; start()"
             >
               {{ $t('Use torrent engine') }}
+            </v-btn>
+            <v-btn variant="tonal" :prepend-icon="mdiReload" @click="start">
+              {{ $t('Try again') }}
             </v-btn>
             <v-btn variant="text" :prepend-icon="mdiArrowLeft" @click="leave">
               {{ $t('Back') }}

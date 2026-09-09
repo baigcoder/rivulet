@@ -13,11 +13,13 @@ import {
   mdiPlayCircleOutline,
   mdiTrayArrowDown,
 } from '@mdi/js'
+import { invoke } from '@tauri-apps/api/core'
 
 definePageMeta({ layout: 'downloads' })
 
 const ui = useUiStore()
 const downloads = useDownloadsStore()
+const settings = useSettingsStore()
 const { mobile, lgAndUp } = useDisplay()
 
 const removing = ref<EngineTorrent | null>(null)
@@ -65,14 +67,40 @@ function stats(t: EngineTorrent) {
   return t.stats
 }
 
-/** The player takes it from the engine by hash, so nothing is re-downloaded. */
-function play(t: EngineTorrent, index?: number) {
+/** Stream from the engine immediately — playback starts on the first pieces. */
+async function play(t: EngineTorrent, index?: number) {
+  // Unpause before navigating. A paused row used to open the player onto a
+  // stream that never grew.
+  await torrentAction(t.id, 'start').catch(() => {})
+  // Do not wait for the file list. stream/0 (or the index they tapped) is
+  // enough to pin FileStream; waiting here was Play sitting on the downloads
+  // page until metadata landed.
+  const file = index
+    ?? pickVideoFile(t.files ?? [], null)
+    ?? 0
+  // The title this was filed under, if it was played through the app before.
+  // Without it the player has a release filename and no TMDB id, so the pause
+  // overlay falls back to plain text where the title treatment belongs and
+  // there is no artwork to draw.
+  const known = downloads.titleFor(t.info_hash)
   navigateTo({
     path: localePath('/watch'),
     query: {
+      hash: t.info_hash,
       magnet: magnetForHash(t.info_hash),
+      tid: String(t.id),
+      src: streamUrl(t.id, file),
       title: t.name ?? '',
-      ...index == null ? {} : { file: String(index) },
+      file: String(file),
+      ...known
+        ? {
+            id: String(known.id),
+            type: known.type,
+            ...known.season && known.episode
+              ? { s: String(known.season), e: String(known.episode) }
+              : {},
+          }
+        : {},
     },
   })
 }
@@ -90,19 +118,27 @@ async function remove(t: EngineTorrent, keepFiles: boolean) {
 /**
  * Where the data actually landed. `output_folder` is the torrent's own folder
  * and a file's components are relative to it, so a file inside a pack opens the
- * subfolder it sits in rather than the root.
+ * subfolder it sits in rather than the root. A directory, never the `.mkv` —
+ * `xdg-open` on a video launches a player.
+ *
+ * A fresh add (Direct-mode Download especially) often has no `output_folder`
+ * yet and no storage setting. Rust then opens the engine default.
  */
 async function openFolder(t: EngineTorrent, file?: EngineFile) {
-  const parts = file?.components?.slice(0, -1) ?? []
-  // The engine hands back a native path, so on Windows it is already
-  // backslash-separated — appending components with `/` would hand the shell a
-  // path it opens only sometimes.
-  const sep = t.output_folder.includes('\\') ? '\\' : '/'
+  const details = t.output_folder ? null : await torrentDetails(t.id).catch(() => null)
+  const folder = (t.output_folder || details?.output_folder || settings.downloadDir || downloads.resolvedDir || '').trim()
+  const path = file && folder ? containingFolder(folder, file) : folder
   try {
-    await useTauriShellOpen([t.output_folder, ...parts].join(sep))
+    await invoke('reveal_path', { path })
   }
-  catch (e) {
-    toast.value = $t('Couldn\'t open the folder: {error}', { error: e instanceof Error ? e.message : String(e) })
+  catch (first) {
+    try {
+      await invoke('reveal_path', { path: '' })
+    }
+    catch (e) {
+      const reason = e instanceof Error ? e.message : String(e ?? first)
+      toast.value = $t('Couldn\'t open the folder: {error}', { error: reason })
+    }
   }
 }
 
@@ -248,7 +284,7 @@ function liveText(t: EngineTorrent) {
           >
             <v-icon :icon="stats(item)?.state === 'paused' ? mdiPlay : mdiPause" size="22" />
           </v-btn>
-          <v-btn v-if="canReveal" icon variant="text" color="on-surface" density="comfortable" :title="$t('Open folder')" @click="openFolder(item)">
+          <v-btn v-if="canReveal" icon variant="text" color="on-surface" density="comfortable" :title="$t('Open folder')" @click.prevent.stop="openFolder(item)">
             <v-icon :icon="mdiFolderOpenOutline" size="22" />
           </v-btn>
           <v-btn icon variant="text" color="on-surface" density="comfortable" :title="$t('Remove')" @click="removing = item">
@@ -366,7 +402,7 @@ function liveText(t: EngineTorrent) {
             <v-icon :icon="stats(item)?.state === 'paused' ? mdiPlay : mdiPause" size="20" />
             <v-tooltip activator="parent" :text="stats(item)?.state === 'paused' ? $t('Resume') : $t('Pause')" />
           </v-btn>
-          <v-btn v-if="canReveal" icon size="small" variant="text" color="on-surface" @click="openFolder(item)">
+          <v-btn v-if="canReveal" icon size="small" variant="text" color="on-surface" @click.prevent.stop="openFolder(item)">
             <v-icon :icon="mdiFolderOpenOutline" size="20" />
             <v-tooltip activator="parent" :text="$t('Open folder')" />
           </v-btn>

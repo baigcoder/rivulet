@@ -29,7 +29,8 @@ use super::models::LiveChannel;
 /// Curation is not health, so it is only half the answer — the other
 /// half is `app/utils/livehealth.ts`, which probes what is on screen and
 /// zaps past a channel that fails to open.
-const FREE_TV_PLAYLIST: &str = "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8";
+const FREE_TV_PLAYLIST: &str =
+    "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8";
 
 /// Per-country playlists imported alongside the curated list, because the
 /// curated list simply has no channels for these countries — there is no
@@ -59,7 +60,11 @@ const COUNTRY_SUPPLEMENTS: &[(&str, &str)] = &[
 /// import runs first is the one that clears the old channels out.
 pub fn free_playlists() -> Vec<(Option<&'static str>, &'static str)> {
     let mut all = vec![(None, FREE_TV_PLAYLIST)];
-    all.extend(COUNTRY_SUPPLEMENTS.iter().map(|(cc, url)| (Some(*cc), *url)));
+    all.extend(
+        COUNTRY_SUPPLEMENTS
+            .iter()
+            .map(|(cc, url)| (Some(*cc), *url)),
+    );
     all
 }
 

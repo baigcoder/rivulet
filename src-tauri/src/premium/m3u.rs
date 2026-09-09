@@ -31,9 +31,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio_util::io::StreamReader;
 
 use super::errors::PremiumError;
-use super::models::{
-    EpgProgram, IPTVCategory, IPTVChannel, PremiumAccount,
-};
+use super::models::{EpgProgram, IPTVCategory, IPTVChannel, PremiumAccount};
 use super::names;
 use super::provider::{Catalog, IPTVProvider};
 use super::storage::{self, PremiumState};
@@ -48,7 +46,10 @@ pub struct M3uAdapter {
 
 impl M3uAdapter {
     pub fn new(state: Arc<PremiumState>, connection_id: String) -> Self {
-        Self { state, connection_id }
+        Self {
+            state,
+            connection_id,
+        }
     }
 
     fn client(&self) -> Result<Client, PremiumError> {
@@ -71,11 +72,9 @@ impl M3uAdapter {
             .ok_or(PremiumError::ProviderNotConnected)?;
         match storage::ProviderConfig::decrypt(&blob, &self.state.vault)? {
             storage::ProviderConfig::M3u { url } => Ok(url),
-            storage::ProviderConfig::Xtream { .. } => {
-                Err(PremiumError::ServerError(
-                    "connection is Xtream, not M3U".into(),
-                ))
-            }
+            storage::ProviderConfig::Xtream { .. } => Err(PremiumError::ServerError(
+                "connection is Xtream, not M3U".into(),
+            )),
         }
     }
 }
@@ -105,10 +104,7 @@ impl PendingEntry {
         // the URL's *host*, never the URL: an Xtream-flavoured playlist
         // carries the account's username and password in the path, and
         // a name is written to the database and rendered on a card.
-        let raw_name = self
-            .name
-            .as_deref()
-            .or_else(|| self.tvg_name.as_deref());
+        let raw_name = self.name.as_deref().or_else(|| self.tvg_name.as_deref());
         let quality = raw_name.and_then(names::detect_quality);
         let name = raw_name
             .and_then(names::clean_channel_name)
@@ -124,7 +120,11 @@ impl PendingEntry {
             // The same stream listed twice. Keep the first.
             return None;
         }
-        let is_adult = self.group.as_deref().map(names::is_adult_category).unwrap_or(false);
+        let is_adult = self
+            .group
+            .as_deref()
+            .map(names::is_adult_category)
+            .unwrap_or(false);
         Some(IPTVChannel {
             id,
             name,
@@ -231,8 +231,7 @@ fn parse_extinf(line: &str) -> PendingEntry {
                 value.push(c);
             }
             apply_attr(&mut entry, &key, &value);
-        }
-        else {
+        } else {
             // Bareword value; consume until whitespace.
             let mut value = String::new();
             while let Some(&c) = chars.peek() {
@@ -290,19 +289,19 @@ fn parse_vlcopt(line: &str) -> Option<(String, String)> {
 /// (`x-tvg-url` and `url-tvg`), and a value may be a comma-separated
 /// list of mirrors, of which we take the first.
 fn tvg_url_from_header_line(body: &str) -> Option<String> {
-    let line = body.lines().find(|l| l.trim_start().starts_with("#EXTM3U"))?;
+    let line = body
+        .lines()
+        .find(|l| l.trim_start().starts_with("#EXTM3U"))?;
     for key in ["x-tvg-url", "url-tvg"] {
         // `key="…"`, then the unquoted form some generators emit.
         let quoted = format!("{key}=\"");
         let raw = if let Some(i) = line.find(&quoted) {
             let rest = &line[i + quoted.len()..];
             rest.split('"').next().unwrap_or("")
-        }
-        else if let Some(i) = line.find(&format!("{key}=")) {
+        } else if let Some(i) = line.find(&format!("{key}=")) {
             let rest = &line[i + key.len() + 1..];
             rest.split_whitespace().next().unwrap_or("")
-        }
-        else {
+        } else {
             continue;
         };
         let first = raw.split(',').next().unwrap_or("").trim();
@@ -346,14 +345,16 @@ async fn stream_channels(
         // A UTF-8 BOM sits in front of the `#EXTM3U` on the first line
         // of a surprising number of playlists, and `\r` survives on
         // every line of a CRLF one.
-        let line = raw.trim_start_matches('\u{feff}').trim_end_matches('\r').trim();
+        let line = raw
+            .trim_start_matches('\u{feff}')
+            .trim_end_matches('\r')
+            .trim();
         if line.is_empty() {
             continue;
         }
         if line.starts_with("#EXTINF:") {
             pending = parse_extinf(line);
-        }
-        else if line.starts_with("#EXTVLCOPT:") {
+        } else if line.starts_with("#EXTVLCOPT:") {
             if let Some((k, v)) = parse_vlcopt(line) {
                 match k.as_str() {
                     "http-user-agent" => pending.user_agent = Some(v),
@@ -361,13 +362,11 @@ async fn stream_channels(
                     _ => {}
                 }
             }
-        }
-        else if line.starts_with('#') {
+        } else if line.starts_with('#') {
             // Any other directive — `#EXTM3U`, `#EXTGRP`, `#KODIPROP`,
             // a comment. Not a URL, and not the end of the record.
             continue;
-        }
-        else {
+        } else {
             // The first non-comment line after an `#EXTINF` is the
             // channel's URL, whatever scheme it uses: providers ship
             // `rtmp://`, `rtsp://` and `udp://` alongside HTTP, and the
@@ -390,9 +389,7 @@ async fn stream_channels(
         }
     }
     if truncated {
-        eprintln!(
-            "[premium] M3U playlist exceeded {MAX_CHANNELS} channels; import truncated"
-        );
+        eprintln!("[premium] M3U playlist exceeded {MAX_CHANNELS} channels; import truncated");
     }
     // The category id *is* the group name: an M3U has no separate
     // category identifier, and `group-title` is what a channel row's
@@ -427,11 +424,7 @@ impl IPTVProvider for M3uAdapter {
         // HEAD. A GET of just the first few bytes is enough to
         // confirm the URL is reachable; we then throw the body
         // away and let `get_channels` do the real work.
-        let resp = client
-            .get(&url)
-            .send()
-            .await
-            .map_err(PremiumError::from)?;
+        let resp = client.get(&url).send().await.map_err(PremiumError::from)?;
         if !resp.status().is_success() {
             return Err(PremiumError::ServerError(resp.status().to_string()));
         }
@@ -484,7 +477,10 @@ impl IPTVProvider for M3uAdapter {
     /// several-hundred-megabyte playlist twice.
     async fn get_catalog(&self) -> Result<Catalog, PremiumError> {
         let (channels, categories) = self.get_channels_with_categories().await?;
-        Ok(Catalog { categories, channels })
+        Ok(Catalog {
+            categories,
+            channels,
+        })
     }
 
     async fn get_epg(
@@ -536,8 +532,8 @@ impl IPTVProvider for M3uAdapter {
             }
         }
         drop(resp);
-        let tvg_url = header_url
-            .or_else(|| tvg_url_from_header_line(&String::from_utf8_lossy(&head)));
+        let tvg_url =
+            header_url.or_else(|| tvg_url_from_header_line(&String::from_utf8_lossy(&head)));
         let Some(tvg_url) = tvg_url else {
             return Ok(None);
         };
@@ -562,8 +558,7 @@ impl IPTVProvider for M3uAdapter {
                 .read_to_end(&mut out)
                 .map_err(|e| PremiumError::MalformedResponse(format!("gunzip: {e}")))?;
             Ok(Some(out))
-        }
-        else {
+        } else {
             Ok(Some(bytes))
         }
     }
@@ -572,10 +567,7 @@ impl IPTVProvider for M3uAdapter {
     /// import stored it in the channel's `stream_url` column, so the
     /// redirector reads it from SQLite instead of re-downloading the
     /// playlist on every zap.
-    async fn resolve_stream_url(
-        &self,
-        _channel_id: &str,
-    ) -> Result<Option<String>, PremiumError> {
+    async fn resolve_stream_url(&self, _channel_id: &str) -> Result<Option<String>, PremiumError> {
         Ok(None)
     }
 }
@@ -590,11 +582,7 @@ impl M3uAdapter {
     ) -> Result<(Vec<IPTVChannel>, Vec<IPTVCategory>), PremiumError> {
         let url = self.url().await?;
         let client = self.client()?;
-        let resp = client
-            .get(&url)
-            .send()
-            .await
-            .map_err(PremiumError::from)?;
+        let resp = client.get(&url).send().await.map_err(PremiumError::from)?;
         if !resp.status().is_success() {
             return Err(PremiumError::ServerError(resp.status().to_string()));
         }

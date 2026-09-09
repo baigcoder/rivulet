@@ -23,6 +23,7 @@ const emit = defineEmits<{
 }>()
 
 const downloads = useDownloadsStore()
+const settings = useSettingsStore()
 
 const files = ref<EngineFile[]>([])
 const canReveal = canOpenFolder()
@@ -66,8 +67,8 @@ async function copyMagnet() {
 <template>
   <div class="flex flex-col gap-1 rounded-xl bg-surface-container/40 px-3 py-3 sm:px-4">
     <div class="flex flex-wrap items-center gap-2 text-body-small opacity-55">
-      <span class="min-w-0 flex-1 truncate">{{ torrent.output_folder }}</span>
-      <v-btn v-if="canReveal" :prepend-icon="mdiFolderOpenOutline" size="x-small" variant="text" @click="emit('open')">
+      <span class="min-w-0 flex-1 truncate">{{ torrent.output_folder || settings.downloadDir || downloads.resolvedDir }}</span>
+      <v-btn v-if="canReveal" :prepend-icon="mdiFolderOpenOutline" size="x-small" variant="text" @click.prevent.stop="emit('open')">
         {{ $t('Open folder') }}
       </v-btn>
       <v-btn :prepend-icon="mdiContentCopy" size="x-small" variant="text" @click="copyMagnet">
@@ -108,7 +109,7 @@ async function copyMagnet() {
           <v-icon :icon="mdiPlayCircleOutline" size="18" />
           <v-tooltip activator="parent" :text="$t('Play this file')" />
         </v-btn>
-        <v-btn v-if="canReveal" icon size="x-small" variant="text" color="on-surface" @click="emit('open', file)">
+        <v-btn v-if="canReveal" icon size="x-small" variant="text" color="on-surface" @click.prevent.stop="emit('open', file)">
           <v-icon :icon="mdiFolderOpenOutline" size="18" />
           <v-tooltip activator="parent" :text="$t('Open containing folder')" />
         </v-btn>

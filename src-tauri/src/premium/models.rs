@@ -307,4 +307,3 @@ pub struct VodPage<T> {
     pub total: usize,
     pub next_cursor: Option<String>,
 }
-

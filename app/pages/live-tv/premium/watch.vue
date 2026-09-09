@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { ZapChannel } from '~/stores/premiumTv'
 /**
  * Premium TV player page.
  *
@@ -16,9 +17,11 @@
  * data, it is expired authorization, and replaying it would 401.
  *
  * Reconnect is bounded and lives in the store (`nextReconnect`): four
- * attempts at 1s, 2s, 4s, 8s, then one clear final error and a stop. The
- * eight-state machine there is what this page drives — `setPlayer` on
- * every transition, and nothing on this page keeps a second copy of it.
+ * attempts at 2s, 4s, 8s, 16s, then the next playable channel (same
+ * bound as Free TV's auto-skip). One clear error only when that walk
+ * is spent too. The eight-state machine in the store is what this page
+ * drives — `setPlayer` on every transition, and nothing here keeps a
+ * second copy of it.
  */
 import type { EpgProgram, IPTVChannel } from '~/types/premium'
 import { mdiCheck, mdiClose } from '@mdi/js'
@@ -26,6 +29,8 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { usePlaybackSource } from '~/composables/usePlaybackSource'
 import { MAX_RECONNECT_ATTEMPTS } from '~/stores/premiumTv'
 import { cycleAspect } from '~/utils/aspectRatio'
+import { liveLocked, MAX_AUTO_SKIPS, nextPlayable } from '~/utils/livehealth'
+import { readPremiumPlay } from '~/utils/liveNav'
 import { friendlyPlaybackError } from '~/utils/playbackError'
 import { premiumApi } from '~/utils/premiumTv'
 
@@ -78,6 +83,7 @@ const playerRef = ref<{
   duration?: number
   videoWidth: number
   videoHeight: number
+  hasAudio?: boolean
   resolutionLabel: string
   ipc: (command: unknown[]) => Promise<unknown>
   goLive: () => void | Promise<void>
@@ -126,17 +132,37 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
 // ── What is on screen ────────────────────────────────────────────
 
+const staged = readPremiumPlay()
+const stagedZap = ref<ZapChannel[]>(
+  staged?.id && !isVod.value ? (staged.zapList ?? []) : [],
+)
+
 const channelName = computed(() => {
   if (playTitle.value)
     return playTitle.value
+  if (staged?.id === channelId.value && staged.title)
+    return staged.title
   return channel.value?.name ?? $t('Channel')
 })
-const channelLogo = computed(() => channel.value?.logoUrl ?? '')
 
-const zapList = computed(() => premium.zapList)
+const zapList = computed(() => premium.zapList.length ? premium.zapList : stagedZap.value)
 const channelIndex = computed(() => zapList.value.findIndex(c => c.id === channelId.value))
 const hasPrev = computed(() => channelIndex.value > 0)
 const hasNext = computed(() => channelIndex.value >= 0 && channelIndex.value < zapList.value.length - 1)
+
+const channelLogo = computed(() => {
+  if (staged?.id === channelId.value && staged.logo)
+    return staged.logo
+  return zapList.value[channelIndex.value]?.logoUrl ?? channel.value?.logoUrl ?? ''
+})
+
+const autoSkips = ref(0)
+const autoSkipping = computed(() =>
+  !isVod.value
+  && autoSkips.value > 0
+  && autoSkips.value < MAX_AUTO_SKIPS
+  && !playerPlaying.value
+  && premium.player !== 'error')
 
 const guide = computed<EpgProgram[]>(() => premium.guide(channelId.value))
 
@@ -164,13 +190,23 @@ const statusLine = computed(() => {
     }
   }
   switch (premium.player) {
-    case 'loading': return $t('Connecting to live stream…')
+    case 'loading': return autoSkipping.value
+      ? $t('Channel unavailable, trying next channel ({attempt} of {total})…', {
+          attempt: autoSkips.value,
+          total: MAX_AUTO_SKIPS,
+        })
+      : $t('Connecting to live stream…')
     case 'buffering': return $t('Buffering…')
     case 'reconnecting': return $t('Reconnecting… attempt {attempt} of {total}', {
       attempt: premium.reconnectAttempt,
       total: MAX_RECONNECT_ATTEMPTS,
     })
-    default: return ''
+    default: return autoSkipping.value
+      ? $t('Channel unavailable, trying next channel ({attempt} of {total})…', {
+          attempt: autoSkips.value,
+          total: MAX_AUTO_SKIPS,
+        })
+      : ''
   }
 })
 
@@ -189,14 +225,16 @@ const overlayError = computed(() => {
   // under the same sentence. VOD keeps its own centre overlay while
   // the file is still up; once the machine is `error` the player is
   // unmounted and this is the only place left to say so.
+  // The player's catchError is not merged in: it flashed here during
+  // reconnect while the overlay was already saying "Connecting…".
   if (isVod.value && premium.player !== 'error')
     return ''
   const raw = premium.player === 'error'
     ? premium.playerError
-    : playback.error.value || playerCatchError.value
+    : playback.error.value
   if (!raw)
     return ''
-  return friendlyPlaybackError(raw)
+  return friendlyPlaybackError(raw, isVod.value ? 'vod' : 'live')
 })
 
 // ── Loading a channel ────────────────────────────────────────────
@@ -281,10 +319,23 @@ function switchQuality(ch: IPTVChannel): void {
   })
 }
 
+function connectionLimitMessage(): string {
+  const a = premium.account
+  return $t('Your provider is at its connection limit ({active} of {max} streams in use). Stop playback on your other devices, then try again.', {
+    active: a?.activeConnections ?? 1,
+    max: a?.maxConnections ?? 1,
+  })
+}
+
 /**
  * Mint a source for `channelId` and start playing it. `fresh` separates a
  * new channel from a reconnect: a new channel resets the attempt counter
  * and the guide, a reconnect keeps the counter that scheduled it.
+ *
+ * The account probe is not on this path. It is a round trip to the panel
+ * and only names a failure; awaiting it here is what made every zap wait
+ * on the provider before mpv even started. A cached limit still fails
+ * fast. A live probe runs after a refusal, where the count matters.
  */
 async function load({ fresh } = { fresh: true }): Promise<void> {
   const id = isVod.value ? playId.value : channelId.value
@@ -301,15 +352,6 @@ async function load({ fresh } = { fresh: true }): Promise<void> {
   if (fresh) {
     premium.resetPlayer()
     void premium.ensureLoaded()
-    await premium.probeAccount()
-    if (premium.atConnectionLimit === true) {
-      const a = premium.account
-      premium.setPlayer('error', $t('Your provider is at its connection limit ({active} of {max} streams in use). Stop playback on your other devices, then try again.', {
-        active: a?.activeConnections ?? 1,
-        max: a?.maxConnections ?? 1,
-      }))
-      return
-    }
   }
   premium.setPlayer(fresh ? 'loading' : 'reconnecting')
   playerCatchError.value = ''
@@ -334,12 +376,15 @@ async function load({ fresh } = { fresh: true }): Promise<void> {
   }, 15000)
 
   if (fresh && !isVod.value) {
-    const ch = await resolveChannel(id)
-    if (id !== channelId.value)
-      return
-    channel.value = ch
-    if (ch)
-      ensureZapList(ch)
+    const i = channelIndex.value
+    playback.prefetch([zapList.value[i - 1]?.id, zapList.value[i + 1]?.id])
+    void resolveChannel(id).then(ch => {
+      if (id !== channelId.value)
+        return
+      channel.value = ch
+      if (ch)
+        ensureZapList(ch)
+    })
     void premium.addRecent(id)
     void loadGuide(id)
     void loadQualityVariants(id)
@@ -367,11 +412,7 @@ async function onPlaybackFailed(reason?: 'stub' | 'dead' | 'refused'): Promise<v
     if (reason === 'refused') {
       await premium.probeAccount()
       if (premium.atConnectionLimit === true) {
-        const a = premium.account
-        premium.setPlayer('error', $t('Your provider is at its connection limit ({active} of {max} streams in use). Stop playback on your other devices, then try again.', {
-          active: a?.activeConnections ?? 1,
-          max: a?.maxConnections ?? 1,
-        }))
+        premium.setPlayer('error', connectionLimitMessage())
         return
       }
     }
@@ -380,21 +421,26 @@ async function onPlaybackFailed(reason?: 'stub' | 'dead' | 'refused'): Promise<v
       : $t('This title stopped responding. Try again.'))
     return
   }
+  // Sound or a frame: the channel is up. A later HLS 404 must not
+  // reconnect-walk away from a stream the viewer can already hear.
+  if (playerPlaying.value)
+    return
   if (reason === 'refused') {
     await premium.probeAccount()
     // A limit we can see is a limit worth naming: retrying cannot help
     // until a slot frees, and the viewer is the one who can free it.
     if (premium.atConnectionLimit === true) {
-      const a = premium.account
-      premium.setPlayer('error', $t('Your provider is at its connection limit ({active} of {max} streams in use). Stop playback on your other devices, then try again.', {
-        active: a?.activeConnections ?? 1,
-        max: a?.maxConnections ?? 1,
-      }))
+      premium.setPlayer('error', connectionLimitMessage())
       return
     }
   }
   const delay = premium.nextReconnect()
   if (delay === null) {
+    if (autoSkip())
+      return
+    const current = zapList.value[channelIndex.value]
+    if (current)
+      premium.markOffline(current.id)
     premium.setPlayer('error', reason === 'refused'
       ? $t('The provider refused this stream. The channel may not be part of your package, or the account may be busy on another device.')
       : $t('This channel stopped responding. It may be off the air, or the provider may be busy.'))
@@ -422,7 +468,8 @@ function syncPlayerState(): void {
     return
   const wasPlaying = playerPlaying.value
   const picture = typeof p.videoWidth === 'number' && p.videoWidth > 0
-  playerPlaying.value = asBool(p.started) && !asBool(p.paused) && picture
+  const audio = asBool(p.hasAudio)
+  playerPlaying.value = asBool(p.started) && !asBool(p.paused) && liveLocked(picture ? 1 : 0, audio)
   playerBehindLive.value = asBool(p.behindLive)
   playerVolume.value = typeof p.volume === 'number' ? p.volume : 100
   playerMuted.value = asBool(p.muted)
@@ -442,9 +489,12 @@ function syncPlayerState(): void {
   // perfectly good picture.
   if (playerPlaying.value && !wasPlaying) {
     clearLoadTimeout()
+    autoSkips.value = 0
     premium.resetPlayer()
     premium.setPlayer('playing')
     playerCatchError.value = ''
+    if (!isVod.value && channelId.value)
+      premium.markLive(channelId.value)
     if (typeof p.catchError === 'object' && p.catchError && 'value' in p.catchError)
       (p.catchError as { value: string }).value = ''
     const i = channelIndex.value
@@ -455,7 +505,7 @@ function syncPlayerState(): void {
     return
   if (!asBool(p.started))
     return
-  if (asBool(p.buffering) || !picture)
+  if (asBool(p.buffering) || !liveLocked(picture ? 1 : 0, audio))
     premium.setPlayer('buffering')
   else if (asBool(p.paused))
     premium.setPlayer('paused')
@@ -532,7 +582,11 @@ function zapTo(index: number): void {
     return
   void router.replace({
     path: localePath('/live-tv/premium/watch'),
-    query: { id: target.id, from: String(route.query.from ?? '') },
+    query: {
+      id: target.id,
+      from: String(route.query.from ?? ''),
+      title: target.name,
+    },
   })
 }
 
@@ -540,6 +594,50 @@ function zap(direction: 1 | -1): void {
   if (channelIndex.value < 0)
     return
   zapTo(channelIndex.value + direction)
+}
+
+/** From Connecting / Playback Error: leave this channel, wrap if needed. */
+function skipChannel(): void {
+  const current = zapList.value[channelIndex.value]
+  if (current)
+    premium.markOffline(current.id)
+  let next = nextPlayable(zapList.value, channelIndex.value, premium.offlineIds)
+  if (next < 0)
+    next = nextPlayable(zapList.value, -1, premium.offlineIds)
+  if (next < 0 || next === channelIndex.value)
+    return
+  autoSkips.value++
+  zapTo(next)
+}
+
+function onNext(): void {
+  if (!isVod.value && (busy.value || overlayError.value))
+    skipChannel()
+  else
+    zap(1)
+}
+
+/**
+ * Bounded walk past dead channels, same contract as Free TV. A Premium
+ * lineup is the user's package, but a channel that will not open is still
+ * ordinary — reconnecting the same one four times and then stopping is
+ * what left the overlay on a black screen. After `MAX_AUTO_SKIPS` it
+ * stops and shows the error: the list is dead, not this channel.
+ */
+function autoSkip(): boolean {
+  if (isVod.value || channelIndex.value < 0 || autoSkips.value >= MAX_AUTO_SKIPS)
+    return false
+  const current = zapList.value[channelIndex.value]
+  if (current)
+    premium.markOffline(current.id)
+  let next = nextPlayable(zapList.value, channelIndex.value, premium.offlineIds)
+  if (next < 0)
+    next = nextPlayable(zapList.value, -1, premium.offlineIds)
+  if (next < 0 || next === channelIndex.value)
+    return false
+  autoSkips.value++
+  zapTo(next)
+  return true
 }
 
 function onKey(e: KeyboardEvent): void {
@@ -637,6 +735,7 @@ onUnmounted(() => {
         :mode="playerMode"
         :aspect="aspectRatio"
         :fullscreen="isFullscreen"
+        :resolving="!isVod && busy"
         :user-agent="playback.source.value.userAgent"
         :referer="playback.source.value.referer"
         @failed="reason => void onPlaybackFailed(reason)"
@@ -664,6 +763,7 @@ onUnmounted(() => {
       :channel-index="isVod ? 0 : (channelIndex >= 0 ? channelIndex : 0)"
       :channel-total="isVod ? 0 : zapList.length"
       :channel-list="isVod ? [] : zapList"
+      :offline-ids="premium.offlineIds"
       :position="playerPosition"
       :duration="playerDuration"
       :is-favorite="isFavorite"
@@ -677,7 +777,7 @@ onUnmounted(() => {
       :aspect-ratio="aspectRatio"
       @back="goBack"
       @prev="zap(-1)"
-      @next="zap(1)"
+      @next="onNext"
       @zap-to="zapTo"
       @retry="() => void load({ fresh: true })"
       @toggle-play="onTogglePlay"
@@ -699,21 +799,6 @@ onUnmounted(() => {
       :class="overlayRef?.visible ? 'opacity-100' : 'opacity-0'"
     >
       <premium-tv-premium-epg-panel :programs="guide" :loading="guideLoading" :up-next="3" />
-    </div>
-
-    <!-- First connect, and every reconnect: one spinner, one line saying
-         which of the two this is. Fatal is the overlay's modal, not a
-         second card on this page. -->
-    <div
-      v-if="busy && !playback.source.value && !fatal"
-      class="absolute inset-0 z-40 grid place-items-center text-white"
-    >
-      <div class="flex flex-col items-center gap-3">
-        <v-progress-circular indeterminate color="primary" size="40" width="3" />
-        <p class="text-body-medium font-medium opacity-70">
-          {{ statusLine || $t('Connecting to live stream…') }}
-        </p>
-      </div>
     </div>
 
     <!-- Quality picker. A compact card, not a full-height drawer: the

@@ -147,6 +147,38 @@ check('the watch page drives the store rather than keeping its own flags', () =>
   assert.ok(!/\bconst (?:isPlaying|isBuffering|isReconnecting) = ref\(/.test(watchSrc), 'no parallel boolean state')
 })
 
+check('a zap does not wait on the provider account probe', () => {
+  const loadFn = watchSrc.slice(watchSrc.indexOf('async function load({'), watchSrc.indexOf('async function onPlaybackFailed'))
+  assert.ok(!/await premium\.probeAccount/.test(loadFn), 'the panel round trip must not sit in front of the first mint')
+  assert.ok(watchSrc.includes('await premium.probeAccount'), 'a refusal still probes, so the limit can be named')
+})
+
+check('connecting UI is the overlay, not a second spinner', () => {
+  assert.ok(!/busy && !playback\.source\.value/.test(watchSrc), 'a page spinner under the overlay is two connecting cards')
+})
+
+check('dead channels auto-skip like Free TV', () => {
+  assert.ok(watchSrc.includes('MAX_AUTO_SKIPS'), 'the skip walk must be bounded')
+  assert.ok(watchSrc.includes('nextPlayable'), 'and must walk past known-dead ids')
+  assert.ok(watchSrc.includes('function autoSkip'), 'reconnect budget spent must try the next channel')
+  assert.ok(watchSrc.includes('function skipChannel'), 'Next on an error must skip, not zap into the same dead one')
+  assert.ok(watchSrc.includes('@next="onNext"'), 'the overlay Next button must take the smart path')
+})
+
+check('browse stages identity so the player is not empty on first paint', () => {
+  assert.ok(read(BROWSER).includes('savePremiumPlay'), 'play must stage the zap list before navigating')
+  assert.ok(read(BROWSER).includes('prefetchPremiumPlay'), 'and warm the redirector token')
+  assert.ok(watchSrc.includes('readPremiumPlay'), 'the player must read that staging')
+  assert.ok(!read(BROWSER).includes('logo: channel.logoUrl || undefined'), 'a https logo in the query string 404s the watch page')
+  assert.ok(!watchSrc.includes('logo: target.logoUrl'), 'zap must not put artwork URLs in the location bar')
+})
+
+check('prefetch cache outlives the browse page', () => {
+  const s = read(COMPOSABLE)
+  assert.ok(s.includes('prefetchCache'), 'tokens minted on browse must still be there when /watch mounts')
+  assert.ok(s.includes('export function prefetchPremiumPlay'), 'browse warms tokens through a module-level helper')
+})
+
 check('a spent retry budget ends in one clear error', () => {
   assert.ok(/delay === null/.test(watchSrc), 'the page must handle a null delay')
   assert.ok(/setPlayer\('error'/.test(watchSrc), 'and say so once, in the error state')
@@ -423,6 +455,25 @@ check('the guide progress bar is announced', () => {
   assert.ok(s.includes('aria-valuenow'), 'and a value a screen reader can read')
 })
 
+check('channel health is the same book as Free TV', () => {
+  assert.ok(storeSrc.includes('createChannelHealth'), 'premium keeps verdicts in the shared health book')
+  assert.ok(storeSrc.includes('resetHealth'), 'a disconnect must not keep the previous account\'s dead list')
+  assert.ok(!storeSrc.includes('probeStream'), 'premium must not GET streams — no URL, and it would steal the slot')
+  assert.ok(!/const offlineIds = ref/.test(watchSrc), 'a watch-page-only Set never reached the grid')
+  assert.ok(watchSrc.includes('premium.markLive'), 'a picture tags the channel LIVE')
+  assert.ok(watchSrc.includes('premium.markOffline'), 'a spent retry budget tags it Offline')
+  assert.ok(watchSrc.includes(':offline-ids="premium.offlineIds"'), 'the zap list reads the store')
+  assert.ok(
+    !/atConnectionLimit === true[\s\S]{0,180}markOffline/.test(watchSrc),
+    'a full connection slot is not a dead channel',
+  )
+  const card = read(CARD)
+  assert.ok(card.includes('healthOf'), 'the grid reads the book')
+  assert.ok(card.includes('$t(\'LIVE\')'), 'and shows LIVE')
+  assert.ok(card.includes('$t(\'Offline\')'), 'and Offline')
+  assert.ok(read(BROWSER).includes('{count} offline'), 'the header counts what this session proved dead')
+})
+
 // ── i18n ─────────────────────────────────────────────────────────
 
 check('no premium string bypasses $t()', () => {
@@ -460,6 +511,14 @@ check('a live channel shows a loader until the first frame', () => {
   assert.ok(
     /videoWidth === 'number' && p\.videoWidth > 0/.test(watchSrc),
     'playing must wait for a decoded frame, not just mpv having started',
+  )
+  assert.ok(
+    watchSrc.includes('liveLocked'),
+    'sound without video-params must not reconnect-walk to the next channel',
+  )
+  assert.ok(
+    /if \(playerPlaying\.value\)\s*return/.test(watchSrc),
+    'a live channel that is already playing must not enter onPlaybackFailed',
   )
 })
 

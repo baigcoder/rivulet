@@ -40,8 +40,8 @@ const CHANNEL_COLUMNS: &str = "c.id, c.name, c.logo_url, c.category_id, c.catego
 /// recognises — this is the inverse operation.
 fn strip_quality_tokens(name: &str) -> String {
     let tokens = [
-        "4K UHD", "4K", "2160P", "FHD", "1080P", "HD", "720P",
-        "SD", "480P", "HEVC", "H265", "H.265",
+        "4K UHD", "4K", "2160P", "FHD", "1080P", "HD", "720P", "SD", "480P", "HEVC", "H265",
+        "H.265",
     ];
     let mut result = name.to_string();
     for token in &tokens {
@@ -86,9 +86,7 @@ impl PremiumRepository {
             .lock()
             .map_err(|e| PremiumError::Database(format!("lock: {e}")))?;
         let limit = limit.clamp(1, 500);
-        let offset: i64 = cursor
-            .and_then(|c| c.parse().ok())
-            .unwrap_or(0);
+        let offset: i64 = cursor.and_then(|c| c.parse().ok()).unwrap_or(0);
         let search_lower = search.map(|s| s.to_lowercase());
         let cat_filter = category.filter(|s| !s.is_empty());
         let country_filter = country.filter(|s| !s.is_empty());
@@ -151,9 +149,8 @@ impl PremiumRepository {
         // Total and next cursor are a separate count. Two queries is
         // fine: the channels table is small for a single user and the
         // count is constant.
-        let mut count_sql = String::from(
-            "SELECT COUNT(*) FROM iptv_premium_channels c WHERE c.connection_id = ?1",
-        );
+        let mut count_sql =
+            String::from("SELECT COUNT(*) FROM iptv_premium_channels c WHERE c.connection_id = ?1");
         let mut count_params: Vec<Box<dyn rusqlite::ToSql>> =
             vec![Box::new(connection_id.to_string())];
         if let Some(cat) = cat_filter {
@@ -190,8 +187,7 @@ impl PremiumRepository {
 
         let next_cursor = if (offset + items.len() as i64) < total {
             Some((offset + items.len() as i64).to_string())
-        }
-        else {
+        } else {
             None
         };
 
@@ -229,8 +225,7 @@ impl PremiumRepository {
                 rusqlite::params![connection_id, channel_id],
             )?;
             Ok(false)
-        }
-        else {
+        } else {
             conn.execute(
                 "INSERT INTO iptv_premium_favorites (connection_id, channel_id, added_at)
                  VALUES (?1, ?2, strftime('%s','now'))",
@@ -240,11 +235,7 @@ impl PremiumRepository {
         }
     }
 
-    pub fn add_recent(
-        &self,
-        connection_id: &str,
-        channel_id: &str,
-    ) -> Result<(), PremiumError> {
+    pub fn add_recent(&self, connection_id: &str, channel_id: &str) -> Result<(), PremiumError> {
         let conn = self
             .state
             .db
@@ -290,10 +281,7 @@ impl PremiumRepository {
              ORDER BY fav.added_at DESC
              LIMIT ?2"
         ))?;
-        let rows = stmt.query_map(
-            rusqlite::params![connection_id, limit as i64],
-            channel_row,
-        )?;
+        let rows = stmt.query_map(rusqlite::params![connection_id, limit as i64], channel_row)?;
         let mut out = Vec::new();
         for r in rows {
             out.push(r?);
@@ -320,10 +308,7 @@ impl PremiumRepository {
              ORDER BY r.watched_at DESC
              LIMIT ?2"
         ))?;
-        let rows = stmt.query_map(
-            rusqlite::params![connection_id, limit as i64],
-            channel_row,
-        )?;
+        let rows = stmt.query_map(rusqlite::params![connection_id, limit as i64], channel_row)?;
         let mut out = Vec::new();
         for r in rows {
             out.push(r?);
@@ -817,7 +802,8 @@ impl PremiumRepository {
                 ])?;
             }
         }
-        tx.commit().map_err(|e| PremiumError::Database(e.to_string()))?;
+        tx.commit()
+            .map_err(|e| PremiumError::Database(e.to_string()))?;
         Ok(())
     }
 
@@ -865,7 +851,8 @@ impl PremiumRepository {
                 written += 1;
             }
         }
-        tx.commit().map_err(|e| PremiumError::Database(e.to_string()))?;
+        tx.commit()
+            .map_err(|e| PremiumError::Database(e.to_string()))?;
         Ok(written)
     }
 }
@@ -921,9 +908,7 @@ fn chrono_now_secs() -> i64 {
 /// `programme` with no matching `channel` is still imported under
 /// its `channel` id verbatim. The resulting `EpgProgram` list is
 /// what `replace_epg` writes into the cache table.
-pub fn parse_xmltv(
-    xml: &str,
-) -> Result<Vec<super::models::EpgProgram>, PremiumError> {
+pub fn parse_xmltv(xml: &str) -> Result<Vec<super::models::EpgProgram>, PremiumError> {
     use quick_xml::events::Event;
     use quick_xml::reader::Reader;
 
@@ -950,13 +935,8 @@ pub fn parse_xmltv(
                     attrs.insert(key, val);
                 }
                 if name == "programme" {
-                    let channel_id = attrs
-                        .get("channel")
-                        .cloned()
-                        .unwrap_or_default();
-                    let start = attrs
-                        .get("start")
-                        .and_then(|s| parse_xmltv_time(s));
+                    let channel_id = attrs.get("channel").cloned().unwrap_or_default();
+                    let start = attrs.get("start").and_then(|s| parse_xmltv_time(s));
                     let stop = attrs.get("stop").and_then(|s| parse_xmltv_time(s));
                     if let Some(start) = start {
                         pending = Some(PendingProgramme {
@@ -966,15 +946,12 @@ pub fn parse_xmltv(
                             title: String::new(),
                             desc: String::new(),
                         });
-                    }
-                    else {
+                    } else {
                         pending = None;
                     }
-                }
-                else if name == "title" && pending.is_some() {
+                } else if name == "title" && pending.is_some() {
                     pending.as_mut().unwrap().title.clear();
-                }
-                else if name == "desc" && pending.is_some() {
+                } else if name == "desc" && pending.is_some() {
                     pending.as_mut().unwrap().desc.clear();
                 }
             }
@@ -984,8 +961,7 @@ pub fn parse_xmltv(
                     let s = String::from_utf8_lossy(&bytes);
                     if p.title.is_empty() {
                         p.title.push_str(&s);
-                    }
-                    else if p.desc.is_empty() {
+                    } else if p.desc.is_empty() {
                         p.desc.push_str(&s);
                     }
                 }
@@ -1000,8 +976,7 @@ pub fn parse_xmltv(
                                 title: p.title,
                                 description: if p.desc.is_empty() {
                                     None
-                                }
-                                else {
+                                } else {
                                     Some(p.desc)
                                 },
                                 start: p.start,
@@ -1123,7 +1098,10 @@ mod tests {
 
     #[test]
     fn parse_xmltv_time_strips_offset() {
-        assert_eq!(parse_xmltv_time("20240101120000 +0000"), Some(1_704_110_400));
+        assert_eq!(
+            parse_xmltv_time("20240101120000 +0000"),
+            Some(1_704_110_400)
+        );
         assert_eq!(parse_xmltv_time("20240101120000"), Some(1_704_110_400));
     }
 

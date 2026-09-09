@@ -259,6 +259,12 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
                 JSONObject().put("w", vw).put("h", vh),
             )
         }
+        if (p.isPlaying) {
+            snap.put(
+                "audio-params",
+                JSONObject().put("samplerate", 48000).put("channel-count", 2),
+            )
+        }
     }
 
     private fun onMain(block: () -> Unit) {

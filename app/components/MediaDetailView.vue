@@ -5,7 +5,7 @@
  * case it stays on the caller's stream.
  */
 import type { Media, MediaType } from '~/utils/tmdb'
-import { mdiAlertCircleOutline, mdiBookmark, mdiBookmarkOutline, mdiClose, mdiEye, mdiEyeOutline, mdiHeart, mdiHeartOutline, mdiOpenInNew, mdiPlay, mdiShieldLockOutline, mdiStar, mdiVolumeHigh, mdiVolumeOff, mdiYoutube } from '@mdi/js'
+import { mdiAlertCircleOutline, mdiBookmark, mdiBookmarkOutline, mdiEye, mdiEyeOutline, mdiHeart, mdiHeartOutline, mdiOpenInNew, mdiPlay, mdiShieldLockOutline, mdiStar, mdiVolumeHigh, mdiVolumeOff, mdiYoutube } from '@mdi/js'
 import { isTauri } from '@tauri-apps/api/core'
 import { useTitleImages } from '~/utils/titleImages'
 
@@ -171,14 +171,7 @@ const trailerKeys = computed(() => media.value?.trailers?.length
   ? media.value.trailers
   : media.value?.trailer ? [media.value.trailer] : [])
 const trailerKey = computed(() => trailerKeys.value[trailerPick.value] ?? '')
-let idleHandle = 0
-
-function cancelHeroIdle() {
-  if (!idleHandle)
-    return
-  clearTimeout(idleHandle)
-  idleHandle = 0
-}
+let heroOnScreen = false
 
 function nextTrailer() {
   if (trailerPick.value + 1 < trailerKeys.value.length)
@@ -188,13 +181,10 @@ function nextTrailer() {
 }
 
 watch(() => trailerKeys.value.join(',') || media.value?.trailer || '', keys => {
-  cancelHeroIdle()
-  heroIdle.value = false
   videoHidden.value = false
   trailerPick.value = 0
-  if (!keys || import.meta.server)
-    return
-  heroIdle.value = true
+  heroOnScreen = false
+  heroIdle.value = Boolean(keys) && !import.meta.server
 }, { immediate: true })
 
 /**
@@ -214,7 +204,7 @@ const heroFrameSrc = computed(() => {
   const key = trailerKey.value
   if (!key || videoHidden.value || !heroIdle.value)
     return ''
-  return youtubeEmbedSrc(key, { mute: true, loop: true })
+  return youtubeEmbedSrc(key, { mute: true, loop: true, controls: false })
 })
 /** Which branch the hero renders: native video on Tauri, iframe in browser dev. */
 const heroIsVideo = computed(() => !!heroVideoSrc.value)
@@ -253,6 +243,23 @@ function lockHeroQuality() {
   heroCommand('setPlaybackQualityRange', ['hd1080', 'hd1080'])
 }
 
+function playHeroVideo() {
+  const el = heroVideo.value
+  if (!el)
+    return
+  el.muted = heroMuted.value
+  el.loop = true
+  void el.play().catch(() => {})
+}
+
+function loopHeroVideo() {
+  const el = heroVideo.value
+  if (!el)
+    return
+  el.currentTime = 0
+  void el.play().catch(() => {})
+}
+
 function onHeroVideoPlaying() {
   heroPlaying.value = true
 }
@@ -267,7 +274,7 @@ function onHeroReady() {
   (heroFrame.value as HTMLIFrameElement | null)?.contentWindow?.postMessage(JSON.stringify({ event: 'listening' }), '*')
   heroCommand(heroMuted.value ? 'mute' : 'unMute')
   lockHeroQuality()
-  heroPlaying.value = true
+  heroCommand('playVideo')
 }
 
 function onHeroMessage(e: MessageEvent) {
@@ -277,28 +284,52 @@ function onHeroMessage(e: MessageEvent) {
     nextTrailer()
     return
   }
+  if (youtubeEnded(e.data)) {
+    heroCommand('seekTo', [0, true])
+    heroCommand('playVideo')
+    return
+  }
   if (!youtubePlaying(e.data))
     return
   heroPlaying.value = true
 }
 
 const heroBox = ref<HTMLElement | null>(null)
+function resumeHero() {
+  if (heroVideo.value)
+    void heroVideo.value.play().catch(() => {})
+  else if (heroFrameSrc.value)
+    heroCommand('playVideo')
+}
+function pauseHero() {
+  if (heroVideo.value)
+    heroVideo.value.pause()
+  else if (heroFrameSrc.value)
+    heroCommand('pauseVideo')
+}
 useIntersectionObserver(heroBox, ([entry]) => {
-  if (heroVideo.value) {
-    if (entry?.isIntersecting)
-      void heroVideo.value?.play().catch(() => {})
-    else
-      heroVideo.value?.pause()
+  const on = (entry?.intersectionRatio ?? 0) > 0
+  if (on) {
+    heroOnScreen = true
+    resumeHero()
     return
   }
-  if (!heroFrameSrc.value)
+  // The first callback often lands before layout (ratio 0). Pausing then
+  // cancels muted autoplay and the cover sits on the poster until scroll.
+  if (!heroOnScreen)
     return
-  heroCommand(entry?.isIntersecting ? 'playVideo' : 'pauseVideo')
-}, { threshold: 0.35 })
+  pauseHero()
+}, { threshold: [0, 0.35] })
+
+watch(heroVideoSrc, async src => {
+  if (!src)
+    return
+  await nextTick()
+  playHeroVideo()
+})
 
 onMounted(() => window.addEventListener('message', onHeroMessage))
 onUnmounted(() => {
-  cancelHeroIdle()
   clearTimeout(showHero)
   window.removeEventListener('message', onHeroMessage)
 })
@@ -312,6 +343,12 @@ const trailerSrc = computed(() => {
 
 /** Native <video> for the Trailer dialog (desktop); empty in browser dev. */
 const trailerVideoSrc = computed(() => trailerKey.value ? youtubeStreamSrc(trailerKey.value) : '')
+
+/** True when the native <video> failed — fall back to the iframe embed. */
+const trailerVideoFailed = ref(false)
+function onTrailerVideoError() {
+  trailerVideoFailed.value = true
+}
 
 const RATING_ORDER = ['G', 'PG', 'PG-13', 'R', 'NC-17', '']
 const parentalBlocked = computed(() => {
@@ -389,6 +426,61 @@ const trailer = ref(false)
 const torrentPickerRef = ref<{ open: () => void } | null>(null)
 const isDesktop = import.meta.client && isTauri()
 
+/**
+ * WebKitGTK (Linux iframe) and the native <video> path both hold the
+ * media pipeline while the cover trailer plays. Play used to navigate
+ * away with that still running, so the first torrent mpv opened a black
+ * `--wid` window; Back then Play worked because the trailer was already
+ * gone. Vue Router waits on this promise, so mpv does not spawn until
+ * the decoder is actually released.
+ */
+let heroStop: Promise<void> | null = null
+
+function stopHeroTrailer(): Promise<void> {
+  if (heroStop)
+    return heroStop
+  heroStop = unloadHeroTrailer()
+  return heroStop
+}
+
+function waitBrief(el: HTMLElement, event: string, ms: number) {
+  return new Promise<void>(resolve => {
+    const done = () => {
+      el.removeEventListener(event, done)
+      resolve()
+    }
+    el.addEventListener(event, done)
+    window.setTimeout(done, ms)
+  })
+}
+
+async function unloadHeroTrailer() {
+  videoHidden.value = true
+  heroIdle.value = false
+  trailer.value = false
+  const video = heroVideo.value
+  if (video) {
+    const emptied = waitBrief(video, 'emptied', 150)
+    video.pause()
+    video.removeAttribute('src')
+    video.load()
+    await emptied
+  }
+  const frame = heroFrame.value
+  if (frame) {
+    heroCommand('pauseVideo')
+    heroCommand('stopVideo')
+    const blanked = waitBrief(frame, 'load', 150)
+    frame.src = 'about:blank'
+    await blanked
+  }
+  await nextTick()
+  // GStreamer / WebKit drop the decoder a beat after the element is empty.
+  await new Promise<void>(resolve => window.setTimeout(resolve, 60))
+}
+
+onBeforeRouteLeave(() => stopHeroTrailer())
+
 async function openTrailer() {
   const url = `https://www.youtube.com/watch?v=${trailerKey.value || media.value?.trailer}`
   try {
@@ -403,6 +495,7 @@ function showTrailer() {
   const key = trailerKey.value || media.value?.trailer
   if (!key)
     return
+  trailerVideoFailed.value = false
   trailer.value = true
 }
 
@@ -557,15 +650,19 @@ watch(() => props.id, () => {
             <video
               ref="heroVideo"
               :src="heroVideoSrc"
-              class="absolute left-1/2 top-1/2 min-w-[177.78vh] min-h-[56.25vw] w-[130%] h-[130%] -translate-x-1/2 -translate-y-1/2 object-cover transition-opacity duration-500"
+              class="rivulet-cover-video absolute left-1/2 top-1/2 min-w-[177.78vh] min-h-[56.25vw] w-[130%] h-[130%] -translate-x-1/2 -translate-y-1/2 object-cover transition-opacity duration-500"
               :class="heroPlaying ? 'opacity-100' : 'opacity-0'"
               :muted="heroMuted"
-              :autoplay="heroIdle"
+              autoplay
               loop
               playsinline
-              preload="none"
+              preload="auto"
+              controlslist="nodownload nofullscreen noremoteplayback noplaybackrate"
+              disablepictureinpicture
               tabindex="-1"
               aria-hidden="true"
+              @loadeddata="playHeroVideo"
+              @ended="loopHeroVideo"
               @playing="onHeroVideoPlaying"
               @error="onHeroVideoError"
             />
@@ -580,9 +677,8 @@ watch(() => props.id, () => {
               class="absolute left-1/2 top-1/2 min-w-[177.78vh] min-h-[56.25vw] w-[130%] h-[130%] -translate-x-1/2 -translate-y-1/2 transition-opacity duration-500 pointer-events-none"
               :class="heroPlaying ? 'opacity-100' : 'opacity-0'"
               frameborder="0"
-              allow="autoplay; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allow="autoplay; encrypted-media"
               referrerpolicy="strict-origin-when-cross-origin"
-              allowfullscreen
               tabindex="-1"
               aria-hidden="true"
               @load="onHeroReady"
@@ -598,7 +694,7 @@ watch(() => props.id, () => {
             {{ sourceLabel }}
           </p>
 
-          <div v-if="trailerKey" class="absolute right-4 top-4 z-10 flex items-center gap-2">
+          <div v-if="trailerKey && !videoHidden" class="absolute right-4 top-4 z-10">
             <button
               v-tooltip:bottom="heroMuted ? $t('Sound on') : $t('Sound off')"
               class="grid size-10 place-items-center rounded-full border border-white/20 bg-black/60 text-white opacity-95 transition-[transform,background-color] hover:scale-110 hover:bg-black/80 focus-visible:scale-110 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary backdrop-blur-md"
@@ -606,14 +702,6 @@ watch(() => props.id, () => {
               @click="toggleHeroSound"
             >
               <v-icon :icon="heroMuted ? mdiVolumeOff : mdiVolumeHigh" size="18" />
-            </button>
-            <button
-              v-tooltip:bottom="$t('Hide video')"
-              class="grid size-10 place-items-center rounded-full border border-white/20 bg-black/60 text-white opacity-95 transition-[transform,background-color] hover:scale-110 hover:bg-black/80 focus-visible:scale-110 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary backdrop-blur-md"
-              :aria-label="$t('Hide video')"
-              @click="videoHidden = true"
-            >
-              <v-icon :icon="mdiClose" size="18" />
             </button>
           </div>
 
@@ -713,6 +801,7 @@ watch(() => props.id, () => {
                 :size="btnSize"
                 :block="mobile"
                 :to="playLink"
+                @pointerdown="stopHeroTrailer"
               >
                 {{ playLabel }}
               </v-btn>
@@ -724,7 +813,6 @@ watch(() => props.id, () => {
                 :season="target?.season"
                 :episode="target?.episode"
                 :size="btnSize"
-                @pick="torrentPickerRef?.open()"
               />
               <template v-else-if="!providerPlay && status === 'pending' && (type === 'movie' || target)">
                 <!-- The buttons these stand in for are `btnSize` tall (44px, or
@@ -841,12 +929,13 @@ watch(() => props.id, () => {
           <!-- Native <video> on desktop (Tauri) so the trailer plays reliably;
                browser dev falls back to the YouTube iframe embed. -->
           <video
-            v-if="trailerVideoSrc"
+            v-if="trailerVideoSrc && !trailerVideoFailed"
             :src="trailerVideoSrc"
             class="aspect-video w-full border-0 bg-black"
             controls
             autoplay
             playsinline
+            @error="onTrailerVideoError"
           />
           <iframe
             v-else-if="trailer"

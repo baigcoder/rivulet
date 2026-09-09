@@ -49,7 +49,7 @@ import {
   mdiVolumeOff,
 } from '@mdi/js'
 import { invoke } from '@tauri-apps/api/core'
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { extractQualityHint } from '~/utils/channelName'
 import { isAndroid, isTv } from '~/utils/platform'
 import { fmtHudTime, friendlyPlaybackError } from '~/utils/playbackError'
@@ -107,6 +107,8 @@ const props = withDefaults(
      * backends lie about pause.
      */
     behindLive?: boolean
+    /** Channel ids the player has given up on this session. */
+    offlineIds?: ReadonlySet<string>
   }>(),
   {
     chromeUp: false,
@@ -130,6 +132,7 @@ const props = withDefaults(
     position: 0,
     duration: 0,
     behindLive: false,
+    offlineIds: () => new Set<string>(),
   },
 )
 
@@ -190,7 +193,21 @@ const aspectLabel = computed(() =>
 const coarsePointer = useMediaQuery('(pointer: coarse)')
 const touch = computed(() => coarsePointer.value || isAndroid())
 const isLiveVariant = computed(() => props.variant === 'live')
-const friendlyErrorText = computed(() => friendlyPlaybackError(props.error))
+const canSkipChannel = computed(() => isLiveVariant.value && (props.channelTotal ?? 0) > 1)
+
+const retryBtn = ref<HTMLButtonElement | null>(null)
+const connectingAction = ref<HTMLButtonElement | null>(null)
+
+watch(() => props.error, err => {
+  if (err)
+    nextTick(() => retryBtn.value?.focus())
+})
+
+watch(() => props.busy && !props.error, busy => {
+  if (busy)
+    nextTick(() => connectingAction.value?.focus())
+})
+const friendlyErrorText = computed(() => friendlyPlaybackError(props.error, 'live'))
 const timeLine = computed(() => {
   if (isLiveVariant.value || !props.duration)
     return ''
@@ -289,7 +306,7 @@ function hide() {
  * MpvPlayer's mirrored chromeUp flag) all respect forceHidden.
  */
 const drawerOrError = computed(() =>
-  showQuickZap.value || !!props.error)
+  showQuickZap.value || !!props.error || props.busy)
 
 const softShow = computed(() =>
   onBar.value || nudged.value || props.chromeUp)
@@ -437,7 +454,11 @@ function onWindowPointerMove() {
 const drawerSearch = ref('')
 
 const filteredChannels = computed(() => {
-  let list = props.channelList.map((ch, idx) => ({ ...ch, originalIndex: idx }))
+  let list = props.channelList.map((ch, idx) => ({
+    ...ch,
+    originalIndex: idx,
+    health: props.offlineIds.has(ch.id) ? 'offline' as const : 'unknown' as const,
+  }))
   if (drawerSearch.value.trim()) {
     const q = drawerSearch.value.trim().toLowerCase()
     list = list.filter(ch => ch.name.toLowerCase().includes(q))
@@ -521,7 +542,7 @@ defineExpose({ show, hide, visible })
          under the window controls. -->
     <header
       data-cut
-      class="pointer-events-auto flex items-center gap-3 px-5 py-3 transition-transform duration-300 sm:px-6 sm:py-3.5"
+      class="pointer-events-auto relative z-30 flex items-center gap-3 px-5 py-3 transition-transform duration-300 sm:px-6 sm:py-3.5"
       :class="[
         overlay ? 'hud-solid-top' : 'hud-blur-top',
         visible ? 'translate-y-0 opacity-100' : '-translate-y-full opacity-0',
@@ -594,7 +615,7 @@ defineExpose({ show, hide, visible })
          *not* `data-cut`: it spans the whole picture, and a hole that size
          subtracts every pixel mpv paints. -->
     <div
-      class="flex-1 grid place-items-center touch-none bg-black/[0.01]"
+      class="relative flex-1 grid place-items-center touch-none bg-black/[0.01]"
       :class="isLiveVariant ? 'pointer-events-auto cursor-pointer' : 'pointer-events-none'"
       @click="onCentreClick"
       @pointerdown="onCentrePointerDown"
@@ -616,91 +637,78 @@ defineExpose({ show, hide, visible })
           <v-icon :icon="playing ? mdiPause : mdiPlay" size="44" />
         </div>
       </transition>
-    </div>
 
-    <!-- CENTER PLAYER LOADING / BUFFERING MODAL -->
-    <transition
-      enter-active-class="transition ease-out duration-200"
-      enter-from-class="opacity-0 scale-95"
-      enter-to-class="opacity-100 scale-100"
-      leave-active-class="transition ease-in duration-150"
-      leave-from-class="opacity-100 scale-100"
-      leave-to-class="opacity-0 scale-95"
-    >
+      <!-- Status lives in the middle band only — never `inset-0` on the
+           overlay root, or it covers Back / transport and reads as a
+           full-screen player. -->
       <div
         v-if="busy && !error"
-        data-cut
-        class="pointer-events-auto absolute inset-0 z-30 grid place-items-center p-6"
-        :class="overlay ? 'bg-black' : 'bg-black/80 backdrop-blur-xl'"
+        class="pointer-events-none absolute inset-0 z-10 grid place-items-center p-4"
       >
-        <div class="flex flex-col items-center space-y-4 p-6 text-center">
-          <div class="relative grid size-16 place-items-center">
-            <div class="absolute inset-0 rounded-full border-4 border-red-500/20" />
-            <div class="absolute inset-0 animate-spin rounded-full border-4 border-red-500 border-t-transparent" />
-            <div class="size-2 rounded-full bg-red-500 animate-pulse" />
+        <div
+          data-cut
+          class="pointer-events-auto flex w-max max-w-[min(18.5rem,calc(100%-2rem))] flex-col items-center gap-2.5 rounded-2xl border border-white/12 bg-[#0F1117] px-4 py-3.5 text-center"
+          @click.stop
+        >
+          <div class="relative grid size-11 place-items-center">
+            <div class="absolute inset-0 rounded-full border-[3px] border-primary/20" />
+            <div class="absolute inset-0 animate-spin rounded-full border-[3px] border-primary border-t-transparent" />
+            <div
+              v-if="channelLogo"
+              class="size-7 overflow-hidden rounded-md border border-white/10 bg-black p-0.5"
+            >
+              <img
+                :src="proxyLogo(channelLogo)"
+                :alt="channelName"
+                class="size-full object-contain"
+              >
+            </div>
+            <div v-else class="size-1.5 rounded-full bg-primary animate-pulse" />
           </div>
 
-          <div class="space-y-1 max-w-sm">
-            <p class="text-title-small font-semibold text-white">
+          <div class="max-w-full space-y-0.5">
+            <p class="text-balance text-label-large font-semibold leading-snug text-white">
               {{ busyText || $t('Connecting to live stream…') }}
             </p>
-            <p v-if="channelName" class="text-body-small text-white/60 truncate">
+            <p v-if="channelName" class="truncate text-label-small text-white/55">
               {{ channelName }}
             </p>
           </div>
-        </div>
-      </div>
-    </transition>
 
-    <!-- CENTER PLAYER ERROR MODAL -->
-    <transition
-      enter-active-class="transition ease-out duration-200"
-      enter-from-class="opacity-0 scale-95"
-      enter-to-class="opacity-100 scale-100"
-      leave-active-class="transition ease-in duration-150"
-      leave-from-class="opacity-100 scale-100"
-      leave-to-class="opacity-0 scale-95"
-    >
-      <div
-        v-if="error"
-        data-cut
-        class="pointer-events-auto absolute inset-0 z-30 grid place-items-center p-6"
-        :class="overlay ? 'bg-black' : 'bg-black/85 backdrop-blur-xl'"
-      >
-        <div class="flex max-w-md flex-col items-center space-y-4 p-6 text-center">
-          <div class="grid size-14 place-items-center rounded-full bg-red-950 text-red-400">
-            <v-icon :icon="mdiAlertCircleOutline" size="32" />
-          </div>
-
-          <div class="space-y-1">
-            <h2 class="text-title-small font-semibold text-white">
-              {{ $t('Playback Error') }}
-            </h2>
-            <p class="text-body-small leading-relaxed text-white/70">
-              {{ friendlyErrorText }}
-            </p>
-          </div>
-
-          <div class="flex flex-wrap items-center justify-center gap-2 pt-1">
+          <div class="flex flex-wrap items-center justify-center gap-1.5">
             <button
+              v-if="canSkipChannel"
+              ref="connectingAction"
               type="button"
-              class="inline-flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2.5 text-body-small font-semibold text-on-primary transition-colors hover:brightness-110 focus-visible:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-              @click.stop="emit('retry')"
-            >
-              <v-icon :icon="mdiReload" size="16" />
-              <span>{{ $t('Retry') }}</span>
-            </button>
-            <button
-              v-if="hasNext && isLiveVariant"
-              type="button"
-              class="rounded-xl bg-white/10 px-4 py-2.5 text-body-small font-semibold text-white transition-colors hover:bg-white/16 focus-visible:bg-white/16 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              data-dpad-start
+              class="inline-flex min-h-9 items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-label-large font-semibold text-on-primary transition-colors hover:brightness-110 focus-visible:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
               @click.stop="emit('next')"
             >
               {{ $t('Next channel') }}
             </button>
             <button
+              v-else
+              ref="connectingAction"
               type="button"
-              class="rounded-xl bg-white/10 px-4 py-2.5 text-body-small font-semibold text-white/80 transition-colors hover:bg-white/16 hover:text-white focus-visible:bg-white/16 focus-visible:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              data-dpad-start
+              class="inline-flex min-h-9 items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-label-large font-semibold text-on-primary transition-colors hover:brightness-110 focus-visible:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              @click.stop="emit('retry')"
+            >
+              <v-icon :icon="mdiReload" size="14" />
+              <span>{{ $t('Retry') }}</span>
+            </button>
+            <button
+              v-if="canSkipChannel"
+              type="button"
+              class="inline-flex min-h-9 items-center gap-1 rounded-lg bg-white/10 px-3 py-1.5 text-label-large font-semibold text-white/80 transition-colors hover:bg-white/16 hover:text-white focus-visible:bg-white/16 focus-visible:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              @click.stop="emit('retry')"
+            >
+              <v-icon :icon="mdiReload" size="14" />
+              <span>{{ $t('Retry') }}</span>
+            </button>
+            <button
+              type="button"
+              class="inline-flex min-h-9 items-center rounded-lg bg-white/10 px-3 py-1.5 text-label-large font-semibold text-white/80 transition-colors hover:bg-white/16 hover:text-white focus-visible:bg-white/16 focus-visible:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
               @click.stop="emit('back')"
             >
               {{ $t('Back') }}
@@ -708,7 +716,83 @@ defineExpose({ show, hide, visible })
           </div>
         </div>
       </div>
-    </transition>
+
+      <div
+        v-if="error"
+        class="pointer-events-none absolute inset-0 z-10 grid place-items-center p-4"
+      >
+        <div
+          data-cut
+          class="pointer-events-auto flex w-max max-w-[min(18.5rem,calc(100%-2rem))] flex-col items-center gap-2.5 rounded-2xl border border-white/12 bg-[#0F1117] px-4 py-3.5 text-center"
+          @click.stop
+        >
+          <div class="relative">
+            <div
+              v-if="channelLogo"
+              class="size-10 overflow-hidden rounded-lg border border-white/10 bg-black p-1"
+            >
+              <img
+                :src="proxyLogo(channelLogo)"
+                :alt="channelName"
+                class="size-full object-contain"
+              >
+            </div>
+            <div
+              v-else
+              class="grid size-10 place-items-center rounded-full bg-red-950 text-red-400"
+            >
+              <v-icon :icon="mdiAlertCircleOutline" size="22" />
+            </div>
+            <div
+              v-if="channelLogo"
+              class="absolute -bottom-0.5 -end-0.5 grid size-5 place-items-center rounded-full bg-red-950 text-red-400 ring-2 ring-[#0F1117]"
+            >
+              <v-icon :icon="mdiAlertCircleOutline" size="12" />
+            </div>
+          </div>
+
+          <div class="max-w-full space-y-0.5">
+            <h2 class="text-label-large font-semibold text-white">
+              {{ $t('Playback Error') }}
+            </h2>
+            <p v-if="channelName" class="truncate text-label-small text-white/55">
+              {{ channelName }}
+            </p>
+            <p class="text-label-small leading-snug text-white/70">
+              {{ friendlyErrorText }}
+            </p>
+          </div>
+
+          <div class="flex flex-wrap items-center justify-center gap-1.5">
+            <button
+              ref="retryBtn"
+              type="button"
+              data-dpad-start
+              class="inline-flex min-h-9 items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-label-large font-semibold text-on-primary transition-colors hover:brightness-110 focus-visible:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              @click.stop="emit('retry')"
+            >
+              <v-icon :icon="mdiReload" size="14" />
+              <span>{{ $t('Retry') }}</span>
+            </button>
+            <button
+              v-if="canSkipChannel"
+              type="button"
+              class="inline-flex min-h-9 items-center rounded-lg bg-white/10 px-3 py-1.5 text-label-large font-semibold text-white transition-colors hover:bg-white/16 focus-visible:bg-white/16 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              @click.stop="emit('next')"
+            >
+              {{ $t('Next channel') }}
+            </button>
+            <button
+              type="button"
+              class="inline-flex min-h-9 items-center rounded-lg bg-white/10 px-3 py-1.5 text-label-large font-semibold text-white/80 transition-colors hover:bg-white/16 hover:text-white focus-visible:bg-white/16 focus-visible:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              @click.stop="emit('back')"
+            >
+              {{ $t('Back') }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- QUICKZAP SIDE DRAWER (SLIDE-IN FROM LEFT) -->
     <transition
@@ -765,7 +849,10 @@ defineExpose({ show, hide, visible })
               <img :src="proxyLogo(ch.logoUrl)" :alt="ch.name" class="size-full object-contain">
             </div>
             <div class="min-w-0 flex-1">
-              <span class="block text-xs font-semibold truncate">{{ ch.name }}</span>
+              <span class="flex min-w-0 items-center gap-1.5">
+                <span class="block min-w-0 truncate text-xs font-semibold" :class="ch.health === 'offline' ? 'opacity-55' : ''">{{ ch.name }}</span>
+                <live-tv-live-status-badge v-if="ch.health === 'offline'" health="offline" compact />
+              </span>
               <span v-if="ch.group" class="block text-[10px] text-gray-400 truncate">{{ ch.group }}</span>
             </div>
           </button>
@@ -777,7 +864,7 @@ defineExpose({ show, hide, visible })
     <footer
       v-if="isLiveVariant"
       data-cut
-      class="pointer-events-auto px-5 pb-5 pt-8 transition-transform duration-300 sm:px-6 sm:pb-6"
+      class="pointer-events-auto relative z-30 px-5 pb-5 pt-8 transition-transform duration-300 sm:px-6 sm:pb-6"
       :class="[
         overlay ? 'hud-solid-bottom' : 'hud-blur-bottom',
         visible ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0',

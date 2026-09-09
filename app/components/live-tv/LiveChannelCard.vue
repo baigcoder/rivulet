@@ -46,6 +46,7 @@ const hasStream = computed(() => {
 
 /** No URL, or the player already found the stream dead. Advisory: click still works. */
 const dead = computed(() => offline.value || !hasStream.value)
+const health = computed(() => dead.value ? 'offline' as const : liveTv.healthOf(props.channel.id))
 
 const nowMs = ref(Date.now())
 let progressTimer: ReturnType<typeof setInterval> | undefined
@@ -163,16 +164,7 @@ function onLogoLoad(e: Event): void {
       </div>
 
       <div class="pointer-events-none absolute start-1.5 top-1.5 z-10 flex items-center gap-1">
-        <span
-          class="flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
-          :class="dead ? 'bg-zinc-800/90 text-white/75' : 'bg-red-600 text-white'"
-        >
-          <span
-            v-if="!dead"
-            class="size-1.5 rounded-full bg-white animate-pulse"
-          />
-          {{ dead ? $t('Offline') : $t('LIVE') }}
-        </span>
+        <live-tv-live-status-badge :health="health" />
         <span
           v-if="parsedName.quality"
           class="rounded bg-black/60 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-200"

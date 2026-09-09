@@ -37,15 +37,29 @@ export function connectionLimitMessage(active?: number | null, max?: number | nu
   return $t('Your provider is at its connection limit. Stop playback on your other devices, then try again.')
 }
 
+/** Live TV vs a film/episode — the next action is a channel, or a quality. */
+export type PlaybackErrorKind = 'live' | 'vod'
+
 /**
  * Turn mpv/ffmpeg/proxy noise into one sentence a viewer can act on.
  * The Rust side redacts credentials from log tails, but hostnames and
  * decoder lines still read like a crash dump — they never belong on screen.
+ *
+ * `kind` is the surface, not the backend: a Direct debrid link and a
+ * torrent engine stream are both `vod`, so they must not say "try another
+ * channel".
  */
-export function friendlyPlaybackError(raw: string | null | undefined): string {
+export function friendlyPlaybackError(
+  raw: string | null | undefined,
+  kind: PlaybackErrorKind = 'vod',
+): string {
+  const live = kind === 'live'
   const s = (raw ?? '').trim()
-  if (!s)
-    return $t('Playback failed. Try again or pick another title.')
+  if (!s) {
+    return live
+      ? $t('Playback failed. Try another channel.')
+      : $t('Playback failed. Try again or pick another title.')
+  }
 
   if (isProviderConnectionLimit(s))
     return connectionLimitMessage()
@@ -58,7 +72,9 @@ export function friendlyPlaybackError(raw: string | null | undefined): string {
     || lower.includes('nodename nor servname')
     || lower.includes('no address associated')
   ) {
-    return $t('This channel\'s server could not be reached. It may be offline — try another channel.')
+    return live
+      ? $t('This channel\'s server could not be reached. It may be offline — try another channel.')
+      : $t('This source\'s server could not be reached. Try another quality or source.')
   }
 
   if (
@@ -76,14 +92,22 @@ export function friendlyPlaybackError(raw: string | null | undefined): string {
     || lower.includes('unauthorized')
     || lower.includes('forbidden')
   ) {
-    return $t('The provider refused this stream. Your account may be at its connection limit.')
+    return live
+      ? $t('The provider refused this stream. Your account may be at its connection limit.')
+      : $t('This link was refused. It may have expired — try another quality or source.')
   }
 
-  if (/\b404\b/.test(lower) || lower.includes('not found'))
-    return $t('This stream is no longer available from the provider.')
+  if (/\b404\b/.test(lower) || lower.includes('not found')) {
+    return live
+      ? $t('This stream is no longer available from the provider.')
+      : $t('This link is no longer available. Try another quality or source.')
+  }
 
-  if (/\b502\b/.test(lower) || /\b503\b/.test(lower) || lower.includes('bad gateway'))
-    return $t('The stream server is not responding. Try another channel.')
+  if (/\b502\b/.test(lower) || /\b503\b/.test(lower) || lower.includes('bad gateway')) {
+    return live
+      ? $t('The stream server is not responding. Try another channel.')
+      : $t('The stream server is not responding. Try another quality or source.')
+  }
 
   if (
     lower.includes('[ffmpeg]')
@@ -93,14 +117,18 @@ export function friendlyPlaybackError(raw: string | null | undefined): string {
     || lower.includes('protocol not found')
     || lower.includes('invalid data found')
   ) {
-    return $t('This stream could not be opened. Try another channel or check your connection.')
+    return live
+      ? $t('This stream could not be opened. Try another channel or check your connection.')
+      : $t('This stream could not be opened. Try another quality, or change How Play works in Settings → Sources.')
   }
 
   // Already a translated app sentence — pass through.
   if (!lower.includes('http://') && !lower.includes('https://') && s.length < 160)
     return s
 
-  return $t('Playback failed. Try again or pick another title.')
+  return live
+    ? $t('Playback failed. Try another channel.')
+    : $t('Playback failed. Try again or pick another title.')
 }
 
 /** Format seconds as m:ss or h:mm:ss for the live HUD. */

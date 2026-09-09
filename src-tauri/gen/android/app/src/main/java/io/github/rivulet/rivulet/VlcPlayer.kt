@@ -109,6 +109,13 @@ class RivuletPlayer(private val activity: MainActivity) {
       // recognise as a network stream). `setLocation` + `parse` runs the
       // MRL through the same parser the standalone VLC client uses.
       val media = Media(lib, Uri.parse(url))
+      // librqbit serves a growing file: the first request can have a byte while
+      // the next piece is still on its way. A 300ms cache is fine for Direct
+      // play but makes libVLC declare a torrent stream finished on slow swarms.
+      // Keep Direct play quick and give only the local torrent engine a short,
+      // resilient startup buffer.
+      val torrentStream = url.startsWith("http://127.0.0.1:3030/") || url.startsWith("http://localhost:3030/")
+      val cacheMs = if (torrentStream) 1500 else 300
       // Hardware decoders on; libVLC falls back to FFmpeg itself when a
       // device's MediaCodec claim doesn't pan out (the very reason E-AC-3
       // is silent under ExoPlayer on a lot of cheap TV boxes).
@@ -116,9 +123,9 @@ class RivuletPlayer(private val activity: MainActivity) {
       // Options have to be added before the media is handed to the player and
       // before it is released. Adding one afterwards calls into a freed native
       // object and is the release-build crash seen when opening a stream.
-      media.addOption(":network-caching=300")
-      media.addOption(":file-caching=300")
-      media.addOption(":live-caching=300")
+      media.addOption(":network-caching=$cacheMs")
+      media.addOption(":file-caching=$cacheMs")
+      media.addOption(":live-caching=$cacheMs")
       media.addOption(":http-continuous")
       media.addOption(":http-reconnect")
       media.addOption(":http-timeout=10000")
@@ -567,6 +574,13 @@ class RivuletPlayer(private val activity: MainActivity) {
       snap.put(
         "video-params",
         JSONObject().put("w", vw).put("h", vh),
+      )
+    }
+    val audioTracks = p.audioTracks
+    if (audioTracks != null && audioTracks.isNotEmpty()) {
+      snap.put(
+        "audio-params",
+        JSONObject().put("samplerate", 48000).put("channel-count", audioTracks.size),
       )
     }
   }

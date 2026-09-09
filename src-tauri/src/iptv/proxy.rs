@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::net::ToSocketAddrs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -325,9 +326,12 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
     // that we pass through verbatim. A HEAD from lavf must not become a
     // full GET: that starts the movie twice and is the long Buffering wait.
     let is_head = request.starts_with("HEAD ");
-    let range = extract_header(&request, "Range")
-        .or_else(|| is_head.then(|| "bytes=0-0".to_string()));
-    eprintln!("[iptv-proxy] {} {target_url}", if is_head { "HEAD" } else { "GET" });
+    let range =
+        extract_header(&request, "Range").or_else(|| is_head.then(|| "bytes=0-0".to_string()));
+    eprintln!(
+        "[iptv-proxy] {} {target_url}",
+        if is_head { "HEAD" } else { "GET" }
+    );
 
     let ua = custom_ua.as_deref();
     let rf = custom_referer.as_deref();
@@ -340,13 +344,19 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
         eprintln!("[iptv-proxy] cached {fetch_url}");
     }
 
-    let resp = match stream_get(&fetch_url, ua, rf, range.as_deref()).send().await {
+    let resp = match stream_get(&fetch_url, ua, rf, range.as_deref())
+        .send()
+        .await
+    {
         Ok(r) => r,
         Err(e) if fetch_url != target_url => {
             eprintln!("[iptv-proxy] cached upstream failed ({e}), retrying resolver");
             forget_redirect(&target_url);
             fetch_url = target_url.clone();
-            match stream_get(&fetch_url, ua, rf, range.as_deref()).send().await {
+            match stream_get(&fetch_url, ua, rf, range.as_deref())
+                .send()
+                .await
+            {
                 Ok(r) => r,
                 Err(e) => {
                     eprintln!("[iptv-proxy] upstream error for {target_url}: {e}");
@@ -382,7 +392,10 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
     if fetch_url != target_url && !status.is_success() && status.as_u16() != 206 {
         forget_redirect(&target_url);
         fetch_url = target_url.clone();
-        if let Ok(r) = stream_get(&fetch_url, ua, rf, range.as_deref()).send().await {
+        if let Ok(r) = stream_get(&fetch_url, ua, rf, range.as_deref())
+            .send()
+            .await
+        {
             resp = r;
             status = resp.status();
         }
@@ -448,6 +461,25 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
                     custom_ua.as_deref(),
                     custom_referer.as_deref(),
                 );
+                // A master playlist that only names unresolvable hosts
+                // (CGTN's 2017 CloudFront file still lists live.cgtn.com)
+                // would otherwise 200, then mpv would sit on Connecting
+                // while every variant 502s. Fail the manifest instead so
+                // the player skips in one beat.
+                if playlist_has_uri(&body) && !playlist_has_uri(&rewritten) {
+                    eprintln!(
+                        "[iptv-proxy] no reachable streams in {fetch_url}"
+                    );
+                    write_response(
+                        stream,
+                        502,
+                        "Bad Gateway",
+                        "text/plain",
+                        b"no reachable streams in playlist",
+                    )
+                    .await?;
+                    return Ok(());
+                }
                 write_response(
                     stream,
                     status.as_u16(),
@@ -571,6 +603,78 @@ async fn relay_upstream(
     Ok(())
 }
 
+fn playlist_has_uri(body: &str) -> bool {
+    body.lines().any(|line| {
+        let t = line.trim();
+        !t.is_empty() && !t.starts_with('#')
+    })
+}
+
+fn resolve_manifest_uri(trimmed: &str, base: &str) -> String {
+    let base_no_query = base.split('?').next().unwrap_or(base);
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        trimmed.to_string()
+    } else if trimmed.starts_with('/') {
+        if let Ok(parsed) = url::Url::parse(base) {
+            format!(
+                "{}://{}{}",
+                parsed.scheme(),
+                parsed.host_str().unwrap_or(""),
+                trimmed
+            )
+        } else {
+            trimmed.to_string()
+        }
+    } else {
+        let base_dir = base_no_query.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+        format!("{base_dir}/{trimmed}")
+    }
+}
+
+/// True when this URL's host has at least one DNS address. Relative
+/// playlist lines never reach here. Negative answers live 30s so a
+/// master with three variants on the same dead host is one lookup.
+fn host_has_address(url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return true;
+    };
+    let Some(host) = parsed.host_str() else {
+        return true;
+    };
+    if host.eq_ignore_ascii_case("localhost")
+        || host == "127.0.0.1"
+        || host == "::1"
+        || host.parse::<std::net::IpAddr>().is_ok()
+    {
+        return true;
+    }
+    let key = host.to_ascii_lowercase();
+    static CACHE: OnceLock<Mutex<HashMap<String, (bool, Instant)>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(guard) = cache.lock() {
+        if let Some((ok, at)) = guard.get(&key) {
+            let ttl = if *ok {
+                Duration::from_secs(300)
+            } else {
+                Duration::from_secs(30)
+            };
+            if at.elapsed() < ttl {
+                return *ok;
+            }
+        }
+    }
+    let port = parsed.port_or_known_default().unwrap_or(443);
+    let ok = format!("{host}:{port}")
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut addrs| addrs.next())
+        .is_some();
+    if let Ok(mut guard) = cache.lock() {
+        guard.insert(key, (ok, Instant::now()));
+    }
+    ok
+}
+
 /// Rewrite every URL inside an HLS manifest so it points at the proxy. The
 /// manifest is a list of relative or absolute paths, and without this the
 /// <video> element fetches them from the origin, which is exactly what we
@@ -581,44 +685,62 @@ async fn relay_upstream(
 ///   - absolute path: `/path/to/seg.ts`
 ///   - relative: `seg.ts` or `subdir/seg.ts?token=abc`
 /// And preserves any query string on the base URL when resolving relatives.
-fn rewrite_m3u(
+fn rewrite_m3u(body: &str, base: &str, user_agent: Option<&str>, referer: Option<&str>) -> String {
+    rewrite_m3u_filter(body, base, user_agent, referer, host_has_address)
+}
+
+fn rewrite_m3u_filter(
     body: &str,
     base: &str,
     user_agent: Option<&str>,
     referer: Option<&str>,
+    reachable: impl Fn(&str) -> bool,
 ) -> String {
+    let lines: Vec<&str> = body.lines().collect();
+    let mut skip = vec![false; lines.len()];
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let resolved = resolve_manifest_uri(trimmed, base);
+        if (resolved.starts_with("http://") || resolved.starts_with("https://"))
+            && !reachable(&resolved)
+        {
+            skip[i] = true;
+            let mut j = i;
+            while j > 0 {
+                j -= 1;
+                let prev = lines[j].trim();
+                if prev.is_empty() || !prev.starts_with('#') || prev.starts_with("#EXTM3U") {
+                    break;
+                }
+                skip[j] = true;
+            }
+        }
+    }
+
+    // Nested manifests often require the page that linked them as Referer.
+    // Free-TV playlists rarely set EXTVLCOPT, so inherit the playlist origin.
+    let inherited_referer = referer.map(str::to_string).or_else(|| {
+        url::Url::parse(base).ok().and_then(|u| {
+            let host = u.host_str()?;
+            Some(format!("{}://{host}/", u.scheme()))
+        })
+    });
+
     let mut out = String::with_capacity(body.len());
-    // Split the base into scheme+host and path so query strings on `base`
-    // (rare on manifests, but possible) are preserved on relative resolves.
-    let base_no_query = base.split('?').next().unwrap_or(base);
-    for line in body.lines() {
+    for (i, line) in lines.iter().enumerate() {
+        if skip[i] {
+            continue;
+        }
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
             out.push_str(line);
             out.push('\n');
             continue;
         }
-        let resolved = if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-            // Some CDNs sign segments with per-request tokens; a manifest
-            // already has them baked in, so pass through unchanged.
-            trimmed.to_string()
-        } else if trimmed.starts_with('/') {
-            // Absolute path — keep the base's scheme+host, drop its path.
-            if let Ok(parsed) = url::Url::parse(base) {
-                format!(
-                    "{}://{}{}",
-                    parsed.scheme(),
-                    parsed.host_str().unwrap_or(""),
-                    trimmed
-                )
-            } else {
-                trimmed.to_string()
-            }
-        } else {
-            // Resolve relative to the manifest's directory.
-            let base_dir = base_no_query.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
-            format!("{base_dir}/{trimmed}")
-        };
+        let resolved = resolve_manifest_uri(trimmed, base);
         // An `#EXTVLCOPT:http-user-agent` or `http-referrer` on the
         // playlist applies to every request in the HLS chain, not only the
         // initial .m3u8. Without propagating it here, the manifest loads but
@@ -630,7 +752,7 @@ fn rewrite_m3u(
             out.push_str("&X-Rivulet-Ua=");
             out.push_str(&urlencoding::encode(ua));
         }
-        if let Some(rf) = referer {
+        if let Some(rf) = inherited_referer.as_deref() {
             out.push_str("&X-Rivulet-Referer=");
             out.push_str(&urlencoding::encode(rf));
         }
@@ -642,11 +764,12 @@ fn rewrite_m3u(
 /// YouTube video ids are always 11 characters from this alphabet.
 fn valid_youtube_id(id: &str) -> bool {
     id.len() == 11
-        && id.bytes()
+        && id
+            .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
-fn parse_youtube_embed(request: &str) -> Option<(String, bool, bool, bool)> {
+fn parse_youtube_embed(request: &str) -> Option<(String, bool, bool, bool, bool)> {
     let first_line = request.lines().next()?;
     let path = first_line.split_whitespace().nth(1)?;
     let query = path.split_once('?')?.1;
@@ -654,6 +777,7 @@ fn parse_youtube_embed(request: &str) -> Option<(String, bool, bool, bool)> {
     let mut autoplay = true;
     let mut mute = false;
     let mut looping = false;
+    let mut controls = true;
     for pair in query.split('&') {
         let (k, v) = pair.split_once('=')?;
         let decoded = urlencoding::decode(v).ok()?.into_owned();
@@ -662,6 +786,7 @@ fn parse_youtube_embed(request: &str) -> Option<(String, bool, bool, bool)> {
             "autoplay" => autoplay = decoded != "0",
             "mute" => mute = decoded == "1",
             "loop" => looping = decoded == "1",
+            "controls" => controls = decoded != "0",
             _ => {}
         }
     }
@@ -669,14 +794,14 @@ fn parse_youtube_embed(request: &str) -> Option<(String, bool, bool, bool)> {
     if !valid_youtube_id(&id) {
         return None;
     }
-    Some((id, autoplay, mute, looping))
+    Some((id, autoplay, mute, looping, controls))
 }
 
 async fn serve_youtube_embed(
     stream: &mut tokio::net::TcpStream,
     request: &str,
 ) -> anyhow::Result<()> {
-    let (id, autoplay, mute, looping) = match parse_youtube_embed(request) {
+    let (id, autoplay, mute, looping, controls) = match parse_youtube_embed(request) {
         Some(v) => v,
         None => {
             write_response(stream, 400, "Bad Request", "text/plain", b"invalid v").await?;
@@ -692,14 +817,31 @@ async fn serve_youtube_embed(
     if mute {
         params.push_str("&mute=1");
     }
-    // YouTube ignores loop unless playlist names this same video.
-    if looping {
+    // A one-id playlist is how YouTube honours loop, and it paints previous /
+    // next on the cover. The hero loops from ended → play instead.
+    if looping && controls {
         params.push_str("&loop=1&playlist=");
         params.push_str(&id);
     }
+    // Cover hero: mute/unmute is ours. Hide YouTube's title, play, and FS.
+    if !controls {
+        params.push_str(
+            "&controls=0&modestbranding=1&fs=0&disablekb=1&iv_load_policy=3&cc_load_policy=0",
+        );
+    }
+    let loop_ready = if looping && controls {
+        r#"send("setLoop",[true]);"#
+    } else {
+        ""
+    };
+    let loop_ended = if looping {
+        r#"if(d&&d.info&&d.info.playerState===0)send("seekTo",[0,true]);if(d&&d.info&&d.info.playerState===0)send("playVideo");"#
+    } else {
+        ""
+    };
     // Forwards mute/unMute/quality from the page, and player state back up, so
     // the volume button does not reload the iframe and the hero can hide YouTube's
-    // spinner until 720p is actually playing.
+    // spinner until the trailer is actually playing.
     let html = format!(
         r#"<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>*{{margin:0;padding:0;box-sizing:border-box}}html,body{{width:100%;height:100%;overflow:hidden;background:#000}}iframe{{width:100%;height:100%;border:none}}</style></head>
@@ -724,16 +866,27 @@ async fn serve_youtube_embed(
     if(e.source!==f.contentWindow)return;
     parent.postMessage(typeof e.data==="string"?e.data:JSON.stringify(e.data),"*");
     var d=e.data;if(typeof d==="string"){{try{{d=JSON.parse(d)}}catch(x){{return}}}}
-    if(d&&(d.event==="onReady"||(d.info&&d.info.playerState===1)))lock();
+    if(d&&d.event==="onReady"){{lock();{loop_ready}send("playVideo");}}
+    if(d&&d.info&&d.info.playerState===1)lock();
+    {loop_ended}
   }});
   f.addEventListener("load",function(){{
     f.contentWindow.postMessage(JSON.stringify({{event:"listening"}}),yt);
     lock();
+    {loop_ready}
+    send("playVideo");
   }});
 }})();
 </script></body></html>"#
     );
-    write_response(stream, 200, "OK", "text/html; charset=utf-8", html.as_bytes()).await
+    write_response(
+        stream,
+        200,
+        "OK",
+        "text/html; charset=utf-8",
+        html.as_bytes(),
+    )
+    .await
 }
 
 async fn serve_youtube_stream(
@@ -741,7 +894,7 @@ async fn serve_youtube_stream(
     request: &str,
 ) -> anyhow::Result<()> {
     let id = match parse_youtube_embed(request) {
-        Some((id, _, _, _)) => id,
+        Some((id, _, _, _, _)) => id,
         None => {
             write_response(stream, 400, "Bad Request", "text/plain", b"invalid v").await?;
             return Ok(());
@@ -749,8 +902,8 @@ async fn serve_youtube_stream(
     };
 
     let is_head = request.starts_with("HEAD ");
-    let range = extract_header(request, "Range")
-        .or_else(|| is_head.then(|| "bytes=0-0".to_string()));
+    let range =
+        extract_header(request, "Range").or_else(|| is_head.then(|| "bytes=0-0".to_string()));
 
     // Use yt-dlp to resolve the direct video stream URL at up to 1080p. The
     // result is cached per ID so a <video>'s repeated Range requests don't each
@@ -779,12 +932,26 @@ async fn serve_youtube_stream(
         Ok(Ok(o)) => o,
         Ok(Err(e)) => {
             eprintln!("[iptv-proxy] yt-dlp not found: {e}");
-            write_response(stream, 502, "Bad Gateway", "text/plain", b"yt-dlp not installed").await?;
+            write_response(
+                stream,
+                502,
+                "Bad Gateway",
+                "text/plain",
+                b"yt-dlp not installed",
+            )
+            .await?;
             return Ok(());
         }
         Err(_) => {
             eprintln!("[iptv-proxy] yt-dlp timed out after {YTDLP_TIMEOUT:?} for {id}");
-            write_response(stream, 502, "Bad Gateway", "text/plain", b"yt-dlp timed out").await?;
+            write_response(
+                stream,
+                502,
+                "Bad Gateway",
+                "text/plain",
+                b"yt-dlp timed out",
+            )
+            .await?;
             return Ok(());
         }
     };
@@ -793,7 +960,14 @@ async fn serve_youtube_stream(
         o if o.status.success() => {
             let resolved = String::from_utf8_lossy(&o.stdout).trim().to_string();
             if resolved.is_empty() {
-                write_response(stream, 502, "Bad Gateway", "text/plain", b"yt-dlp returned empty URL").await?;
+                write_response(
+                    stream,
+                    502,
+                    "Bad Gateway",
+                    "text/plain",
+                    b"yt-dlp returned empty URL",
+                )
+                .await?;
                 return Ok(());
             }
             eprintln!("[iptv-proxy] yt-dlp resolved youtube-stream {id} → {resolved}");
@@ -832,12 +1006,26 @@ async fn stream_resolved_youtube(
         Ok(Ok(r)) => r,
         Ok(Err(e)) => {
             eprintln!("[iptv-proxy] upstream error for resolved youtube stream {id}: {e}");
-            write_response(stream, 502, "Bad Gateway", "text/plain", e.to_string().as_bytes()).await?;
+            write_response(
+                stream,
+                502,
+                "Bad Gateway",
+                "text/plain",
+                e.to_string().as_bytes(),
+            )
+            .await?;
             return Ok(());
         }
         Err(_) => {
             eprintln!("[iptv-proxy] upstream timed out for resolved youtube stream {id}");
-            write_response(stream, 502, "Bad Gateway", "text/plain", b"upstream timed out").await?;
+            write_response(
+                stream,
+                502,
+                "Bad Gateway",
+                "text/plain",
+                b"upstream timed out",
+            )
+            .await?;
             return Ok(());
         }
     };
@@ -859,7 +1047,14 @@ async fn stream_resolved_youtube(
             }
         }
         eprintln!("[iptv-proxy] resolved youtube stream {id} failed with {status}");
-        write_response(stream, status.as_u16(), status.canonical_reason().unwrap_or("Bad Gateway"), "text/plain", b"upstream error").await?;
+        write_response(
+            stream,
+            status.as_u16(),
+            status.canonical_reason().unwrap_or("Bad Gateway"),
+            "text/plain",
+            b"upstream error",
+        )
+        .await?;
         return Ok(());
     }
     let content_type = resp
@@ -935,4 +1130,38 @@ async fn write_preflight(stream: &mut tokio::net::TcpStream) -> anyhow::Result<(
     stream.write_all(header.as_bytes()).await?;
     stream.shutdown().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MASTER: &str = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nhttps://dead.invalid/a.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=200\nhttps://live.example/b.m3u8\n";
+
+    #[test]
+    fn dead_variant_hosts_are_dropped_with_their_tags() {
+        let out = rewrite_m3u_filter(
+            MASTER,
+            "https://news.example/master.m3u8",
+            None,
+            None,
+            |url| url.contains("live.example"),
+        );
+        assert!(
+            !out.contains("dead.invalid"),
+            "unresolvable variants must not reach mpv"
+        );
+        assert!(out.contains("live.example"), "reachable variants stay");
+        assert!(out.contains("X-Rivulet-Referer="), "nested fetches inherit the playlist origin");
+        assert_eq!(out.matches("#EXT-X-STREAM-INF").count(), 1);
+    }
+
+    #[test]
+    fn a_master_of_only_dead_hosts_has_no_uri() {
+        let out = rewrite_m3u_filter(MASTER, "https://news.example/master.m3u8", None, None, |_| {
+            false
+        });
+        assert!(playlist_has_uri(MASTER));
+        assert!(!playlist_has_uri(&out));
+    }
 }

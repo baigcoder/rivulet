@@ -77,3 +77,51 @@ export function readLivePlay(): LivePlay | null {
     return null
   }
 }
+
+/**
+ * Premium live has no URL to stage — the watch page mints a redirector
+ * token. What *can* travel with the navigation is identity: name, logo,
+ * and the zap list, so channel-up and the connecting overlay do not wait
+ * on another catalog fetch.
+ */
+export interface PremiumPlayChannel {
+  id: string
+  name: string
+  logoUrl?: string | null
+}
+
+export interface PremiumPlay {
+  id: string
+  title: string
+  logo: string
+  zapList: PremiumPlayChannel[]
+}
+
+const PREMIUM_PLAY = 'rivulet.premiumPlay'
+let stagedPremium: PremiumPlay | null = null
+
+export function savePremiumPlay(play: PremiumPlay): void {
+  stagedPremium = play
+  try {
+    sessionStorage.setItem(PREMIUM_PLAY, JSON.stringify(play))
+  }
+  catch { /* quota or no window — memory still has it for this tab */ }
+}
+
+export function readPremiumPlay(): PremiumPlay | null {
+  if (stagedPremium?.id)
+    return stagedPremium
+  try {
+    const raw = sessionStorage.getItem(PREMIUM_PLAY)
+    if (!raw)
+      return null
+    const parsed = JSON.parse(raw) as PremiumPlay
+    if (!parsed?.id)
+      return null
+    stagedPremium = parsed
+    return parsed
+  }
+  catch {
+    return null
+  }
+}

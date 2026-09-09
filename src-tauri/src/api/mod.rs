@@ -83,9 +83,7 @@ impl From<crate::premium::PremiumError> for ApiError {
             P::ProviderNotConnected => ApiError::NotFound("no provider connected".into()),
             P::NotFound => ApiError::NotFound("not found".into()),
             P::Cancelled => ApiError::BadRequest("cancelled".into()),
-            P::AlreadySyncing => {
-                ApiError::Conflict("a channel import is already running".into())
-            }
+            P::AlreadySyncing => ApiError::Conflict("a channel import is already running".into()),
             // The provider misbehaved, not us. 502 rather than 500 so
             // the frontend can tell "their server is down" from "our
             // code broke" and offer a retry for the one and not the
@@ -190,7 +188,9 @@ fn is_local_app_origin(origin: &HeaderValue) -> bool {
 /// origins only. The bearer token still authorizes every API route.
 pub fn build_router(state: ApiState) -> Router {
     let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::predicate(|origin, _| is_local_app_origin(origin)))
+        .allow_origin(AllowOrigin::predicate(|origin, _| {
+            is_local_app_origin(origin)
+        }))
         .allow_methods([Method::GET, Method::POST, Method::DELETE])
         .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]);
 
@@ -201,10 +201,16 @@ pub fn build_router(state: ApiState) -> Router {
         .route("/api/premium-tv/status", get(routes_premium::status))
         .route("/api/premium-tv/account", get(routes_premium::account))
         .route("/api/premium-tv/connect", post(routes_premium::connect))
-        .route("/api/premium-tv/disconnect", post(routes_premium::disconnect))
+        .route(
+            "/api/premium-tv/disconnect",
+            post(routes_premium::disconnect),
+        )
         .route("/api/premium-tv/refresh", post(routes_premium::refresh))
         .route("/api/premium-tv/dashboard", get(routes_premium::dashboard))
-        .route("/api/premium-tv/categories", get(routes_premium::categories))
+        .route(
+            "/api/premium-tv/categories",
+            get(routes_premium::categories),
+        )
         .route(
             "/api/premium-tv/categories/counts",
             get(routes_premium::category_counts),
@@ -212,23 +218,64 @@ pub fn build_router(state: ApiState) -> Router {
         .route("/api/premium-tv/channels", get(routes_premium::channels))
         .route("/api/premium-tv/channels/:id", get(routes_premium::channel))
         .route("/api/premium-tv/channels/:id/epg", get(routes_premium::epg))
-        .route("/api/premium-tv/channels/:id/play", post(routes_premium::play))
-        .route("/api/premium-tv/channels/:id/qualities", get(routes_premium::quality_variants))
+        .route(
+            "/api/premium-tv/channels/:id/play",
+            post(routes_premium::play),
+        )
+        .route(
+            "/api/premium-tv/channels/:id/qualities",
+            get(routes_premium::quality_variants),
+        )
         // POST, not GET, because the id list is a request body: a page of
         // 60 channel ids does not fit a query string that every proxy and
         // log truncates at some length of its own choosing.
-        .route("/api/premium-tv/epg/now-next", post(routes_premium::epg_now_next))
+        .route(
+            "/api/premium-tv/epg/now-next",
+            post(routes_premium::epg_now_next),
+        )
         .route("/api/premium-tv/favorites", get(routes_premium::favorites))
-        .route("/api/premium-tv/favorites/:id", post(routes_premium::toggle_favorite))
-        .route("/api/premium-tv/recent", get(routes_premium::recent).post(routes_premium::add_recent).delete(routes_premium::clear_recent))
-        .route("/api/premium-tv/vod/movies/categories", get(routes_premium::vod_movie_categories))
-        .route("/api/premium-tv/vod/series/categories", get(routes_premium::vod_series_categories))
-        .route("/api/premium-tv/vod/movies", get(routes_premium::vod_movies))
-        .route("/api/premium-tv/vod/series", get(routes_premium::vod_series))
-        .route("/api/premium-tv/vod/series/:id", get(routes_premium::vod_series_detail))
-        .route("/api/premium-tv/vod/movies/:id/play", post(routes_premium::vod_play_movie))
-        .route("/api/premium-tv/vod/episodes/:id/play", post(routes_premium::vod_play_episode))
-        .route("/premium-stream/:token", get(routes_premium::stream_redirect))
+        .route(
+            "/api/premium-tv/favorites/:id",
+            post(routes_premium::toggle_favorite),
+        )
+        .route(
+            "/api/premium-tv/recent",
+            get(routes_premium::recent)
+                .post(routes_premium::add_recent)
+                .delete(routes_premium::clear_recent),
+        )
+        .route(
+            "/api/premium-tv/vod/movies/categories",
+            get(routes_premium::vod_movie_categories),
+        )
+        .route(
+            "/api/premium-tv/vod/series/categories",
+            get(routes_premium::vod_series_categories),
+        )
+        .route(
+            "/api/premium-tv/vod/movies",
+            get(routes_premium::vod_movies),
+        )
+        .route(
+            "/api/premium-tv/vod/series",
+            get(routes_premium::vod_series),
+        )
+        .route(
+            "/api/premium-tv/vod/series/:id",
+            get(routes_premium::vod_series_detail),
+        )
+        .route(
+            "/api/premium-tv/vod/movies/:id/play",
+            post(routes_premium::vod_play_movie),
+        )
+        .route(
+            "/api/premium-tv/vod/episodes/:id/play",
+            post(routes_premium::vod_play_episode),
+        )
+        .route(
+            "/premium-stream/:token",
+            get(routes_premium::stream_redirect),
+        )
         .route("/api/premium-tv/proxy/image", get(proxy_image))
         .layer(cors)
         .with_state(state)
@@ -301,7 +348,8 @@ async fn proxy_image(
     let mut response = Response::new(Body::from(body));
     response.headers_mut().insert(
         header::CONTENT_TYPE,
-        HeaderValue::from_str(&content_type).unwrap_or_else(|_| HeaderValue::from_static("image/jpeg")),
+        HeaderValue::from_str(&content_type)
+            .unwrap_or_else(|_| HeaderValue::from_static("image/jpeg")),
     );
     // Cache for 7 days — logos rarely change
     response.headers_mut().insert(

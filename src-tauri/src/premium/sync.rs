@@ -169,18 +169,17 @@ async fn import(
         storage::sync_times(&conn, connection_id)?.0.unwrap_or(0)
     };
 
-    let (programs, epg_available) =
-        match import_epg(state.clone(), connection_id, provider).await {
-            Ok(v) => v,
-            Err(e) => {
-                // Not silent: the reason is on stderr for adb and for a
-                // desktop log, and the UI is told the guide is absent.
-                // Both matter — "no EPG" and "EPG broke" look identical
-                // on screen and need different answers from us.
-                eprintln!("[premium-sync] EPG import failed: {e}");
-                (0, false)
-            }
-        };
+    let (programs, epg_available) = match import_epg(state.clone(), connection_id, provider).await {
+        Ok(v) => v,
+        Err(e) => {
+            // Not silent: the reason is on stderr for adb and for a
+            // desktop log, and the UI is told the guide is absent.
+            // Both matter — "no EPG" and "EPG broke" look identical
+            // on screen and need different answers from us.
+            eprintln!("[premium-sync] EPG import failed: {e}");
+            (0, false)
+        }
+    };
 
     Ok(SyncReport {
         categories: catalog.categories.len(),
@@ -445,7 +444,10 @@ mod tests {
     #[test]
     fn remap_without_any_epg_ids_is_empty() {
         let out = remap_to_channel_ids(&Default::default(), vec![program("bbcone.uk", 100)]);
-        assert!(out.is_empty(), "an M3U with no tvg-id has no joinable guide");
+        assert!(
+            out.is_empty(),
+            "an M3U with no tvg-id has no joinable guide"
+        );
     }
 
     #[test]

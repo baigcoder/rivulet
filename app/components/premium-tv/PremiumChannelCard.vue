@@ -9,6 +9,7 @@
 import type { EpgProgram, IPTVChannel } from '~/types/premium'
 import { mdiPlay, mdiStar } from '@mdi/js'
 import { computed, onUnmounted, ref, watch } from 'vue'
+import { usePremiumTvStore } from '~/stores/premiumTv'
 import { categoryLabel } from '~/utils/categoryLabel'
 import { channelTileStyle, isPlaceholderLogoUrl, isTinyLogo } from '~/utils/channelLogo'
 import { channelInitials, parseChannelName } from '~/utils/channelName'
@@ -26,9 +27,12 @@ const emit = defineEmits<{
   toggleFavorite: [channel: IPTVChannel]
 }>()
 
+const premium = usePremiumTvStore()
 const guide = computed(() => props.nowNext(props.channel.id))
 const nowProgram = computed(() => guide.value.now)
 const fav = computed(() => props.favorite(props.channel.id))
+const health = computed(() => premium.healthOf(props.channel.id))
+const dead = computed(() => health.value === 'offline')
 const imgError = ref(false)
 const imgLoaded = ref(false)
 
@@ -92,10 +96,13 @@ function onLogoLoad(e: Event): void {
   <button
     type="button"
     class="group relative flex cursor-pointer flex-col gap-1.5 text-start outline-none"
-    :aria-label="displayName"
+    :aria-label="`${displayName}, ${dead ? $t('Offline') : $t('LIVE')}`"
     @click="emit('play', channel)"
   >
-    <div class="relative aspect-video w-full overflow-hidden rounded-xl bg-zinc-950 ring-1 ring-white/10 transition-shadow group-focus-visible:ring-2 group-focus-visible:ring-inset group-focus-visible:ring-primary">
+    <div
+      class="relative aspect-video w-full overflow-hidden rounded-xl bg-zinc-950 ring-1 ring-white/10 transition-shadow group-focus-visible:ring-2 group-focus-visible:ring-inset group-focus-visible:ring-primary"
+      :class="dead ? 'opacity-50' : ''"
+    >
       <div
         v-if="wantsLogo && !imgLoaded && !imgError"
         class="absolute inset-0 animate-pulse bg-surface-container-high"
@@ -126,12 +133,15 @@ function onLogoLoad(e: Event): void {
         </span>
       </div>
 
-      <span
-        v-if="parsedName.quality"
-        class="pointer-events-none absolute start-1.5 top-1.5 z-10 rounded bg-black/60 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-200"
-      >
-        {{ parsedName.quality }}
-      </span>
+      <div class="pointer-events-none absolute start-1.5 top-1.5 z-10 flex items-center gap-1">
+        <live-tv-live-status-badge :health="health" />
+        <span
+          v-if="parsedName.quality"
+          class="rounded bg-black/60 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-200"
+        >
+          {{ parsedName.quality }}
+        </span>
+      </div>
 
       <span
         class="absolute end-1.5 top-1.5 z-10 grid size-6 cursor-pointer place-items-center rounded-full bg-black/55 opacity-0 shadow transition-opacity hover:bg-black/75 focus-visible:bg-black/75 group-hover:opacity-100 group-focus-visible:opacity-100"
@@ -157,7 +167,7 @@ function onLogoLoad(e: Event): void {
       </div>
 
       <div
-        v-if="nowProgram"
+        v-if="nowProgram && !dead"
         class="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-0.5 bg-black/50"
       >
         <div

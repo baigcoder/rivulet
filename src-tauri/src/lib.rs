@@ -10,14 +10,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use librqbit::{
-    api::Api, dht::DhtPersistenceConfig, http_api::HttpApi, DhtSessionConfig, ListenerMode,
-    ListenerOptions, Session, SessionOptions, SessionPersistenceConfig,
+    api::Api, dht::DhtPersistenceConfig, http_api::HttpApi, ConnectionOptions, DhtSessionConfig,
+    ListenerMode, ListenerOptions, PeerConnectionOptions, Session, SessionOptions,
+    SessionPersistenceConfig,
 };
 use librqbit_dualstack_sockets::TcpListener;
 use tokio_util::sync::CancellationToken;
 
-use crate::premium::PremiumState;
 use crate::api::ApiState;
+use crate::premium::PremiumState;
 
 // The embedded player is an mpv process parented into a child window of the app
 // window, which is X11 on Linux and an HWND on Windows. macOS embeds no other
@@ -430,13 +431,7 @@ async fn thumbnail(
             .args(["-ss", &at.to_string()])
             .args(["-i", &url])
             .args(["-an", "-frames:v", "1"])
-            .args([
-                "-vf",
-                "format=yuv420p,scale=320:-1",
-                "-f",
-                "mjpeg",
-                "-",
-            ])
+            .args(["-vf", "format=yuv420p,scale=320:-1", "-f", "mjpeg", "-"])
             .output()
             .map_err(|e| format!("previews need ffmpeg, and {exe:?} would not start: {e}"))?;
 
@@ -452,13 +447,7 @@ async fn thumbnail(
             .args(["-i", &url])
             .args(["-ss", &at.to_string()])
             .args(["-an", "-frames:v", "1"])
-            .args([
-                "-vf",
-                "format=yuv420p,scale=320:-1",
-                "-f",
-                "mjpeg",
-                "-",
-            ])
+            .args(["-vf", "format=yuv420p,scale=320:-1", "-f", "mjpeg", "-"])
             .output()
             .map_err(|e| format!("previews need ffmpeg: {e}"))?;
 
@@ -506,12 +495,7 @@ fn bundled_ytdlp(app: &tauri::AppHandle) -> Option<PathBuf> {
     {
         name = "yt-dlp.exe";
     }
-    let path = app
-        .path()
-        .resource_dir()
-        .ok()?
-        .join("ytdlp")
-        .join(name);
+    let path = app.path().resource_dir().ok()?.join("ytdlp").join(name);
     if !path.exists() {
         return None;
     }
@@ -596,6 +580,189 @@ fn disk_space(app: tauri::AppHandle, path: Option<String>) -> Result<DiskSpace, 
             total: total_bytes,
         })
     }
+}
+
+/// Nearest existing path, walking up from a file that has not been written yet.
+fn existing_path_for_reveal(path: &str) -> Result<PathBuf, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("no path".into());
+    }
+    let mut p = PathBuf::from(trimmed);
+    while !p.exists() {
+        if !p.pop() {
+            return Err(format!("nothing on disk at {trimmed}"));
+        }
+    }
+    Ok(p)
+}
+
+/// Where new torrents land: the storage setting, or the engine's default.
+///
+/// The frontend's `downloadDir` is empty until the user picks a folder, but
+/// the engine still writes under Downloads/Rivulet (desktop) or the cache
+/// dir. Open folder has to be able to name that path.
+#[tauri::command]
+fn download_dir(app: tauri::AppHandle, path: Option<String>) -> String {
+    match path.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+        Some(p) => p.to_string(),
+        None => default_download_dir(&app).to_string_lossy().into_owned(),
+    }
+}
+
+/// Open a download (or its folder) in the system file manager.
+///
+/// The shell plugin's `open` is the wrong tool here: on Linux `xdg-open` on a
+/// `.mkv` launches a player, and an AppImage's `LD_LIBRARY_PATH` makes the
+/// file manager abort after a successful spawn. Walk up until something exists
+/// so an unfinished torrent still reveals its parent. An empty path is the
+/// engine default — a fresh add often has no `output_folder` yet and no
+/// storage setting either.
+#[tauri::command]
+fn reveal_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let trimmed = path.trim();
+    let candidate = if trimmed.is_empty() {
+        default_download_dir(&app)
+    } else {
+        PathBuf::from(trimmed)
+    };
+    let target = match existing_path_for_reveal(&candidate.to_string_lossy()) {
+        Ok(p) => p,
+        Err(_) => {
+            let fallback = default_download_dir(&app);
+            std::fs::create_dir_all(&fallback).map_err(|e| e.to_string())?;
+            fallback
+        }
+    };
+    eprintln!("[rivulet] reveal_path {} -> {}", candidate.display(), target.display());
+    open_in_file_manager(&target)
+}
+
+fn file_uri(path: &std::path::Path) -> String {
+    url::Url::from_file_path(path)
+        .map(|u| u.to_string())
+        .unwrap_or_else(|_| format!("file://{}", path.display()))
+}
+
+fn command_succeeds(cmd: &mut std::process::Command) -> bool {
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn open_in_file_manager(path: &std::path::Path) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        // A video path must never reach xdg-open — that launches a player.
+        let dir = if path.is_file() {
+            path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(path)
+        } else {
+            path
+        };
+        linux_reveal_dir(dir)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut cmd = std::process::Command::new("open");
+        if path.is_file() {
+            cmd.arg("-R").arg(path);
+        } else {
+            cmd.arg(path);
+        }
+        spawn_detached(&mut cmd)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // explorer's `/select,` flag is one argv token; splitting it makes it
+        // open the user's Documents folder instead.
+        let mut cmd = std::process::Command::new("explorer");
+        if path.is_file() {
+            cmd.arg(format!("/select,{}", path.display()));
+        } else {
+            cmd.arg(path);
+        }
+        spawn_detached(&mut cmd)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        let _ = path;
+        Err("this device cannot open folders".into())
+    }
+}
+
+/// Ask the session file manager to show a folder.
+///
+/// `xdg-open` from a Tauri process often returns success and shows nothing
+/// (Wayland, portals, a stolen process group). The Freedesktop FileManager1
+/// bus is what Dolphin / Nautilus / Nemo listen on, and it raises the window.
+#[cfg(target_os = "linux")]
+fn linux_reveal_dir(dir: &std::path::Path) -> Result<(), String> {
+    let uri = file_uri(dir);
+    let gdbus_list = format!("['{uri}']");
+    if command_succeeds(
+        std::process::Command::new("gdbus").args([
+            "call",
+            "--session",
+            "--dest",
+            "org.freedesktop.FileManager1",
+            "--object-path",
+            "/org/freedesktop/FileManager1",
+            "--method",
+            "org.freedesktop.FileManager1.ShowFolders",
+            &gdbus_list,
+            "",
+        ]),
+    ) {
+        return Ok(());
+    }
+
+    let dbus_array = format!("array:string:{uri:?}");
+    if command_succeeds(
+        std::process::Command::new("dbus-send").args([
+            "--session",
+            "--dest=org.freedesktop.FileManager1",
+            "--type=method_call",
+            "/org/freedesktop/FileManager1",
+            "org.freedesktop.FileManager1.ShowFolders",
+            &dbus_array,
+            "string:",
+        ]),
+    ) {
+        return Ok(());
+    }
+
+    let dir_s = dir.to_string_lossy();
+    for bin in ["dolphin", "nautilus", "nemo", "thunar", "pcmanfm", "xdg-open"] {
+        let mut cmd = std::process::Command::new(bin);
+        cmd.arg(dir_s.as_ref());
+        if std::env::var_os("APPIMAGE").is_some() {
+            cmd.env_remove("LD_LIBRARY_PATH")
+                .env_remove("APPDIR")
+                .env_remove("APPIMAGE")
+                .env_remove("ARGV0")
+                .env_remove("PYTHONHOME")
+                .env_remove("PYTHONPATH");
+        }
+        if spawn_detached(&mut cmd).is_ok() {
+            return Ok(());
+        }
+    }
+    Err(format!("could not open {}", dir.display()))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn spawn_detached(cmd: &mut std::process::Command) -> Result<(), String> {
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
 }
 
 /// Walk up from a deep path until we find a root (drive letter or UNC share)
@@ -721,6 +888,29 @@ mod download_url_tests {
     }
 }
 
+#[cfg(test)]
+mod reveal_path_tests {
+    #[test]
+    fn empty_is_an_error() {
+        assert!(super::existing_path_for_reveal("").is_err());
+        assert!(super::existing_path_for_reveal("   ").is_err());
+    }
+
+    #[test]
+    fn walks_up_to_something_that_exists() {
+        let missing = std::env::temp_dir().join("rivulet-reveal-nope").join("also-nope");
+        let found = super::existing_path_for_reveal(missing.to_str().unwrap()).unwrap();
+        assert!(found.exists());
+    }
+
+    #[test]
+    fn file_uri_encodes_spaces() {
+        let uri = super::file_uri(std::path::Path::new("/tmp/Spider-Man- Brand"));
+        assert!(uri.starts_with("file://"), "{uri}");
+        assert!(uri.contains("%20"), "{uri}");
+    }
+}
+
 /// librqbit's own filesystem storage with its one 32-bit call routed around.
 ///
 /// Every chunk is written with `pwritev`, whose offset argument is `off_t` —
@@ -814,6 +1004,23 @@ impl librqbit::storage::StorageFactory for LargeFileStorageFactory {
 /// element at `http://127.0.0.1:3030/torrents/{id}/stream/{file_idx}`.
 const TORRENT_API_ADDR: &str = "127.0.0.1:3030";
 
+/// Extra announce URLs every torrent gets. These are peer-discovery trackers,
+/// not content sources — the magnet still has to come from a user-added source
+/// or a paste. A swarm that only lists dead trackers otherwise sits on DHT
+/// alone, which is why a fast line can look like a few megabits.
+fn extra_announce_trackers() -> std::collections::HashSet<url::Url> {
+    [
+        "udp://tracker.opentrackr.org:1337/announce",
+        "udp://open.stealth.si:80/announce",
+        "udp://tracker.torrent.eu.org:451/announce",
+        "udp://explodie.org:6969/announce",
+        "udp://open.demonii.com:1337/announce",
+    ]
+    .into_iter()
+    .filter_map(|u| u.parse().ok())
+    .collect()
+}
+
 /// Boot a librqbit session and expose its HTTP API (which includes the
 /// range-capable streaming endpoint). Runs forever on the tokio runtime.
 async fn run_torrent_server(
@@ -844,15 +1051,43 @@ async fn run_torrent_server(
         default_storage_factory: Some(Box::new(LargeFileStorageFactory::default())),
         listen: Some(ListenerOptions {
             mode: ListenerMode::TcpAndUtp,
-            listen_addr: std::net::SocketAddr::from((
-                std::net::Ipv4Addr::UNSPECIFIED,
-                6881,
-            )),
+            listen_addr: std::net::SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, 6881)),
             enable_upnp_port_forwarding: true,
+            // Incoming stays IPv4: UPnP and most NATs only map that. Outgoing
+            // IPv6 is `ipv4_only` on the session, below.
             ipv4_only: true,
             ..Default::default()
         }),
-        ipv4_only: true,
+        // IPv6 peers are extra throughput on a dual-stack line. Android's
+        // IPv6 is often a dead AAAA behind CGNAT, so phones stay IPv4.
+        ipv4_only: cfg!(target_os = "android"),
+        // Default is 128. A few more slots fill a fast line; much higher
+        // and a TV's fd limit is the next failure.
+        peer_limit: Some(200),
+        concurrent_init_limit: Some(8),
+        // This is the size of librqbit's blocking-work semaphore, and an open
+        // HTTP stream holds one of its permits for as long as the connection
+        // lives (`FileStream::_blocking_permit`) — even though a stream that is
+        // waiting on the swarm blocks no thread at all. The same semaphore
+        // gates `write_to_disk`, which stores and hashes every chunk that
+        // arrives. So at the default of 8, a handful of streams throttles the
+        // download that feeds them, and eight of them stops it dead: the ninth
+        // `GET /stream/` then awaits a permit forever, which is a player that
+        // buffers with no error and no request ever answered.
+        runtime_worker_threads: Some(64),
+        trackers: extra_announce_trackers(),
+        // Dead peers otherwise sit on a ~10s connect timeout each. Three
+        // seconds is enough to know the handshake isn't coming, and the
+        // next candidate gets the slot.
+        connect: Some(ConnectionOptions {
+            enable_tcp: true,
+            proxy_url: None,
+            peer_opts: Some(PeerConnectionOptions {
+                connect_timeout: Some(Duration::from_secs(3)),
+                read_write_timeout: None,
+                keep_alive_interval: None,
+            }),
+        }),
         dht: with_dht.then(|| DhtSessionConfig {
             // Ask for a fresh port every launch. librqbit otherwise persists
             // whichever ephemeral port the OS handed it and re-binds that exact
@@ -975,6 +1210,8 @@ pub fn run() {
             thumbnail,
             deep_link_fix_handler,
             disk_space,
+            download_dir,
+            reveal_path,
             download_url,
             can_self_update,
             // Free TV IPTV — DB-backed query surface. Premium TV (Xtream +
@@ -1135,12 +1372,11 @@ pub fn run() {
                 }
             });
 
-            // Pre-fetch iptv-org reference data (countries, categories, EPG
-            // channel mapping) in the background. All three are small JSON
-            // files with a 24h (countries, categories) or 7d (EPG) disk
-            // cache. After the first launch they're served from disk and
-            // the first paint of the free TV page has flags + proper
-            // category names ready to render.
+            // Pre-fetch iptv-org countries and categories in the background.
+            // Both are small JSON with a 24h disk cache. The EPG map used to
+            // sit here too, but iptv-org's `epg/channels.json` is gone and
+            // `guides.json` is tens of megabytes — load that on demand when
+            // the guide page asks, not on every boot.
             let app_handle2 = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = iptv::countries::fetch_countries(&app_handle2).await {
@@ -1148,9 +1384,6 @@ pub fn run() {
                 }
                 if let Err(e) = iptv::categories::fetch_categories(&app_handle2).await {
                     eprintln!("[iptv] startup categories pre-fetch failed: {e}");
-                }
-                if let Err(e) = iptv::epg::fetch_channel_mapping(&app_handle2).await {
-                    eprintln!("[iptv] startup EPG channel mapping pre-fetch failed: {e}");
                 }
             });
 
@@ -1227,11 +1460,10 @@ pub fn run() {
             // unwritable; app_data_dir is the per-app private dir and
             // always available. Set the env var that crypto.rs and
             // auth.rs read so they use it instead of temp_dir().
-            let cache_dir = std::env::var("RIVULET_APP_CACHE")
-                .unwrap_or_else(|_| {
-                    std::env::set_var("RIVULET_APP_CACHE", &app_data);
-                    app_data.to_string_lossy().into_owned()
-                });
+            let cache_dir = std::env::var("RIVULET_APP_CACHE").unwrap_or_else(|_| {
+                std::env::set_var("RIVULET_APP_CACHE", &app_data);
+                app_data.to_string_lossy().into_owned()
+            });
             eprintln!("[premium] app_data={}", app_data.display());
             eprintln!("[premium] RIVULET_APP_CACHE={cache_dir}");
             eprintln!("[premium] db_path={}", premium_db_path.display());
@@ -1317,7 +1549,8 @@ pub fn run() {
                             //
                             // Stamp only now: this is the first moment the
                             // channel table really holds this playlist.
-                            if let Some(state) = app_handle4.try_state::<iptv::commands::IptvState>()
+                            if let Some(state) =
+                                app_handle4.try_state::<iptv::commands::IptvState>()
                             {
                                 if let Ok(conn) = state.db.lock() {
                                     let _ = iptv::sources::stamp_free_playlist(&conn, &stamped_url);

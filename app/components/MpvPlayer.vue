@@ -6,6 +6,7 @@ import type { EngineTorrent, PieceMap } from '~/utils/torrents'
 import {
   mdiAlertCircleOutline,
   mdiAlphaA,
+  mdiArrowLeft,
   mdiAutoFix,
   mdiChartTimeline,
   mdiCheck,
@@ -48,6 +49,7 @@ import { key } from '~/brand'
 import { applyAspect, cycleAspect } from '~/utils/aspectRatio'
 import { extractQualityHint } from '~/utils/channelName'
 import { inCredits, inIntro, progressKey, saveCredits, saveIntro } from '~/utils/library'
+import { audioParamsReady } from '~/utils/livehealth'
 import { friendlyPlaybackError } from '~/utils/playbackError'
 
 // Player for the embedded native mpv engine. mpv renders into a surface that
@@ -94,11 +96,11 @@ const props = defineProps<{
   /** Transparent title treatment from TMDB (logo PNG path). Shown on the pause overlay. */
   logo?: string | null
   /**
-   * The other server streams the sources answered with, offered as two menus:
+   * The other streams the sources answered with, offered as two menus:
    * `servers` names every candidate (and is the failover list), `qualities`
    * points at one candidate per resolution. Both entries carry the candidate
-   * index to hand back on `use-candidate`. Absent for torrent playback, where
-   * there is no other server to be had.
+   * index to hand back on `use-candidate`. Torrent engine Play lists magnets
+   * here too, so 720p/1080p/4K can be picked while the file is still downloading.
    */
   candidates?: {
     servers: { index: number, label: string, quality?: string, langs?: string[], detail?: string }[]
@@ -145,6 +147,8 @@ const emit = defineEmits<{
   useCandidate: [index: number]
   /** The self-introducing Quality menu fired; the parent can stop offering it. */
   autoOpened: []
+  /** A finished `file://` copy never left 0:00 — parent should reopen the engine HTTP stream. */
+  diskStuck: []
   /** User pressed Back while the player was resolving or idle — delegate to the parent. */
   back: []
 }>()
@@ -304,7 +308,6 @@ let silentSaid = false
 
 const started = ref(false)
 const busy = ref(false)
-const waiting = ref(false)
 const paused = ref(false)
 /**
  * Set only from the user's play/pause, never from the polled `pause`
@@ -332,7 +335,13 @@ const errorMsg = ref('')
 /** Empty stays empty: `friendlyPlaybackError('')` is the generic overlay
  *  sentence, and the live watch page treats any string here as a full-screen
  *  failure — including while the stream has not started yet. */
-const friendlyError = computed(() => errorMsg.value ? friendlyPlaybackError(errorMsg.value) : '')
+const friendlyError = computed(() =>
+  errorMsg.value ? friendlyPlaybackError(errorMsg.value, isLive.value ? 'live' : 'vod') : '')
+const retryBtn = ref<HTMLButtonElement | null>(null)
+watch(() => errorMsg.value, err => {
+  if (err && !isLive.value)
+    nextTick(() => retryBtn.value?.focus())
+})
 /** The current stream was a debrid stub clip (quota/key error) — remembered for the failover verdict. */
 const stubSeen = ref(false)
 /** Chapter list fetched once when the file opens. */
@@ -374,6 +383,29 @@ function clearLoop() {
 // ---------------------------------------------------------------------------
 /** The stream is the local engine's, rather than a link a source resolved itself. */
 const fromEngine = computed(() => props.src.startsWith(ENGINE))
+/** A finished torrent copy opened as `file://` (or a native path). */
+const fromDisk = computed(() => props.src.startsWith('file:') || props.src.startsWith('/') || /^[a-z]:[\\/]/i.test(props.src))
+/** Engine HTTP or the disk copy of the same torrent — Quality/failover treat them as one. */
+const fromTorrent = computed(() => fromEngine.value || fromDisk.value)
+/** Header parsed is not a picture — keep the native window off until time moves.
+ *  Live counts decoded *audio* as well: HLS often has sound first, and
+ *  leaving the window unmapped until `video-params` exist is how a
+ *  working channel kept getting auto-skipped. */
+const hasAudio = ref(false)
+/**
+ * A real decoded frame, from the poll — not the rAF clock. Interpolating
+ * `time-pos` while lavf has a duration and no picture made the overlay
+ * leave at 0.2s and left a black `--wid` window with the HUD.
+ */
+const seenFrame = ref(false)
+/** Actual decoded video dimensions, read from mpv's video-params. */
+const videoWidth = ref(0)
+const videoHeight = ref(0)
+const awaitingFrame = computed(() => !!props.src && started.value && !ended.value && (
+  fromTorrent.value
+    ? !seenFrame.value
+    : videoWidth.value === 0 && !hasAudio.value
+))
 
 /**
  * The stream is going through the local IPTV proxy (port 3031).
@@ -386,17 +418,10 @@ const PROXY = 'http://127.0.0.1:3031'
 const fromProxy = computed(() => props.src.startsWith(PROXY))
 
 /**
- * The stream is the Premium TV redirector (port 3032), which answers a 302
- * to the upstream after re-checking the entitlement.
- *
- * Deliberately not folded into `fromProxy`, because it is the same in two
- * ways and different in a third. Same: it is a live stream on loopback, so
- * it needs the patient first-response window, and it has a page above it
- * that owns the failure — the premium watch page reconnects with backoff,
- * which only it can decide to do, so a dead stream is emitted rather than
- * drawn here. Different: the headers still have to reach mpv, because a
- * `User-Agent` set on a 302 says nothing about the request mpv makes to
- * the `Location` it names. So it stays inside `fromIptv` below.
+ * The stream is the Premium TV redirector (port 3032). After entitlement
+ * it 302s onto the same IPTV proxy Free TV uses (`:3031`), so HLS rewrite
+ * and upstream UA stay on the Rust side. Folded out of `fromProxy` only
+ * because the premium watch page owns reconnect backoff.
  */
 const PREMIUM_API = 'http://127.0.0.1:3032'
 const fromPremium = computed(() => props.src.startsWith(PREMIUM_API))
@@ -683,9 +708,6 @@ watch(() => settings.subs, applySubtitleStyle, { deep: true })
 const subText = ref('')
 /** Guard: provider error slates loop their subtitle cue every few seconds. */
 let slateHandled = false
-/** Actual decoded video dimensions, read from mpv's video-params. */
-const videoWidth = ref(0)
-const videoHeight = ref(0)
 /** Human-readable resolution label derived from the decoded height or title quality hint. */
 const resolutionLabel = computed(() => {
   const h = videoHeight.value
@@ -779,6 +801,20 @@ function trackLabel(t: Track) {
   return [lang, t.title].filter(Boolean).join(' — ') || $t('Track {id}', { id: t.id })
 }
 
+/**
+ * An English track worth defaulting to.
+ *
+ * mpv passes the container's own tag straight through, so both the ISO 639-2
+ * `eng` and the 639-1 `en` turn up depending on who muxed the file. Commentary
+ * and audio description are tagged English too and are never what someone
+ * meant by "play it in English", so they only win if nothing else is.
+ */
+function englishAudio(list: Track[]) {
+  const english = list.filter(t => /^en(?:g|$)/i.test(t.lang ?? ''))
+  const spoken = english.filter(t => !/\b(?:commentar|descri|narrat|sdh|visual)/i.test(t.title ?? ''))
+  return spoken[0] ?? english[0] ?? null
+}
+
 async function refreshTracks() {
   const p = await readProps(['track-list', 'sid', 'aid'])
   if (!p)
@@ -786,9 +822,14 @@ async function refreshTracks() {
   tracks.value = Array.isArray(p['track-list']) ? p['track-list'] : []
   sid.value = typeof p.sid === 'number' ? p.sid : 'no'
   aid.value = typeof p.aid === 'number' ? p.aid : 'no'
-  if (autoEng.value) {
+  // Spend the one-shot only once there is something to choose between. This
+  // runs the moment mpv opens, when the track list is usually still empty —
+  // clearing the flag there meant the later call, the one that *has* the
+  // tracks, never looked, and a dual-audio release played whichever track the
+  // muxer happened to put first.
+  if (autoEng.value && audioTracks.value.length) {
     autoEng.value = false
-    const eng = audioTracks.value.find(t => t.lang?.startsWith('eng'))
+    const eng = englishAudio(audioTracks.value)
     if (eng && aid.value !== eng.id) {
       aid.value = eng.id
       ipc(['set_property', 'aid', eng.id])
@@ -1416,6 +1457,15 @@ const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
 
 /** Server playback only — the failover list and the resolution shortcuts. */
 const hasCandidates = computed(() => !!props.candidates?.servers?.length)
+/** True when a later row in the failover list exists — not "any candidates". */
+const hasLaterCandidate = computed(() => {
+  if (!hasCandidates.value)
+    return false
+  const servers = props.candidates?.servers ?? []
+  const i = props.activeCandidate ?? 0
+  return servers.some(s => s.index > i)
+})
+const qualityChoices = computed(() => props.candidates?.qualities ?? [])
 
 function shortQuality(text: string) {
   const m = text.toLowerCase().match(/\b(2160p|1440p|1080p|720p|480p|4k|2k)\b/)
@@ -1471,10 +1521,11 @@ const audioPill = computed(() => {
  */
 let qualityIntroduced = false
 watch(
-  () => [props.autoOpenQuality, props.candidates?.qualities?.length] as const,
-  ([open, count]) => {
-    if (open && !qualityIntroduced && (count ?? 0) > 1 && started.value) {
+  () => [props.autoOpenQuality, props.candidates?.qualities?.length, started.value] as const,
+  ([open, count, isStarted]) => {
+    if (open && !qualityIntroduced && (count ?? 0) > 1 && isStarted) {
       menu.value = 'quality'
+      ui.value = true
       qualityIntroduced = true
       emit('autoOpened')
     }
@@ -1728,7 +1779,8 @@ function frame(now: number) {
     || (!!props.src && !started.value)
     || (started.value && (
       buffering.value
-      || (!fromEngine.value && videoWidth.value === 0)
+      || videoWidth.value === 0
+      || awaitingFrame.value
     ))
   const needsGeometry = started.value || (native && overlay && hasCentre)
 
@@ -1746,7 +1798,7 @@ function frame(now: number) {
       if (!scrubbing.value)
         position.value = clock
     }
-    else if (!paused.value && !buffering.value && !scrubbing.value && duration.value) {
+    else if (!fromTorrent.value && !paused.value && !buffering.value && !scrubbing.value && duration.value) {
       position.value = Math.min(duration.value, position.value + dt * speed.value)
     }
   }
@@ -1764,13 +1816,14 @@ function frame(now: number) {
   const dpr = pxRatio
   // Hide the native surface when the box is off-screen or not laid out —
   // otherwise it keeps painting over whatever the page scrolls under it.
-  // Hide until a frame exists: otherwise mpv's black child window covers
-  // the Buffering overlay. Live used to skip this and the overlay never
-  // showed — a token was enough to call the stream "playing".
-  const opening = !fromEngine.value && !!props.src && (
-    !started.value || (!ended.value && videoWidth.value === 0)
-  )
-  const visible = !opening && r.width >= 16 && r.height >= 16
+  // An empty `src` (title search) used to leave the last mpv mapped, which
+  // is the black 0:00 player with a Pause button and no spinner.
+  // Do not unmap a *started* torrent just because the first frame is late:
+  // an unmapped `--wid` window never gets a VO, so a `file://` copy stays
+  // at 0:00 forever. The centre card punches a hole for Buffering / Quality.
+  const opening = isLive.value && !!props.resolving && awaitingFrame.value
+  const visible = !!props.src && started.value && !opening
+    && r.width >= 16 && r.height >= 16
     && r.bottom > 0 && r.top < window.innerHeight
     && r.right > 0 && r.left < window.innerWidth
 
@@ -1815,122 +1868,6 @@ function waitForBox(timeoutMs = 4000): Promise<DOMRect | null> {
 // necessity, since start/stopPlayer below drive it) is safe.
 const { pause: stopPoll, resume: startPoll } = useIntervalFn(poll, 200, { immediate: false })
 
-/**
- * librqbit answers the stream endpoint with HTTP 500 for a short window after a
- * torrent is (re-)added, while it initialises. mpv does not retry — it fails the
- * open in ~7ms and exits, leaving a black box at 0:00. So poll the endpoint for
- * a real byte before launching mpv.
- *
- * A direct link gets the same probe on a much shorter leash: it is either
- * serving or it isn't, and an expired one should say so rather than spend a
- * minute looking like it's buffering.
- */
-/**
- * Is this URL serving bytes right now?
- *
- * Three verdicts, because "can't check" is not "dead":
- * - `ok` — open it.
- * - `!ok` on a **local** torrent stream — keep waiting out the window; peers
- *   need time before the engine can answer.
- * - `!ok` on a **remote** link that answered HTTP ≥400 — the server itself has
- *   spoken: dead, fail over.
- * - `!ok` with `unknown` set — the fetch *threw*, which is CORS or an
- *   unroutable host. The browser refuses to say which, and media elements
- *   don't need the permission `fetch` wants — Real-Debrid links are exactly
- *   this case. Unverifiable ≠ dead: the caller opens it anyway and lets the
- *   player be the judge.
- */
-async function waitForStream(url: string, timeoutMs = 60000): Promise<{ ok: boolean, status: number, unknown?: boolean, stub?: boolean }> {
-  const local = url.startsWith(ENGINE)
-  // Proxy URLs are local but serve live streams. Give them a short window
-  // (10s) — enough for a slow upstream to answer the first manifest
-  // request, but not so long the user stares at a spinner for a dead channel.
-  const proxy = url.startsWith(PROXY)
-  const deadline = Date.now() + (local ? timeoutMs : proxy ? 10000 : timeoutMs)
-  let status = 0
-  while (Date.now() < deadline) {
-    const ctrl = new AbortController()
-    const timer = setTimeout(() => ctrl.abort(), Math.max(1, deadline - Date.now()))
-    try {
-      const res = await fetch(url, proxy
-        ? { signal: ctrl.signal, cache: 'no-store' }
-        : { signal: ctrl.signal, cache: 'no-store', headers: { Range: 'bytes=0-0' } })
-      status = res.status
-      if (res.ok || res.status === 206) {
-        if (local) {
-          // librqbit sends the HTTP headers as soon as it creates a stream,
-          // before it has the piece at byte zero. The old status-only probe
-          // immediately cancelled that stream, which also removed librqbit's
-          // priority for the beginning of the file. mpv then commonly seeks
-          // for an MKV index first and both readers wait forever while the
-          // engine downloads unrelated pieces. Hold this one-byte request
-          // until the first piece arrives, then mpv inherits a file whose
-          // beginning is really readable.
-          const reader = res.body?.getReader()
-          const first = reader ? await reader.read() : null
-          await reader?.cancel().catch(() => {})
-          if (!first || first.done || !first.value.byteLength)
-            continue
-        }
-        else {
-          // A live MPEG-TS has no end. Reading it would wait forever, so its
-          // status is the verdict and the reader must be released at once.
-          void res.body?.cancel().catch(() => {})
-        }
-        // Some debrid resolvers answer a dead quota with a tiny placeholder
-        // clip ("limits_exceeded.mp4") — valid video bytes, wrong movie. The
-        // final URL after redirects and the full size from Content-Range give
-        // it away without downloading anything.
-        const finalUrl = res.url || ''
-        const total = Number(res.headers.get('content-range')?.split('/')[1] ?? NaN)
-        const stubLike = /limits?[_.-]?exceeded|(?:not|un)?available[_-]?clip|error[_-]?clip/i.test(finalUrl)
-          || (Number.isFinite(total) && total > 0 && total < 3 * 1024 ** 2)
-        return { ok: true, status, stub: stubLike }
-      }
-      // HLS manifest servers commonly reject Range requests with 416
-      // (Range Not Satisfiable) or 400 (Bad Request) — they serve the
-      // whole manifest or nothing. That is not a dead stream; treat it
-      // as "ok to open" and let the <video> element be the real judge.
-      if (proxy && (status === 416 || status === 400)) {
-        return { ok: true, status }
-      }
-      // A 502 from the proxy means the upstream stream URL is dead —
-      // the proxy reached out and got nothing back. Report it as a dead
-      // stream immediately rather than retrying. Live channels frequently
-      // have dead stream URLs; the player will auto-advance to the next
-      // channel in the zap list.
-      // Also fast-fail 500 (upstream error), 503 (overloaded), and 404
-      // (channel removed) — these won't self-heal and waiting 10s just
-      // makes the app feel stuck.
-      if (proxy && (status === 502 || status === 500 || status === 503 || status === 404)) {
-        return { ok: false, status }
-      }
-      // A 404 from any remote host is final — the resource is gone. But
-      // other 4xx/5xx from debrid links are often transient: the server
-      // is still activating the stream. Keep retrying within the window
-      // rather than failing instantly on the first probe.
-      if (!local && !proxy && status === 404)
-        return { ok: false, status }
-      if (local && status >= 400 && status < 500)
-        return { ok: false, status }
-    }
-    catch {
-      if (!local && !proxy) {
-        // Debrid hosts almost never send CORS — `fetch` throws on the first
-        // hop and never stops throwing. Retrying here is a 15s black screen
-        // before mpv even starts; the player itself is the verdict.
-        return { ok: false, unknown: true, status: 0 }
-      }
-      // Engine momentarily unreachable — keep waiting.
-    }
-    finally {
-      clearTimeout(timer)
-    }
-    await new Promise(r => setTimeout(r, 150))
-  }
-  return { ok: false, status }
-}
-
 // ---------------------------------------------------------------------------
 // Watch state, keyed by title rather than by stream URL — the torrent id
 // changes every time the same episode is re-added. The library store owns the
@@ -1946,12 +1883,64 @@ function saveProgress() {
 // away mid-film may never give the ticker another two seconds.
 watch(paused, () => saveProgress())
 
+/**
+ * A torrent can deliver the probe byte and still have a short gap before the
+ * demuxer gets the next piece. Native players that exit in that window need a
+ * fresh open, not a terminal playback error. Keep this deliberately bounded:
+ * a bad torrent must still surface its real error instead of looping forever.
+ */
+let torrentStartRetries = 0
+/** Direct HTTP: how long we wait for a first frame before failing over. */
+let directOpenWatch = 0
+/** Engine: reopen mpv if the first process sits at 0:00 with no picture. */
+let engineFrameWatch = 0
+
+function clearDirectOpenWatch() {
+  if (!directOpenWatch)
+    return
+  window.clearTimeout(directOpenWatch)
+  directOpenWatch = 0
+}
+
+function clearEngineFrameWatch() {
+  if (!engineFrameWatch)
+    return
+  window.clearTimeout(engineFrameWatch)
+  engineFrameWatch = 0
+}
+
+function armEngineFrameWatch(ms = 8000) {
+  clearEngineFrameWatch()
+  // Engine HTTP: a restart drops the FileStream pin. Only a finished
+  // file:// copy stuck at 0:00 should fall back to the engine stream.
+  if (!fromDisk.value)
+    return
+  engineFrameWatch = window.setTimeout(() => {
+    engineFrameWatch = 0
+    void onEngineFrameWatch()
+  }, ms)
+}
+
+async function onEngineFrameWatch() {
+  if (!fromDisk.value || !props.src || errorMsg.value)
+    return
+  if (position.value >= 0.2 || videoWidth.value > 0)
+    return
+  emit('diskStuck')
+}
+
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
-async function startPlayer() {
+async function startPlayer(retryingTorrentStartup = false) {
   if (busy.value)
     return
+  // A button press or a new source deserves the full retry allowance. The
+  // automatic starts below preserve the cap for one startup attempt.
+  if (!retryingTorrentStartup)
+    torrentStartRetries = 0
+  clearDirectOpenWatch()
+  clearEngineFrameWatch()
   busy.value = true
   errorMsg.value = ''
   slateHandled = false
@@ -1965,21 +1954,17 @@ async function startPlayer() {
       return
     }
 
-    // Torrent streams have to wait for librqbit: a 500 in the first milliseconds
-    // is "not ready yet", and mpv exits instead of retrying. Direct HTTP, IPTV
-    // and the loopback proxy are already a server — a `fetch()` probe is CORS,
-    // a hang on live TS, or 800ms of "Buffering" before mpv even starts. Native
-    // mpv is the verdict.
+    // Never GET the URL before the player. Engine: librqbit's FileStream is a
+    // 32 MB lookahead — a probe plus mpv is two pins, and the first pieces go
+    // to the handle we then cancel. Direct/live: fetch is CORS or a hang on TS.
+    // mpv reconnects on the engine's transient 500; opening it is the pin.
     interface Probe { ok: boolean, status: number, unknown?: boolean, stub?: boolean }
     let probe: Probe
     if (!fromEngine.value) {
       probe = { ok: true, status: 0, unknown: true }
     }
     else {
-      // Never hand mpv a URL that isn't serving yet — it exits instantly on a 500.
-      waiting.value = true
-      probe = await waitForStream(props.src, 60_000)
-      waiting.value = false
+      probe = { ok: true, status: 0, unknown: true }
     }
     // `unknown` (the probe was CORS-blocked from even asking) falls through to
     // the opener: media elements don't need the permission fetch wants, so the
@@ -2017,7 +2002,7 @@ async function startPlayer() {
       return
     }
 
-    if (native) {
+    if (hasNativePlayer()) {
       // Re-measure: the window may have been resized while the probe ran.
       const b = boxEl.value!.getBoundingClientRect()
       measurePx()
@@ -2026,7 +2011,7 @@ async function startPlayer() {
       // the M3U's #EXTVLCOPT or set per-stream by the Xtream provider).
       // Debrid resolve links (Torrentio, Meteor, MediaFusion) also reject
       // mpv's default `Lavf/…` string — they only answer a browser UA.
-      const iptvHeaders = fromEngine.value
+      const iptvHeaders = fromTorrent.value
         ? {}
         : {
             userAgent: props.userAgent || STREAM_UA,
@@ -2040,6 +2025,11 @@ async function startPlayer() {
         width: Math.max(1, Math.round(b.width * dpr)),
         height: Math.max(1, Math.round(b.height * dpr)),
         live: isLive.value,
+        // Always unseekable on a growing engine stream. Asking for the
+        // cue index (or even waiting on /haves to decide) delays the
+        // FileStream that pulls piece 0 — that wait was the picture
+        // sitting on "1%". Finished copies open as file:// instead.
+        seekable: false,
         ...iptvHeaders,
       })
     }
@@ -2056,6 +2046,7 @@ async function startPlayer() {
     paused.value = false
     silentSaid = false
     started.value = true
+    seenFrame.value = false
     // Torrent pieces arrive slowly, so assume a stall until the poll says
     // otherwise. A Direct HTTP link is already on a server — starting as
     // "Buffering…" is a wait the first frame does not need.
@@ -2069,22 +2060,29 @@ async function startPlayer() {
     subText.value = ''
     videoWidth.value = 0
     videoHeight.value = 0
+    hasAudio.value = false
     subDelay.value = 0 // a fresh mpv starts at zero
     subSpeed.value = 1
     syncNote.value = ''
     guess.value = null
     lastKey = '' // force a geometry + shape push on the next frame
-    if (!fromEngine.value) {
-      window.setTimeout(() => {
-        if (!started.value || errorMsg.value || videoWidth.value > 0 || duration.value)
+    if (!fromEngine.value && !isLive.value) {
+      clearDirectOpenWatch()
+      // A healthy debrid CDN answers in a couple of seconds. Twelve left
+      // a dead link on "Opening the stream…" long after another server
+      // in the list could have played.
+      directOpenWatch = window.setTimeout(() => {
+        directOpenWatch = 0
+        if (!started.value || errorMsg.value || videoWidth.value > 0 || position.value > 0.5)
           return
         if (localLive.value) {
           streamDied('dead')
           return
         }
-        if (!streamDied())
-          errorMsg.value = $t('This stream did not start. Try another quality, or change How Play works in Settings → Sources.')
-      }, 12_000)
+        if (streamDied())
+          return
+        errorMsg.value = $t('This stream did not start. Try another quality, or change How Play works in Settings → Sources.')
+      }, 8_000)
     }
     // Push geometry and cutouts immediately so the stalled overlay's data-cut
     // hole appears in the native window before the next paint — waiting for
@@ -2121,6 +2119,8 @@ async function startPlayer() {
     void refreshTracks()
 
     startPoll()
+    if (fromTorrent.value)
+      armEngineFrameWatch()
   }
   catch (e) {
     started.value = false
@@ -2130,7 +2130,7 @@ async function startPlayer() {
         errorMsg.value = ''
     }
     else if (!streamDied()) {
-      errorMsg.value = friendlyPlaybackError(raw)
+      errorMsg.value = friendlyPlaybackError(raw, isLive.value ? 'live' : 'vod')
     }
     else {
       errorMsg.value = ''
@@ -2197,16 +2197,29 @@ function streamDied(reason?: 'stub' | 'dead' | 'refused') {
   // `failed` for live channels and debrid failover queues.
   if (fromPremium.value && !isLive.value)
     return false
-  if (!hasCandidates.value && !localLive.value)
+  // Sound or a frame means the channel is up. A 404 on the next HLS
+  // fragment must not zap away from a stream the viewer can already hear.
+  if (isLive.value && (videoWidth.value > 0 || hasAudio.value))
+    return false
+  if (localLive.value) {
+    emit('failed', reason)
+    return true
+  }
+  // One candidate is not a queue. Emitting `failed` then clearing the
+  // error left a black screen when the parent had nowhere to go.
+  if (!hasLaterCandidate.value)
     return false
   emit('failed', reason)
   return true
 }
 
 async function stopPlayer() {
+  clearDirectOpenWatch()
+  clearEngineFrameWatch()
   stopPoll()
   saveProgress()
   started.value = false
+  seenFrame.value = false
   lastKey = ''
   clearSleepTimer()
   clearAutoPlayCountdown()
@@ -2219,9 +2232,9 @@ async function stopPlayer() {
     engine?.stop()
 }
 
-async function restart() {
+async function restart(retryingTorrentStartup = false) {
   await stopPlayer()
-  await startPlayer()
+  await startPlayer(retryingTorrentStartup)
 }
 
 /**
@@ -2259,6 +2272,7 @@ defineExpose({
   ui,
   videoWidth,
   videoHeight,
+  hasAudio,
   resolutionLabel,
   ipc,
   position,
@@ -2270,7 +2284,7 @@ defineExpose({
 // Polling: playback props, plus a liveness check so a dead mpv reports itself
 // instead of leaving a black rectangle behind.
 // ---------------------------------------------------------------------------
-const POLLED = ['pause', 'paused-for-cache', 'duration', 'time-pos', 'demuxer-cache-time', 'cache-buffering-state', 'volume', 'mute', 'speed', 'mouse-pos', 'sub-text', 'video-params']
+const POLLED = ['pause', 'paused-for-cache', 'duration', 'time-pos', 'demuxer-cache-time', 'cache-buffering-state', 'volume', 'mute', 'speed', 'mouse-pos', 'sub-text', 'video-params', 'audio-params']
 let tick = 0
 let lastMouseX = -1
 let lastMouseY = -1
@@ -2301,6 +2315,27 @@ async function poll() {
     if (st && !st.running) {
       stopPoll()
       started.value = false
+      // The torrent engine is still downloading, so an exit before the first
+      // frame is usually the small hand-off gap before pieces arrive. Re-open
+      // a few times after a short beat; mpv reconnects on the engine's 500.
+      if (fromDisk.value && position.value <= 0.5) {
+        emit('diskStuck')
+        return
+      }
+      if (fromEngine.value && position.value <= 0.5 && torrentStartRetries < 3) {
+        // We are only here because mpv has *exited*, so the FileStream it was
+        // reading went with it: there is no download pin left to protect and
+        // reopening cannot take the start of the file away from anything. The
+        // live-swarm guard belongs on the frame watch, where mpv is still
+        // running — checking it here meant a healthy swarm and a dead player
+        // left the poll stopped, no error raised and the spinner up for good.
+        torrentStartRetries++
+        window.setTimeout(() => {
+          if (!started.value && !busy.value && props.src)
+            void startPlayer(true)
+        }, 3000)
+        return
+      }
       // Exiting after real playback is just end-of-file, not a failure.
       if (position.value > 0 && (duration.value === 0 || position.value >= duration.value - 2)) {
         ended.value = true
@@ -2310,13 +2345,14 @@ async function poll() {
       }
       else {
         const tail = st.log_tail?.trim() || ''
-        if (!isLive.value) {
-          errorMsg.value = friendlyPlaybackError(tail || (native ? $t('mpv exited unexpectedly.') : $t('Playback stopped unexpectedly.')))
+        // Torrent and Direct share the failover walk: after engine retries
+        // are spent, the next magnet/URL is more useful than Retry-the-same.
+        if (streamDied(stubSeen.value ? 'stub' : refusal(tail) ? 'refused' : undefined)) {
+          errorMsg.value = ''
+          return
         }
-        // A server stream that stops mid-film is the server dying, not the
-        // film ending — same failover as a link that never opened.
-        if (!fromEngine.value)
-          streamDied(stubSeen.value ? 'stub' : refusal(tail) ? 'refused' : undefined)
+        if (!isLive.value)
+          errorMsg.value = friendlyPlaybackError(tail || (native ? $t('mpv exited unexpectedly.') : $t('Playback stopped unexpectedly.')), 'vod')
       }
       return
     }
@@ -2402,10 +2438,25 @@ async function poll() {
   if (vp && typeof vp.w === 'number' && typeof vp.h === 'number' && vp.w > 0) {
     videoWidth.value = vp.w
     videoHeight.value = vp.h
+    clearDirectOpenWatch()
   }
-  else if (!p.pause && (isLive.value || (typeof p['time-pos'] === 'number' && p['time-pos'] > 0))) {
+  else if (
+    !fromEngine.value
+    && !isLive.value
+    && !p.pause
+    && typeof p['time-pos'] === 'number'
+    && p['time-pos'] > 0
+  ) {
+    // Direct VOD: time moving is a picture even if video-params is a poll late.
+    // Live must not take this path — HLS reports unpaused with no frame, and
+    // a fake 1280px hid Connecting behind mpv's black --wid window.
     videoWidth.value ||= 1280
     videoHeight.value ||= 720
+  }
+
+  if (audioParamsReady(p['audio-params'])) {
+    hasAudio.value = true
+    clearDirectOpenWatch()
   }
 
   // The rAF loop runs the clock between polls; only correct it once it has
@@ -2415,6 +2466,12 @@ async function poll() {
   if (!scrubbing.value && typeof p['time-pos'] === 'number') {
     if (position.value < 0.5 || Math.abs(p['time-pos'] - position.value) > 0.4)
       position.value = p['time-pos']
+    // Once frames are moving this is no longer startup; a later swarm stall
+    // is reported as buffering and must never consume the startup retry cap.
+    if (fromEngine.value && p['time-pos'] > 0.5)
+      torrentStartRetries = 0
+    if (fromTorrent.value && videoWidth.value > 0 && p['time-pos'] >= 0.2)
+      seenFrame.value = true
   }
 
   // A start-up log line can land before the first frame; once time is
@@ -2948,28 +3005,27 @@ const stalled = ref(false)
 watchDebounced(() => buffering.value && started.value, v => (stalled.value = v), { debounce: 500 })
 
 const centre = computed(() => {
-  // Live TV owns failure UI on its overlay — mpv's ffmpeg tail is not
-  // actionable and reads like the app is broken.
-  if (errorMsg.value && !isLive.value)
+  // Live TV owns connecting, skip and failure UI on its overlay. A
+  // centre card here stacked "Connecting to live stream" on the same
+  // sentence, and after a dead channel it stacked "Buffering" on
+  // "Playback Error".
+  if (isLive.value)
+    return ''
+  if (errorMsg.value)
     return 'error'
   if (ended.value)
     return 'ended'
-  // The live watch page draws its own connecting / skip notice over the
-  // player. Returning a centre overlay here stacked "Buffering" on
-  // "trying the next one" in the same pill.
-  if (isLive.value && props.resolving)
-    return ''
-  if (busy.value || props.resolving || (props.src && !started.value && !ended.value))
+  if (busy.value || (props.resolving && !started.value) || (props.src && !started.value && !ended.value))
     return 'loading'
-  // Show the buffering indicator when the torrent engine is running but no
-  // frame has played yet (position and duration both zero) — the poll clears
-  // `buffering` before the debounce catches up, leaving a dead window with
-  // a black screen and no feedback.
-  //
-  // When buffering is true the player is stalling for data even though it may
-  // report paused (libVLC stops outputting frames while buffering). Show the
-  // spinner instead of the pause overlay in that case.
-  if (fromEngine.value && started.value && !duration.value && !ended.value)
+  // No src yet and not resolving: a wait that flipped resolving off first
+  // used to paint a black box with the HUD and no spinner.
+  if (!props.src && !started.value && (props.step || props.status))
+    return 'loading'
+  // Show the buffering indicator until a real frame exists — duration from
+  // an MKV header (or Content-Length) is not a picture, and treating it as
+  // one hid the spinner behind a black `--wid` window the HUD could not
+  // click through.
+  if (fromTorrent.value && started.value && !seenFrame.value && !ended.value)
     return 'stalled'
   // `started` flips true as soon as start() returns, before the first
   // frame. Live used to skip this so the watch page could draw its own
@@ -3304,19 +3360,44 @@ async function listenToNativeMouse() {
   }
 }
 
+let srcEpoch = 0
 watch(() => props.src, (src, prev) => {
   dropThumbs() // a different file, and the buckets meant seconds into the old one
   // First run is onMounted's job. A mount-time fire here races
   // `startPlayer` (busy guard) and can stop the stream before it starts.
   if (prev === undefined)
     return
+  if (src === prev)
+    return
+  const epoch = ++srcEpoch
   started.value = false
+  seenFrame.value = false
   videoWidth.value = 0
   videoHeight.value = 0
-  if (src)
-    restart()
-  else
-    stopPlayer()
+  if (!src) {
+    void stopPlayer()
+    return
+  }
+  void (async () => {
+    // Title-page Play mounts this player with src still empty, then fills it
+    // after the engine add. `restart` would player_stop first and leave a
+    // black first attempt; the second Play worked because src was already set
+    // at mount. An empty previous src is that first open — just start.
+    if (prev)
+      await stopPlayer()
+    if (epoch !== srcEpoch)
+      return
+    // A Quality pick can land while the previous start is still `busy`.
+    // Bailing here is a stopped mpv and a blank window.
+    for (;;) {
+      if (epoch !== srcEpoch)
+        return
+      if (!busy.value)
+        break
+      await new Promise(r => setTimeout(r, 40))
+    }
+    await startPlayer()
+  })()
 })
 
 /**
@@ -3343,7 +3424,11 @@ onMounted(() => {
   void (async () => {
     if (props.fullscreen)
       await setWindowFullscreen(true)
-    startPlayer()
+    // Title Play fills `src` after mount. The watcher starts that open.
+    // A second call here while `busy` would return and look like a black
+    // first Play; skip if that start is already underway.
+    if (props.src && !started.value && !busy.value)
+      startPlayer()
   })()
 })
 
@@ -3575,8 +3660,10 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
       data-cut
       class="absolute left-1/2 top-1/2 flex items-center gap-3 border -translate-x-1/2 -translate-y-1/2"
       :class="[
-        centre === 'loading' ? 'bg-black/90 border-white/15' : SURFACE,
-        centre === 'stalled'
+        centre === 'loading' || (centre === 'stalled' && qualityChoices.length)
+          ? 'bg-black/90 border-white/15'
+          : SURFACE,
+        centre === 'stalled' && !qualityChoices.length
           ? 'rounded-full px-5 py-3 text-body-large'
           : 'max-w-[min(520px,80%)] flex-col rounded-2xl px-7 py-6 text-center',
       ]"
@@ -3586,12 +3673,58 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
         <div class="text-title-small">
           {{ $t('Playback failed') }}
         </div>
+        <p v-if="props.title" class="max-w-sm truncate text-body-small opacity-50">
+          {{ props.title }}
+        </p>
         <p class="max-w-sm text-body-small leading-relaxed opacity-70">
           {{ friendlyError }}
         </p>
-        <button :class="BTN" :disabled="busy" @click="startPlayer">
-          <v-icon :icon="mdiReload" size="18" /> {{ $t('Retry') }}
-        </button>
+        <div
+          v-if="qualityChoices.length"
+          class="flex w-full max-w-full flex-col items-center gap-2"
+        >
+          <p class="text-label-small opacity-60">
+            {{ $t('Quality') }}
+          </p>
+          <div class="flex max-w-full flex-wrap justify-center gap-2">
+            <button
+              v-for="q in qualityChoices"
+              :key="q.index"
+              type="button"
+              class="min-h-10 rounded-full border px-3.5 text-label-large transition-colors duration-150"
+              :class="q.index === activeCandidate
+                ? 'border-primary bg-primary/20 text-white'
+                : 'border-white/20 bg-white/8 text-white/80 hover:bg-white/16 hover:text-white focus-visible:bg-white/16 focus-visible:text-white'"
+              @click="emit('useCandidate', q.index)"
+            >
+              {{ q.label }}<span v-if="q.detail" class="opacity-50"> · {{ q.detail }}</span>
+            </button>
+          </div>
+        </div>
+        <div class="flex flex-wrap items-center justify-center gap-2">
+          <button
+            ref="retryBtn"
+            type="button"
+            data-dpad-start
+            class="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-1.75 text-label-large text-on-primary transition-colors duration-120 hover:brightness-110 focus-visible:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+            :disabled="busy"
+            @click="() => startPlayer()"
+          >
+            <v-icon :icon="mdiReload" size="18" /> {{ $t('Retry') }}
+          </button>
+          <button
+            v-if="hasLaterCandidate"
+            type="button"
+            :class="BTN"
+            @click="emit('failed', 'dead')"
+          >
+            <v-icon :icon="mdiSkipNext" size="18" />
+            {{ fromTorrent ? $t('Next quality') : $t('Next source') }}
+          </button>
+          <button type="button" :class="BTN" @click="emit('back')">
+            <v-icon :icon="mdiArrowLeft" size="18" /> {{ $t('Back') }}
+          </button>
+        </div>
       </template>
 
       <template v-else-if="centre === 'ended' && !isLive">
@@ -3629,18 +3762,40 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
           <span v-if="loadPercent != null" class="text-label-small tabular-nums">{{ loadPercent }}</span>
         </v-progress-circular>
         <div class="text-title-small">
-          <template v-if="waiting">
+          <template v-if="fromEngine">
             {{ $t('Waiting for the torrent stream…') }}
           </template>
           <template v-else>
             {{ step || (native ? $t('Starting mpv…') : $t('Opening the stream…')) }}
           </template>
         </div>
-        <!-- The first source is selected by the release ranker (1080p first
-             for streaming). Showing it here makes a slow provider response
-             understandable without putting a persistent menu over the film. -->
+        <!-- Qualities the sources (or this release name) can play. Shown here
+             so a torrent stream is not a black box with no 720p/1080p/4K
+             choice until the chrome appears. -->
         <div
-          v-if="activeQuality || activeServer || quality"
+          v-if="qualityChoices.length"
+          class="flex w-full max-w-full flex-col items-center gap-2"
+        >
+          <p class="text-label-small opacity-60">
+            {{ $t('Quality') }}
+          </p>
+          <div class="flex max-w-full flex-wrap justify-center gap-2">
+            <button
+              v-for="q in qualityChoices"
+              :key="q.index"
+              type="button"
+              class="min-h-10 rounded-full border px-3.5 text-label-large transition-colors duration-150"
+              :class="q.index === activeCandidate
+                ? 'border-primary bg-primary/20 text-white'
+                : 'border-white/20 bg-white/8 text-white/80 hover:bg-white/16 hover:text-white focus-visible:bg-white/16 focus-visible:text-white'"
+              @click="emit('useCandidate', q.index)"
+            >
+              {{ q.label }}<span v-if="q.detail" class="opacity-50"> · {{ q.detail }}</span>
+            </button>
+          </div>
+        </div>
+        <div
+          v-else-if="activeQuality || activeServer || quality"
           class="flex max-w-full items-center gap-1.5 rounded-full bg-white/8 px-3 py-1 text-label-small text-white/70"
         >
           <span class="truncate">{{ activeQuality?.label ?? quality }}</span>
@@ -3663,8 +3818,30 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
           <span v-if="loadPercent != null" class="text-label-small font-medium tabular-nums">{{ loadPercent }}</span>
         </v-progress-circular>
         <span>
-          {{ $t('Buffering') }}<template v-if="loadPercent != null"> · {{ loadPercent }}%</template><template v-else-if="status && !isLive"> · {{ status }}</template>
+          {{ step || $t('Buffering') }}<template v-if="loadPercent != null"> · {{ loadPercent }}%</template><template v-else-if="status && !isLive"> · {{ status }}</template>
         </span>
+        <div
+          v-if="qualityChoices.length"
+          class="flex w-full max-w-full flex-col items-center gap-2"
+        >
+          <p class="text-label-small opacity-60">
+            {{ $t('Quality') }}
+          </p>
+          <div class="flex max-w-full flex-wrap justify-center gap-2">
+            <button
+              v-for="q in qualityChoices"
+              :key="q.index"
+              type="button"
+              class="min-h-10 rounded-full border px-3.5 text-label-large transition-colors duration-150"
+              :class="q.index === activeCandidate
+                ? 'border-primary bg-primary/20 text-white'
+                : 'border-white/20 bg-white/8 text-white/80 hover:bg-white/16 hover:text-white focus-visible:bg-white/16 focus-visible:text-white'"
+              @click="emit('useCandidate', q.index)"
+            >
+              {{ q.label }}<span v-if="q.detail" class="opacity-50"> · {{ q.detail }}</span>
+            </button>
+          </div>
+        </div>
       </template>
     </div>
 
@@ -4257,12 +4434,12 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
           <!-- Server / Quality as labelled pills: "which one am I on" is their
                whole point, so the current pick is the button text. -->
           <button
-            v-if="activeQuality"
+            v-if="fromTorrent || activeQuality"
             v-tooltip:top="$t('Quality')"
-            :class="PILL"
+            class="shrink-0" :class="[PILL]"
             @click="usePill('quality')"
           >
-            {{ activeQuality.label }}
+            {{ activeQuality?.label || quality || $t('Quality') }}
             <v-icon :icon="mdiChevronDown" size="14" />
           </button>
           <button

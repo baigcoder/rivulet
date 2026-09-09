@@ -28,6 +28,7 @@ const dead = computed(() => {
     return true
   return liveTv.offlineIds.has(ch.id) || props.isOffline?.(ch) === true
 })
+const health = computed(() => dead.value ? 'offline' as const : liveTv.healthOf(props.channel.id))
 const imgError = ref(false)
 const proxyLogoUrl = computed(() => proxyLogo(props.channel.logoUrl))
 
@@ -68,12 +69,7 @@ const epgProgress = computed(() => {
 
     <div class="min-w-0 flex-1">
       <div class="flex min-w-0 items-center gap-1.5">
-        <span
-          class="pointer-events-none shrink-0 rounded px-1 py-px text-[9px] font-semibold uppercase tracking-wide"
-          :class="dead ? 'bg-zinc-800 text-white/70' : 'bg-red-600 text-white'"
-        >
-          {{ dead ? $t('Offline') : $t('LIVE') }}
-        </span>
+        <live-tv-live-status-badge :health="health" compact />
         <h3 class="truncate text-body-medium font-medium">
           {{ channel.name }}
         </h3>

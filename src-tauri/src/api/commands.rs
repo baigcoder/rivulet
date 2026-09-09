@@ -63,7 +63,10 @@ pub fn premium_set_entitlement(
     tier: String,
     expires_at_ms: Option<i64>,
 ) -> SubscriptionInfo {
-    state.set(SubscriptionInfo { tier, expires_at_ms });
+    state.set(SubscriptionInfo {
+        tier,
+        expires_at_ms,
+    });
     // Echo what the gate now holds rather than returning nothing. It is
     // the only way the frontend can confirm the push landed, and a
     // mismatch between the settings store and the gate is exactly the
