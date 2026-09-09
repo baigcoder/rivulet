@@ -187,10 +187,6 @@ watch(() => trailerKeys.value.join(',') || media.value?.trailer || '', keys => {
   heroIdle.value = Boolean(keys) && !import.meta.server
 }, { immediate: true })
 
-/** WebKitGTK — no cover trailer at all: the <video> wedges the page and the
- * iframe is error 153. The poster stands in, and Trailer opens mpv. */
-const linux = computed(() => import.meta.client && isLinux())
-
 /**
  * On desktop (Tauri), the trailer is a native <video> fed by the loopback
  * /youtube-stream proxy — a WebKit <video> plays the direct stream where a
@@ -206,7 +202,7 @@ const heroVideoSrc = computed(() => {
 })
 const heroFrameSrc = computed(() => {
   const key = trailerKey.value
-  if (!key || videoHidden.value || !heroIdle.value || linux.value)
+  if (!key || videoHidden.value || !heroIdle.value)
     return ''
   return youtubeEmbedSrc(key, { mute: true, loop: true, controls: false })
 })
@@ -348,20 +344,10 @@ const trailerSrc = computed(() => {
 /** Native <video> for the Trailer dialog (desktop); empty in browser dev. */
 const trailerVideoSrc = computed(() => trailerKey.value ? youtubeStreamSrc(trailerKey.value) : '')
 
-const trailer = ref(false)
-
 /** True when the native <video> failed — fall back to the iframe embed. */
 const trailerVideoFailed = ref(false)
-/**
- * Falling back to the iframe on Linux only paints "your browser can't play
- * this video" again, so a stream WebKitGTK could not decode goes to the same
- * mpv that plays films. The dialog closes with it: mpv has its own window.
- */
-async function onTrailerVideoError() {
+function onTrailerVideoError() {
   trailerVideoFailed.value = true
-  const key = trailerKey.value || media.value?.trailer
-  if (linux.value && key && await playYoutubeTrailer(key))
-    trailer.value = false
 }
 
 const RATING_ORDER = ['G', 'PG', 'PG-13', 'R', 'NC-17', '']
@@ -436,6 +422,7 @@ const credits = computed(() => {
   ].filter(row => row.value)
 })
 
+const trailer = ref(false)
 const torrentPickerRef = ref<{ open: () => void } | null>(null)
 const isDesktop = import.meta.client && isTauri()
 
@@ -504,13 +491,9 @@ async function openTrailer() {
   }
 }
 
-async function showTrailer() {
+function showTrailer() {
   const key = trailerKey.value || media.value?.trailer
   if (!key)
-    return
-  // No webview player on Linux can show this: mounting the stream freezes the
-  // page and the iframe answers 153. mpv is the one that plays it.
-  if (linux.value && await playYoutubeTrailer(key))
     return
   trailerVideoFailed.value = false
   trailer.value = true
@@ -955,7 +938,7 @@ watch(() => props.id, () => {
             @error="onTrailerVideoError"
           />
           <iframe
-            v-else-if="trailer && !linux"
+            v-else-if="trailer"
             :src="trailerSrc"
             class="aspect-video w-full border-0"
             style="zoom: var(--frame-zoom, 1)"

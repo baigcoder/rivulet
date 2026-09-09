@@ -1,5 +1,6 @@
-import { invoke, isTauri } from '@tauri-apps/api/core'
-import { isDesktop, isLinux } from './platform'
+import { isTauri } from '@tauri-apps/api/core'
+import { platform } from '@tauri-apps/plugin-os'
+import { isDesktop } from './platform'
 
 /** Loopback shim on the IPTV proxy port — see iptv/proxy.rs `/youtube-embed`. */
 const RELAY = 'http://127.0.0.1:3031/youtube-embed'
@@ -53,44 +54,28 @@ export function youtubeEmbedSrc(key: string, opts: { mute?: boolean, loop?: bool
  * The native `<video>` src for a trailer. The loopback `/youtube-stream` route
  * resolves the ID to a direct media file (via the bundled yt-dlp, at up to
  * 1080p) and proxies the bytes back through the loopback, so a WebKit `<video>`
- * can play what a YouTube iframe embed would refuse to (error 153 — "Your
- * browser can't play this video"). Empty outside desktop Tauri — Android keeps
- * the iframe (no yt-dlp there), and browser dev has no proxy. Muted/loop/
- * autoplay are element attributes, not here.
+ * can play what a YouTube iframe embed would refuse to (error 153). Empty
+ * outside desktop Tauri — Android keeps the iframe (no yt-dlp there), and
+ * browser dev has no proxy. Muted/loop/autoplay are element attributes, not
+ * here.
  *
- * Linux is the reason this exists. WebKitGTK's YouTube iframe still dies with
- * 153 even after spoofing Chrome, and an AppImage that did not bundle GStreamer's
- * H.264 plugins cannot decode the MSE player either. A progressive mp4 through
- * this proxy is the same path Windows and macOS already use.
+ * Linux WebKitGTK is excluded: its GStreamer media pipeline wedges when a
+ * `<video>` element loads the yt-dlp-resolved stream, freezing the entire
+ * detail page. The iframe embed (via the `/youtube-embed` relay) works
+ * reliably there thanks to the Chrome UA spoofing in lib.rs, which makes
+ * YouTube serve the Chromium player config WebKitGTK can run.
  */
 export function youtubeStreamSrc(key: string): string {
   if (!isTauri() || !isDesktop())
     return ''
-  // Linux is excluded on purpose. WebKitGTK's media pipeline *waits* on this
-  // endpoint while it mounts the element, so a slow resolve wedges the whole
-  // detail page — a frozen app, not a failed video, which means no timeout or
-  // `error` handler in the page can recover it (see 66ce479). Linux plays a
-  // trailer in mpv instead: `playYoutubeTrailer`.
-  if (isLinux())
-    return ''
-  return `${STREAM}?${new URLSearchParams({ v: key })}`
-}
-
-/**
- * Linux AppImage / WebKitGTK cannot play a YouTube iframe (error 153) and often
- * cannot decode the proxied `<video>` either. System mpv plus the bundled yt-dlp
- * can. Returns true when mpv was launched — the caller should not open a dialog.
- */
-export async function playYoutubeTrailer(key: string): Promise<boolean> {
-  if (!isTauri() || !isLinux() || !key)
-    return false
   try {
-    await invoke('play_url_mpv', { url: `https://www.youtube.com/watch?v=${key}` })
-    return true
+    if (platform() === 'linux')
+      return ''
   }
   catch {
-    return false
+    // platform() can throw before Tauri is ready — fall through to the stream
   }
+  return `${STREAM}?${new URLSearchParams({ v: key })}`
 }
 
 /** YouTube IFrame command. Quality lock stops the player climbing to 1080/4K. */

@@ -554,48 +554,6 @@ pub(crate) fn apply_bundled_ytdlp(cmd: &mut std::process::Command, app: &tauri::
     }
 }
 
-fn is_youtube_watch(url: &str) -> bool {
-    let Some(id) = url.strip_prefix("https://www.youtube.com/watch?v=") else {
-        return false;
-    };
-    !id.is_empty()
-        && id.len() <= 16
-        && id
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
-}
-
-/// Play a YouTube trailer in a normal mpv window. WebKitGTK cannot run the
-/// YouTube iframe (error 153) and an AppImage's GStreamer often cannot decode
-/// the proxied `<video>` either — system mpv plus the bundled yt-dlp is the
-/// same stack that already plays films on Linux.
-#[cfg(target_os = "linux")]
-#[tauri::command]
-fn play_url_mpv(app: tauri::AppHandle, url: String) -> Result<(), String> {
-    if !is_youtube_watch(&url) {
-        return Err("not a YouTube watch URL".into());
-    }
-    let mut cmd = std::process::Command::new("mpv");
-    cmd.arg("--force-window=yes")
-        .arg("--no-terminal")
-        .arg("--keep-open=yes")
-        .arg("--ytdl")
-        .env_remove("LD_LIBRARY_PATH")
-        .env_remove("APPDIR")
-        .env_remove("PYTHONHOME")
-        .env_remove("PYTHONPATH");
-    apply_bundled_ytdlp(&mut cmd, &app);
-    cmd.arg(&url)
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("failed to launch mpv (is it installed?): {e}"))
-}
-
-#[cfg(not(target_os = "linux"))]
-#[tauri::command]
-fn play_url_mpv(_url: String) -> Result<(), String> {
-    Err("mpv window playback is Linux-only".into())
-}
 
 #[derive(serde::Serialize)]
 struct DiskSpace {
@@ -993,22 +951,6 @@ mod download_dir_tests {
 }
 
 #[cfg(test)]
-mod youtube_watch_tests {
-    #[test]
-    fn accepts_a_tmdb_key() {
-        assert!(super::is_youtube_watch("https://www.youtube.com/watch?v=dQw4w9WgXcQ"));
-    }
-
-    #[test]
-    fn rejects_anything_else() {
-        assert!(!super::is_youtube_watch("https://example.com/watch?v=dQw4w9WgXcQ"));
-        assert!(!super::is_youtube_watch("https://www.youtube.com/watch?v=dQw4w9WgXcQ&evil"));
-        assert!(!super::is_youtube_watch("https://www.youtube.com/watch?v="));
-        assert!(!super::is_youtube_watch("file:///tmp/x"));
-    }
-}
-
-#[cfg(test)]
 mod reveal_path_tests {
     #[test]
     fn empty_is_an_error() {
@@ -1331,7 +1273,6 @@ pub fn run() {
             player::player_pointer,
             player::player_status,
             player::player_screenshot,
-            play_url_mpv,
             audio_envelope,
             thumbnail,
             deep_link_fix_handler,

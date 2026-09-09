@@ -467,30 +467,18 @@ assert.match(detail, /youtubeError/, 'YouTube onError must skip the blocked embe
 
 const youtube = read('app/utils/youtube.ts')
 assert.match(youtube, /vq:\s*['"]hd1080['"]/, 'browser embeds request 1080p')
-// WebKitGTK *waits* on this endpoint while it mounts the element, so a slow
-// resolve freezes the whole detail page — and a frozen page runs no `error`
-// handler and no timeout, so nothing in the app can recover it (66ce479). Linux
-// therefore mounts neither the stream nor the embed, and plays trailers in mpv.
-assert.match(youtube, /if \(isLinux\(\)\)\s*return ''/, 'Linux must not mount the proxied stream: it wedges the page')
-assert.match(youtube, /playYoutubeTrailer/, 'Linux still needs some way to watch a trailer')
-assert.match(youtube, /play_url_mpv/, 'mpv is launched from Rust so AppImage LD_LIBRARY_PATH is stripped')
-assert.match(detail, /v-else-if="trailer && !linux"/, 'Linux must not fall back to the YouTube iframe: it is error 153')
+// Linux keeps the iframe and stays off the /youtube-stream <video>. WebKitGTK
+// *waits* on that endpoint while it mounts the element, so a slow resolve
+// freezes the whole detail page — and a frozen page runs no `error` handler and
+// no timeout, so nothing in the app can recover it (66ce479).
 assert.match(
-  detail,
-  /!heroIdle\.value \|\| linux\.value/,
-  'the cover must not mount a YouTube iframe on WebKitGTK either',
+  youtube,
+  /platform\(\) === 'linux'\)\s*return ''/,
+  'the Linux <video> wedges the detail page: the embed is what plays there',
 )
-assert.match(
-  detail,
-  /async function showTrailer\(\)[\s\S]{0,320}?playYoutubeTrailer/,
-  'the title Trailer button hands off to mpv on Linux',
-)
-const home = read('app/pages/index.vue')
-assert.match(
-  home,
-  /async function openFeaturedTrailer\(\)[\s\S]{0,320}?playYoutubeTrailer/,
-  'the home Trailer button hands off to mpv on Linux',
-)
+// What the embed needs is codecs. `bun run tauri:dev` borrows the machine's
+// GStreamer and plays; an AppImage carries its own libraries, so without these
+// YouTube answers "your browser can't play this video" and the cover is blank.
 assert.match(
   read('scripts/build/ytdlp.ts'),
   /gstreamer1\.0-plugins-ugly/,

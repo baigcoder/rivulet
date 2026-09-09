@@ -63,31 +63,12 @@ watch(featured, (_m, _old, onCleanup) => {
 // ── Hero actions ──────────────────────────────────────────────────────────────
 const trailerDialog = ref(false)
 const trailerKey = computed(() => featuredDetail.value?.trailer)
-const trailerStreamSrc = computed(() => trailerKey.value ? youtubeStreamSrc(trailerKey.value) : '')
-const trailerStreamFailed = ref(false)
-/** WebKitGTK — the one webview whose YouTube iframe is always error 153. */
-const linux = computed(() => import.meta.client && isLinux())
-watch(trailerKey, () => {
-  trailerStreamFailed.value = false
-})
 
-async function openFeaturedTrailer() {
+function openFeaturedTrailer() {
   const key = trailerKey.value
   if (!key)
     return
-  // WebKitGTK freezes on the stream and refuses the embed — mpv plays it.
-  if (linux.value && await playYoutubeTrailer(key))
-    return
-  trailerStreamFailed.value = false
   trailerDialog.value = true
-}
-
-/** No iframe to fall back to on Linux — hand the trailer to mpv instead. */
-async function onFeaturedTrailerError() {
-  trailerStreamFailed.value = true
-  const key = trailerKey.value
-  if (linux.value && key && await playYoutubeTrailer(key))
-    trailerDialog.value = false
 }
 
 function runtimeText(min?: number) {
@@ -400,17 +381,7 @@ const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
     <v-dialog v-model="trailerDialog" max-width="900" :scrim-opacity="0.85">
       <v-card v-if="trailerKey" rounded="xl" class="overflow-hidden">
         <div class="relative aspect-video">
-          <video
-            v-if="trailerStreamSrc && !trailerStreamFailed"
-            :src="trailerStreamSrc"
-            class="absolute inset-0 h-full w-full bg-black"
-            controls
-            autoplay
-            playsinline
-            @error="onFeaturedTrailerError"
-          />
           <iframe
-            v-else-if="!linux"
             :src="youtubeEmbedSrc(trailerKey)"
             class="absolute inset-0 h-full w-full"
             allow="autoplay; encrypted-media"
