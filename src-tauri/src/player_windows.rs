@@ -664,7 +664,7 @@ pub fn player_start(
             match mpv.try_wait() {
                 Ok(Some(status)) => {
                     embed.destroy();
-                    let why = player_socket::log_tail(&log)
+                    let why = crate::log_redact::log_tail(&log)
                         .unwrap_or_else(|| status.to_string());
                     Err(format!("mpv exited immediately: {why}"))
                 }
@@ -847,37 +847,7 @@ pub fn player_status(state: tauri::State<'_, PlayerState>) -> PlayerStatus {
         None => false,
     };
 
-    let log_tail = player
-        .log
-        .as_ref()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .map(|s| {
-            // mpv tags every line with its level — "[ 2.06][e][stream] Failed to
-            // open …". Match on that rather than on the word "error", which also
-            // occurs in the build flags mpv prints in its header (-Wno-error=…)
-            // and would push the real failure out of the excerpt.
-            let lines: Vec<&str> = s
-                .lines()
-                .filter(|l| l.contains("][e]") || l.contains("][fatal]"))
-                .collect();
-            let tail = if lines.is_empty() {
-                s.lines()
-                    .rev()
-                    .take(8)
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .collect::<Vec<_>>()
-            } else {
-                lines
-            };
-            // See player_socket::log_tail — a live stream URL has the account's
-            // password in its path and this string leaves the process.
-            crate::log_redact::redact(&tail.join("\n"))
-                .chars()
-                .take(1200)
-                .collect()
-        });
+    let log_tail = player.log.as_deref().and_then(crate::log_redact::log_tail);
 
     PlayerStatus { running, log_tail }
 }

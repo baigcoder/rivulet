@@ -12,8 +12,12 @@
 // there is one reader per platform and any number of eventual displays, and a
 // credential that never crosses the IPC boundary cannot be leaked by the next
 // caller who forgets.
+//
+// `log_tail` lives here rather than next to the unix IPC socket because
+// Windows reads the same file and cannot compile that module.
 // ----------------------------------------------------------------------------
 
+use std::path::Path;
 use std::sync::LazyLock;
 
 use regex::Regex;
@@ -51,6 +55,33 @@ pub fn redact(text: &str) -> String {
     let out = BARE_PATH_CREDS.replace_all(&out, "${1}***/***${2}");
     let out = QUERY_CREDS.replace_all(&out, "$1=***");
     USERINFO.replace_all(&out, "://***:***@").into_owned()
+}
+
+/// The part of mpv's own log worth showing, so a player that died says why
+/// instead of leaving a black rectangle behind.
+pub fn log_tail(path: &Path) -> Option<String> {
+    std::fs::read_to_string(path).ok().map(|s| {
+        // mpv tags every line with its level — "[ 2.06][e][stream] Failed to
+        // open …". Match on that rather than on the word "error", which also
+        // occurs in the build flags mpv prints in its header (-Wno-error=…)
+        // and would push the real failure out of the excerpt.
+        let lines: Vec<&str> = s
+            .lines()
+            .filter(|l| l.contains("][e]") || l.contains("][fatal]"))
+            .collect();
+        let tail = if lines.is_empty() {
+            s.lines()
+                .rev()
+                .take(8)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+        } else {
+            lines
+        };
+        redact(&tail.join("\n")).chars().take(1200).collect()
+    })
 }
 
 #[cfg(test)]
@@ -117,5 +148,22 @@ mod tests {
         let out = redact(tail);
         assert!(!out.contains("p1"), "{out}");
         assert_eq!(out.lines().count(), 2);
+    }
+
+    #[test]
+    fn log_tail_prefers_error_lines_and_redacts_them() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("rivulet-log-tail-test-{}", std::process::id()));
+        std::fs::write(
+            &path,
+            "[  0.01][i] mpv 0.40.0 Copyright\n[  0.12][e][stream] Failed to open http://h.example.com/live/joe123/s3cret/4567.m3u8.\n",
+        )
+        .unwrap();
+        let out = log_tail(&path).expect("readable log");
+        let _ = std::fs::remove_file(&path);
+        assert!(out.contains("Failed to open"), "{out}");
+        assert!(!out.contains("joe123"), "{out}");
+        assert!(!out.contains("s3cret"), "{out}");
+        assert!(!out.contains("Copyright"), "{out}");
     }
 }

@@ -226,23 +226,29 @@ await check('the redirector 302s onto the IPTV proxy, not the provider host', ()
  * mpv's log tail is the most useful thing a bug report carries and the
  * most dangerous: a live stream resolves to
  * `http://host:8080/live/<username>/<password>/1234.m3u8`, so the line
- * that explains a failure is also the line that leaks the account. Every
- * platform reads that tail in its own file, and only one of them compiles
- * on any given machine — which is exactly the shape of bug that ships.
+ * that explains a failure is also the line that leaks the account. The
+ * reader has to compile on every desktop target, because Win32 cannot
+ * import the unix IPC module — which is how a Windows-only call to
+ * `player_socket::log_tail` shipped as a compile error.
  */
 await check('every platform redacts the mpv log tail before returning it', () => {
-  // X11 and macOS share `player_socket`; Win32 reads the file itself.
-  for (const file of ['src-tauri/src/player_socket.rs', 'src-tauri/src/player_windows.rs']) {
-    const rust = readFileSync(`${ROOT}${file}`, 'utf8')
-    assert.ok(
-      rust.includes('log_tail'),
-      `${file} no longer builds a log tail — move this check to whatever replaced it`,
-    )
-    assert.ok(
-      rust.includes('log_redact::redact'),
-      `${file} returns the tail unredacted; a stream URL's path is the account's password`,
-    )
-  }
+  // One reader, compiled on every target.
+  const redact = readFileSync(`${ROOT}src-tauri/src/log_redact.rs`, 'utf8')
+  assert.ok(/pub fn log_tail/.test(redact), 'log_tail must live next to redact so Windows can compile it')
+  assert.ok(
+    /redact\(&/.test(redact.slice(redact.indexOf('pub fn log_tail'))),
+    'log_tail must redact before returning; a stream URL\'s path is the account\'s password',
+  )
+  const socket = readFileSync(`${ROOT}src-tauri/src/player_socket.rs`, 'utf8')
+  assert.ok(
+    socket.includes('log_redact::log_tail'),
+    'unix IPC must re-export the shared log_tail',
+  )
+  const windows = readFileSync(`${ROOT}src-tauri/src/player_windows.rs`, 'utf8')
+  assert.ok(
+    windows.includes('log_redact::log_tail'),
+    'Win32 must call the shared log_tail — it cannot compile player_socket',
+  )
 })
 
 /**

@@ -101,35 +101,4 @@ pub fn properties(path: &Path, names: &[String]) -> Result<String, String> {
     Ok(serde_json::Value::Object(out).to_string())
 }
 
-/// The part of mpv's own log worth showing, so a player that died says why
-/// instead of leaving a black rectangle behind.
-pub fn log_tail(path: &Path) -> Option<String> {
-    std::fs::read_to_string(path).ok().map(|s| {
-        // mpv tags every line with its level — "[ 2.06][e][stream] Failed to
-        // open …". Match on that rather than on the word "error", which also
-        // occurs in the build flags mpv prints in its header (-Wno-error=…)
-        // and would push the real failure out of the excerpt.
-        let lines: Vec<&str> = s
-            .lines()
-            .filter(|l| l.contains("][e]") || l.contains("][fatal]"))
-            .collect();
-        let tail = if lines.is_empty() {
-            s.lines()
-                .rev()
-                .take(8)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect::<Vec<_>>()
-        } else {
-            lines
-        };
-        // Redacted here rather than at the display: a live stream URL has
-        // the account's password in its path, and this string is sent to the
-        // frontend and pasted into bug reports.
-        crate::log_redact::redact(&tail.join("\n"))
-            .chars()
-            .take(1200)
-            .collect()
-    })
-}
+pub use crate::log_redact::log_tail;
