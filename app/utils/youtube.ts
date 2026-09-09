@@ -1,4 +1,4 @@
-import { isTauri, invoke } from '@tauri-apps/api/core'
+import { invoke, isTauri } from '@tauri-apps/api/core'
 import { isDesktop, isLinux } from './platform'
 
 /** Loopback shim on the IPTV proxy port — see iptv/proxy.rs `/youtube-embed`. */

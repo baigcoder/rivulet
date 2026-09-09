@@ -467,11 +467,33 @@ assert.match(detail, /youtubeError/, 'YouTube onError must skip the blocked embe
 
 const youtube = read('app/utils/youtube.ts')
 assert.match(youtube, /vq:\s*['"]hd1080['"]/, 'browser embeds request 1080p')
-assert.match(youtube, /playYoutubeTrailer/, 'Linux trailers play in mpv; the YouTube iframe is error 153')
+assert.match(youtube, /playYoutubeTrailer/, 'a stream WebKitGTK cannot decode still has mpv behind it')
 assert.match(youtube, /play_url_mpv/, 'mpv is launched from Rust so AppImage LD_LIBRARY_PATH is stripped')
-assert.match(detail, /playYoutubeTrailer/, 'the title Trailer button must not open a YouTube iframe on Linux')
-assert.match(detail, /v-else-if="trailer && !isLinux\(\)"/, 'Linux must not fall back to the YouTube iframe')
-assert.match(read('app/pages/index.vue'), /playYoutubeTrailer/, 'the home Trailer button uses mpv on Linux')
+assert.match(detail, /v-else-if="trailer && !linux"/, 'Linux must not fall back to the YouTube iframe: it is error 153')
+// The Trailer button opens the in-app dialog on every platform. mpv is what
+// answers a <video> that failed, so a working stream never leaves the app.
+assert.match(
+  detail,
+  /async function onTrailerVideoError\(\)[\s\S]{0,320}?playYoutubeTrailer/,
+  'mpv is the fallback after the dialog <video> fails',
+)
+assert.doesNotMatch(
+  detail,
+  /function showTrailer\(\)[\s\S]{0,200}?playYoutubeTrailer/,
+  'the Trailer button opens the dialog, it does not launch mpv',
+)
+const home = read('app/pages/index.vue')
+assert.match(
+  home,
+  /async function onFeaturedTrailerError\(\)[\s\S]{0,320}?playYoutubeTrailer/,
+  'the home trailer dialog falls back to mpv, not to a blank card',
+)
+assert.doesNotMatch(
+  home,
+  /function openFeaturedTrailer\(\)[\s\S]{0,200}?playYoutubeTrailer/,
+  'the home Trailer button opens the dialog, it does not launch mpv',
+)
+assert.match(detail, /heroVideoSrc.*youtubeStreamSrc|youtubeStreamSrc\(key\)/s, 'the cover trailer plays in-page on Linux too')
 assert.match(
   read('scripts/build/ytdlp.ts'),
   /gstreamer1\.0-plugins-ugly/,

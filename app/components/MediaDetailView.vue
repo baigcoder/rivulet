@@ -344,10 +344,23 @@ const trailerSrc = computed(() => {
 /** Native <video> for the Trailer dialog (desktop); empty in browser dev. */
 const trailerVideoSrc = computed(() => trailerKey.value ? youtubeStreamSrc(trailerKey.value) : '')
 
+const trailer = ref(false)
+
+/** WebKitGTK — the one webview whose YouTube iframe is always error 153. */
+const linux = computed(() => import.meta.client && isLinux())
+
 /** True when the native <video> failed — fall back to the iframe embed. */
 const trailerVideoFailed = ref(false)
-function onTrailerVideoError() {
+/**
+ * Falling back to the iframe on Linux only paints "your browser can't play
+ * this video" again, so a stream WebKitGTK could not decode goes to the same
+ * mpv that plays films. The dialog closes with it: mpv has its own window.
+ */
+async function onTrailerVideoError() {
   trailerVideoFailed.value = true
+  const key = trailerKey.value || media.value?.trailer
+  if (linux.value && key && await playYoutubeTrailer(key))
+    trailer.value = false
 }
 
 const RATING_ORDER = ['G', 'PG', 'PG-13', 'R', 'NC-17', '']
@@ -422,7 +435,6 @@ const credits = computed(() => {
   ].filter(row => row.value)
 })
 
-const trailer = ref(false)
 const torrentPickerRef = ref<{ open: () => void } | null>(null)
 const isDesktop = import.meta.client && isTauri()
 
@@ -491,13 +503,9 @@ async function openTrailer() {
   }
 }
 
-async function showTrailer() {
+function showTrailer() {
   const key = trailerKey.value || media.value?.trailer
   if (!key)
-    return
-  // WebKitGTK's YouTube iframe is error 153; AppImage GStreamer often cannot
-  // decode the proxied <video> either. Linux plays the trailer in system mpv.
-  if (await playYoutubeTrailer(key))
     return
   trailerVideoFailed.value = false
   trailer.value = true
@@ -942,7 +950,7 @@ watch(() => props.id, () => {
             @error="onTrailerVideoError"
           />
           <iframe
-            v-else-if="trailer && !isLinux()"
+            v-else-if="trailer && !linux"
             :src="trailerSrc"
             class="aspect-video w-full border-0"
             style="zoom: var(--frame-zoom, 1)"
