@@ -187,12 +187,16 @@ watch(() => trailerKeys.value.join(',') || media.value?.trailer || '', keys => {
   heroIdle.value = Boolean(keys) && !import.meta.server
 }, { immediate: true })
 
+/** WebKitGTK — no cover trailer at all: the <video> wedges the page and the
+ * iframe is error 153. The poster stands in, and Trailer opens mpv. */
+const linux = computed(() => import.meta.client && isLinux())
+
 /**
  * On desktop (Tauri), the trailer is a native <video> fed by the loopback
  * /youtube-stream proxy — a WebKit <video> plays the direct stream where a
- * YouTube <iframe> embed refuses to (error 153, "browser not supported"),
- * including Linux AppImage. Outside Tauri there is no proxy, so the browser
- * dev build falls back to the iframe embed.
+ * YouTube <iframe> embed refuses to (error 153, "browser not supported").
+ * Outside Tauri there is no proxy, so the browser dev build falls back to the
+ * iframe embed.
  */
 const heroVideoSrc = computed(() => {
   const key = trailerKey.value
@@ -202,7 +206,7 @@ const heroVideoSrc = computed(() => {
 })
 const heroFrameSrc = computed(() => {
   const key = trailerKey.value
-  if (!key || videoHidden.value || !heroIdle.value)
+  if (!key || videoHidden.value || !heroIdle.value || linux.value)
     return ''
   return youtubeEmbedSrc(key, { mute: true, loop: true, controls: false })
 })
@@ -345,9 +349,6 @@ const trailerSrc = computed(() => {
 const trailerVideoSrc = computed(() => trailerKey.value ? youtubeStreamSrc(trailerKey.value) : '')
 
 const trailer = ref(false)
-
-/** WebKitGTK — the one webview whose YouTube iframe is always error 153. */
-const linux = computed(() => import.meta.client && isLinux())
 
 /** True when the native <video> failed — fall back to the iframe embed. */
 const trailerVideoFailed = ref(false)
@@ -503,9 +504,13 @@ async function openTrailer() {
   }
 }
 
-function showTrailer() {
+async function showTrailer() {
   const key = trailerKey.value || media.value?.trailer
   if (!key)
+    return
+  // No webview player on Linux can show this: mounting the stream freezes the
+  // page and the iframe answers 153. mpv is the one that plays it.
+  if (linux.value && await playYoutubeTrailer(key))
     return
   trailerVideoFailed.value = false
   trailer.value = true

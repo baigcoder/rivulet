@@ -71,9 +71,12 @@ watch(trailerKey, () => {
   trailerStreamFailed.value = false
 })
 
-function openFeaturedTrailer() {
+async function openFeaturedTrailer() {
   const key = trailerKey.value
   if (!key)
+    return
+  // WebKitGTK freezes on the stream and refuses the embed — mpv plays it.
+  if (linux.value && await playYoutubeTrailer(key))
     return
   trailerStreamFailed.value = false
   trailerDialog.value = true

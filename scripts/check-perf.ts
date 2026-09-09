@@ -467,42 +467,34 @@ assert.match(detail, /youtubeError/, 'YouTube onError must skip the blocked embe
 
 const youtube = read('app/utils/youtube.ts')
 assert.match(youtube, /vq:\s*['"]hd1080['"]/, 'browser embeds request 1080p')
-assert.match(youtube, /playYoutubeTrailer/, 'a stream WebKitGTK cannot decode still has mpv behind it')
+// WebKitGTK *waits* on this endpoint while it mounts the element, so a slow
+// resolve freezes the whole detail page — and a frozen page runs no `error`
+// handler and no timeout, so nothing in the app can recover it (66ce479). Linux
+// therefore mounts neither the stream nor the embed, and plays trailers in mpv.
+assert.match(youtube, /if \(isLinux\(\)\)\s*return ''/, 'Linux must not mount the proxied stream: it wedges the page')
+assert.match(youtube, /playYoutubeTrailer/, 'Linux still needs some way to watch a trailer')
 assert.match(youtube, /play_url_mpv/, 'mpv is launched from Rust so AppImage LD_LIBRARY_PATH is stripped')
 assert.match(detail, /v-else-if="trailer && !linux"/, 'Linux must not fall back to the YouTube iframe: it is error 153')
-// The Trailer button opens the in-app dialog on every platform. mpv is what
-// answers a <video> that failed, so a working stream never leaves the app.
 assert.match(
   detail,
-  /async function onTrailerVideoError\(\)[\s\S]{0,320}?playYoutubeTrailer/,
-  'mpv is the fallback after the dialog <video> fails',
+  /!heroIdle\.value \|\| linux\.value/,
+  'the cover must not mount a YouTube iframe on WebKitGTK either',
 )
-assert.doesNotMatch(
+assert.match(
   detail,
-  /function showTrailer\(\)[\s\S]{0,200}?playYoutubeTrailer/,
-  'the Trailer button opens the dialog, it does not launch mpv',
+  /async function showTrailer\(\)[\s\S]{0,320}?playYoutubeTrailer/,
+  'the title Trailer button hands off to mpv on Linux',
 )
 const home = read('app/pages/index.vue')
 assert.match(
   home,
-  /async function onFeaturedTrailerError\(\)[\s\S]{0,320}?playYoutubeTrailer/,
-  'the home trailer dialog falls back to mpv, not to a blank card',
+  /async function openFeaturedTrailer\(\)[\s\S]{0,320}?playYoutubeTrailer/,
+  'the home Trailer button hands off to mpv on Linux',
 )
-assert.doesNotMatch(
-  home,
-  /function openFeaturedTrailer\(\)[\s\S]{0,200}?playYoutubeTrailer/,
-  'the home Trailer button opens the dialog, it does not launch mpv',
-)
-assert.match(detail, /heroVideoSrc.*youtubeStreamSrc|youtubeStreamSrc\(key\)/s, 'the cover trailer plays in-page on Linux too')
 assert.match(
   read('scripts/build/ytdlp.ts'),
   /gstreamer1\.0-plugins-ugly/,
   'Linux CI must install GStreamer before bundleMediaFramework copies it',
-)
-assert.doesNotMatch(
-  youtube,
-  /platform\(\) === 'linux'\)\s*return ''/,
-  'Linux must use /youtube-stream; the YouTube iframe is error 153 in WebKitGTK',
 )
 assert.match(read('src-tauri/src/iptv/proxy.rs'), /vq=hd1080/, 'the Tauri YouTube relay requests 1080p')
 assert.match(

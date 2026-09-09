@@ -66,6 +66,13 @@ export function youtubeEmbedSrc(key: string, opts: { mute?: boolean, loop?: bool
 export function youtubeStreamSrc(key: string): string {
   if (!isTauri() || !isDesktop())
     return ''
+  // Linux is excluded on purpose. WebKitGTK's media pipeline *waits* on this
+  // endpoint while it mounts the element, so a slow resolve wedges the whole
+  // detail page — a frozen app, not a failed video, which means no timeout or
+  // `error` handler in the page can recover it (see 66ce479). Linux plays a
+  // trailer in mpv instead: `playYoutubeTrailer`.
+  if (isLinux())
+    return ''
   return `${STREAM}?${new URLSearchParams({ v: key })}`
 }
 
