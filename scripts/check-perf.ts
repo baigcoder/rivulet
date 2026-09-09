@@ -460,6 +460,39 @@ const youtube = read('app/utils/youtube.ts')
 assert.match(youtube, /vq:\s*['"]hd720['"]/, 'browser embeds request 720p')
 assert.match(read('src-tauri/src/iptv/proxy.rs'), /vq=hd720/, 'the Tauri YouTube relay requests 720p')
 assert.equal(youtubeCommand('setPlaybackQuality', ['hd720']), '{"event":"command","func":"setPlaybackQuality","args":["hd720"]}')
+// And it must not carry its own GStreamer. `bundleMediaFramework` puts the
+// build box's plugins in front of the host's on LD_LIBRARY_PATH, and WebKit
+// initialises that pipeline on the main thread the moment a media element
+// appears — a plugin scan that stalls there freezes the page before it can
+// paint. The host has codecs; the same rule as libwayland (appimage.ts).
+assert.doesNotMatch(
+  read('src-tauri/tauri.conf.json'),
+  /bundleMediaFramework/,
+  'a bundled GStreamer wedges WebKit on the detail page; the host has one',
+)
+// linuxdeploy copies the core in anyway, because WebKit links it — and a core
+// hunting for plugins in Ubuntu's directory finds none on Arch or Fedora, which
+// is a trailer that plays in `tauri:dev` and not in the AppImage.
+assert.match(
+  read('scripts/build/linux/appimage.ts'),
+  /HOST_OWNED = \[[^\]]*'libgst'/,
+  'the AppImage must let the host own GStreamer, core and plugins together',
+)
+assert.match(
+  read('scripts/build/linux/appimage.ts'),
+  /'libglib-2.0'/,
+  'host GStreamer needs host GLib or it dies on g_once_init_leave_pointer',
+)
+assert.match(
+  read('scripts/build/linux/appimage.ts'),
+  /'libpcre2-8'/,
+  'host GLib must not load the bundle\'s pcre2 (no version map)',
+)
+assert.match(
+  read('scripts/build/linux/appimage.ts'),
+  /'libmount'/,
+  'host GIO needs host libmount or it dies on MOUNT_2_40',
+)
 assert.equal(youtubePlaying('{"info":{"playerState":1}}'), true)
 assert.equal(youtubePlaying('{"info":{"playerState":3}}'), false)
 assert.equal(youtubeError('{"event":"onError","info":150}'), true)
