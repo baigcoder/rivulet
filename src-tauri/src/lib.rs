@@ -311,7 +311,13 @@ fn ffmpeg_command(exe: &std::ffi::OsStr) -> std::process::Command {
 /// for a child process that hasn't got one.
 #[cfg(not(target_os = "windows"))]
 fn ffmpeg_command(exe: &std::ffi::OsStr) -> std::process::Command {
-    std::process::Command::new(exe)
+    let mut cmd = std::process::Command::new(exe);
+    // Same as mpv: an AppImage puts the build box's libs in front of PATH
+    // binaries, and the system's ffmpeg then dies on the first missing symbol.
+    if std::env::var_os("APPIMAGE").is_some() {
+        cmd.env_remove("LD_LIBRARY_PATH");
+    }
+    cmd
 }
 
 /// Speech-band loudness over `duration` seconds from `start`, one RMS reading in
@@ -477,11 +483,27 @@ fn default_download_dir(app: &tauri::AppHandle) -> PathBuf {
     {
         if let Ok(dir) = app.path().download_dir() {
             let with_sub = dir.join("Rivulet");
-            std::fs::create_dir_all(&with_sub).ok();
-            return with_sub;
+            if writable_dir(&with_sub) {
+                return with_sub;
+            }
         }
     }
-    cache_dir(app).join("rivulet-torrents")
+    let fallback = cache_dir(app).join("rivulet-torrents");
+    let _ = std::fs::create_dir_all(&fallback);
+    fallback
+}
+
+/// Can the torrent engine actually create files here? An AppImage whose
+/// Downloads path lands on a FUSE mount, or a `create_dir_all` that we used
+/// to ignore, otherwise looks like 2 peers and 0 B/s forever.
+fn writable_dir(dir: &std::path::Path) -> bool {
+    if std::fs::create_dir_all(dir).is_err() {
+        return false;
+    }
+    let probe = dir.join(".rivulet-write-ok");
+    let ok = std::fs::write(&probe, b"ok").is_ok();
+    let _ = std::fs::remove_file(&probe);
+    ok
 }
 
 /// Resolve the yt-dlp binary bundled as a Tauri resource, if the build shipped
@@ -889,6 +911,24 @@ mod download_url_tests {
 }
 
 #[cfg(test)]
+mod download_dir_tests {
+    #[test]
+    fn writable_dir_accepts_a_real_folder() {
+        let dir = std::env::temp_dir().join(format!("rivulet-writable-{}", std::process::id()));
+        assert!(super::writable_dir(&dir), "{}", dir.display());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn writable_dir_rejects_a_file() {
+        let file = std::env::temp_dir().join(format!("rivulet-not-a-dir-{}", std::process::id()));
+        std::fs::write(&file, b"nope").unwrap();
+        assert!(!super::writable_dir(&file), "{}", file.display());
+        let _ = std::fs::remove_file(&file);
+    }
+}
+
+#[cfg(test)]
 mod reveal_path_tests {
     #[test]
     fn empty_is_an_error() {
@@ -1050,7 +1090,12 @@ async fn run_torrent_server(
         // here rather than through `.boxed()` — see LargeFileStorageFactory.
         default_storage_factory: Some(Box::new(LargeFileStorageFactory::default())),
         listen: Some(ListenerOptions {
-            mode: ListenerMode::TcpAndUtp,
+            // librqbit's own default. Enabling uTP looks like extra throughput,
+            // but that protocol is still marked unstable there — handshake
+            // succeeds, then the pipe sits at 0 B/s with a couple of "live"
+            // peers and Buffering never moves. TCP is what actually fills the
+            // first piece.
+            mode: ListenerMode::TcpOnly,
             listen_addr: std::net::SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, 6881)),
             enable_upnp_port_forwarding: true,
             // Incoming stays IPv4: UPnP and most NATs only map that. Outgoing
@@ -1282,7 +1327,7 @@ pub fn run() {
                         .expect("a webview always has settings")
                         .set_user_agent(Some(
                             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 \
-                             (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                             (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
                         ));
                 })?;
             }

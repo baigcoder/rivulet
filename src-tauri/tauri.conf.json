@@ -28,6 +28,9 @@
 		"longDescription": "Rivulet keeps track of what you watch and plays torrents in a native player, on the desktop and on Android TV. It hosts no content and ships with no sources configured.",
 		"macOS": {},
 		"linux": {
+			"appimage": {
+				"bundleMediaFramework": true
+			},
 			"deb": {}
 		}
 	},

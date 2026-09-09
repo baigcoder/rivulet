@@ -581,6 +581,9 @@ assert.match(engineBoot, /fn download_dir/, 'Rust can name the folder a blank st
 assert.match(engineBoot, /FileManager1/, 'Linux Open folder talks to the session file manager, not a detached xdg-open')
 assert.match(engineBoot, /peer_limit:\s*Some\(200\)/, 'the session asks for more than librqbit\'s 128-peer default')
 assert.match(engineBoot, /ipv4_only:\s*cfg!\(target_os = "android"\)/, 'desktop can reach IPv6 peers')
+assert.match(engineBoot, /mode:\s*ListenerMode::TcpOnly/, 'uTP is still unstable; TCP is what fills the first piece')
+assert.doesNotMatch(engineBoot, /ListenerMode::TcpAndUtp/, 'uTP handshakes then sits at 0 B/s with live peers')
+assert.match(engineBoot, /fn writable_dir/, 'Downloads must be proven writable, not just created')
 assert.match(engineBoot, /extra_announce_trackers/, 'and extra announce URLs, not a content source')
 // An open stream holds one of these permits for the life of the connection and
 // `write_to_disk` needs one per chunk, so librqbit's default of 8 lets a few

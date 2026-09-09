@@ -190,9 +190,9 @@ watch(() => trailerKeys.value.join(',') || media.value?.trailer || '', keys => {
 /**
  * On desktop (Tauri), the trailer is a native <video> fed by the loopback
  * /youtube-stream proxy — a WebKit <video> plays the direct stream where a
- * YouTube <iframe> embed refuses to (error 153, "browser not supported").
- * Outside Tauri there is no proxy, so the browser dev build falls back to the
- * iframe embed.
+ * YouTube <iframe> embed refuses to (error 153, "browser not supported"),
+ * including Linux AppImage. Outside Tauri there is no proxy, so the browser
+ * dev build falls back to the iframe embed.
  */
 const heroVideoSrc = computed(() => {
   const key = trailerKey.value

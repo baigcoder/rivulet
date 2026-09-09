@@ -467,7 +467,27 @@ assert.match(detail, /youtubeError/, 'YouTube onError must skip the blocked embe
 
 const youtube = read('app/utils/youtube.ts')
 assert.match(youtube, /vq:\s*['"]hd1080['"]/, 'browser embeds request 1080p')
+assert.doesNotMatch(
+  youtube,
+  /platform\(\) === 'linux'\)\s*return ''/,
+  'Linux must use /youtube-stream; the YouTube iframe is error 153 in WebKitGTK',
+)
 assert.match(read('src-tauri/src/iptv/proxy.rs'), /vq=hd1080/, 'the Tauri YouTube relay requests 1080p')
+assert.match(
+  read('src-tauri/src/iptv/proxy.rs'),
+  /YTDLP_FORMAT/,
+  'yt-dlp must ask for one muxed file, not best+audio which hangs WebKit',
+)
+assert.match(
+  read('src-tauri/src/iptv/proxy.rs'),
+  /env_remove\("LD_LIBRARY_PATH"\)/,
+  'AppImage yt-dlp must not inherit the bundle\'s libraries',
+)
+assert.match(
+  read('src-tauri/tauri.conf.json'),
+  /"bundleMediaFramework":\s*true/,
+  'the AppImage must ship GStreamer H.264 or <video> and YouTube both show "browser can\'t play this"',
+)
 assert.match(layers, /rivulet-cover-video::-webkit-media-controls/, 'WebKit cover overlays must be hidden in CSS')
 const coverEmbed = youtubeEmbedSrc('dQw4w9WgXcQ', { mute: true, loop: true, controls: false })
 assert.equal(coverEmbed.includes('playlist='), false, 'a one-video playlist paints YouTube next/prev on the cover')

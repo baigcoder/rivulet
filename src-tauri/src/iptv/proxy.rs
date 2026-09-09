@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::net::ToSocketAddrs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -146,6 +146,12 @@ fn forget_redirect(from: &str) {
 
 const YTDLP_TTL: Duration = Duration::from_secs(60 * 60);
 const YTDLP_TIMEOUT: Duration = Duration::from_secs(12);
+/// One muxed file `<video src>` can play. `best` often prints a video URL and
+/// an audio URL, which WebKit then hangs on — that is why Linux used to skip
+/// this proxy entirely. Progressive AVC mp4 (format 18 as last resort) is
+/// the shape GStreamer will actually decode.
+const YTDLP_FORMAT: &str =
+    "b[ext=mp4][vcodec^=avc1][height<=1080]/b[ext=mp4][height<=1080]/18";
 
 struct YtResolved {
     url: String,
@@ -240,6 +246,29 @@ static YTDLP: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
 
 fn ytdlp_path() -> &'static Mutex<Option<PathBuf>> {
     YTDLP.get_or_init(|| Mutex::new(None))
+}
+
+/// Spawn yt-dlp without the AppImage's library path. The bundled binary is
+/// self-extracting; inheriting Ubuntu 22.04's libs from LD_LIBRARY_PATH is
+/// how a trailer sat on "Starting…" until the 12s timeout.
+fn ytdlp_command(bin: &Path) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new(bin);
+    if std::env::var_os("APPIMAGE").is_some() {
+        cmd.env_remove("LD_LIBRARY_PATH");
+        cmd.env_remove("APPDIR");
+        cmd.env_remove("PYTHONHOME");
+        cmd.env_remove("PYTHONPATH");
+    }
+    cmd
+}
+
+fn first_http_url(stdout: &str) -> Option<String> {
+    let urls: Vec<&str> = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with("http://") || l.starts_with("https://"))
+        .collect();
+    (urls.len() == 1).then(|| urls[0].to_string())
 }
 
 async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result<()> {
@@ -921,10 +950,12 @@ async fn serve_youtube_stream(
         .unwrap_or_else(|e| e.into_inner())
         .clone()
         .unwrap_or_else(|| PathBuf::from("yt-dlp"));
-    let cmd = tokio::process::Command::new(&ytdlp)
+    let cmd = ytdlp_command(&ytdlp)
         .arg("--get-url")
+        .arg("--no-playlist")
+        .arg("--no-warnings")
         .arg("--format")
-        .arg("best[height<=1080]/best")
+        .arg(YTDLP_FORMAT)
         .arg(&url)
         .output();
 
@@ -958,18 +989,20 @@ async fn serve_youtube_stream(
 
     let resolved = match output {
         o if o.status.success() => {
-            let resolved = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            if resolved.is_empty() {
-                write_response(
-                    stream,
-                    502,
-                    "Bad Gateway",
-                    "text/plain",
-                    b"yt-dlp returned empty URL",
-                )
-                .await?;
-                return Ok(());
-            }
+            let resolved = match first_http_url(&String::from_utf8_lossy(&o.stdout)) {
+                Some(url) => url,
+                None => {
+                    write_response(
+                        stream,
+                        502,
+                        "Bad Gateway",
+                        "text/plain",
+                        b"yt-dlp returned no single URL",
+                    )
+                    .await?;
+                    return Ok(());
+                }
+            };
             eprintln!("[iptv-proxy] yt-dlp resolved youtube-stream {id} → {resolved}");
             remember_youtube(&id, &resolved);
             resolved
@@ -1163,5 +1196,23 @@ mod tests {
         });
         assert!(playlist_has_uri(MASTER));
         assert!(!playlist_has_uri(&out));
+    }
+
+    #[test]
+    fn first_http_url_takes_a_single_line() {
+        assert_eq!(
+            first_http_url("https://googlevideo.example/v.mp4\n"),
+            Some("https://googlevideo.example/v.mp4".into())
+        );
+    }
+
+    #[test]
+    fn first_http_url_rejects_separate_video_and_audio() {
+        assert_eq!(
+            first_http_url("https://v.example/a.webm\nhttps://v.example/b.m4a\n"),
+            None
+        );
+        assert_eq!(first_http_url(""), None);
+        assert_eq!(first_http_url("WARNING: something\n"), None);
     }
 }

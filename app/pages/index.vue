@@ -63,11 +63,17 @@ watch(featured, (_m, _old, onCleanup) => {
 // ── Hero actions ──────────────────────────────────────────────────────────────
 const trailerDialog = ref(false)
 const trailerKey = computed(() => featuredDetail.value?.trailer)
+const trailerStreamSrc = computed(() => trailerKey.value ? youtubeStreamSrc(trailerKey.value) : '')
+const trailerStreamFailed = ref(false)
+watch(trailerKey, () => {
+  trailerStreamFailed.value = false
+})
 
 function openFeaturedTrailer() {
   const key = trailerKey.value
   if (!key)
     return
+  trailerStreamFailed.value = false
   trailerDialog.value = true
 }
 
@@ -381,7 +387,17 @@ const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
     <v-dialog v-model="trailerDialog" max-width="900" :scrim-opacity="0.85">
       <v-card v-if="trailerKey" rounded="xl" class="overflow-hidden">
         <div class="relative aspect-video">
+          <video
+            v-if="trailerStreamSrc && !trailerStreamFailed"
+            :src="trailerStreamSrc"
+            class="absolute inset-0 h-full w-full bg-black"
+            controls
+            autoplay
+            playsinline
+            @error="trailerStreamFailed = true"
+          />
           <iframe
+            v-else
             :src="youtubeEmbedSrc(trailerKey)"
             class="absolute inset-0 h-full w-full"
             allow="autoplay; encrypted-media"
