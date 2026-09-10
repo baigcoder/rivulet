@@ -371,7 +371,13 @@ const candidateMenus = computed(() => {
     const label = qualityLabel(r)
     if (!seen.has(label)) {
       seen.set(label, index)
-      qualities.push({ index, label })
+      // Still offered — it may be the only copy there is — but a phone with no
+      // hardware 4K decoder plays one as a frozen picture over audio that keeps
+      // going, and the menu is the one place to say so before it happens.
+      const decodes = label === '4K' ? uhdPlayable(`${r.name} ${r.quality}`) : true
+      qualities.push(decodes === false
+        ? { index, label, detail: $t('This device can\'t decode 4K smoothly') }
+        : { index, label })
     }
   }
   return { servers, qualities }

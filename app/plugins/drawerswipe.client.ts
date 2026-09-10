@@ -21,7 +21,7 @@ export default defineNuxtPlugin(() => {
     const t = e.changedTouches[0]
     if (!t)
       return
-    // The player owns left-edge volume; opening the drawer over a film is the
+    // The player owns left-edge brightness; opening the drawer over a film is the
     // gesture the OS already reserved for Back.
     if (document.documentElement.classList.contains('rivulet-video'))
       return

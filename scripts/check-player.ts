@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { readFileSync } from 'node:fs'
-import { deviceCodecs, hasNativePlayer, hasVideoOverlay, videoEngine, vlcEngine } from '../app/utils/htmlvideo'
+import { deviceCodecs, hasNativePlayer, hasVideoOverlay, uhdPlayable, videoEngine, vlcEngine } from '../app/utils/htmlvideo'
 import { nearestFrame, walkOrder } from '../app/utils/thumbs'
 // Self-check for the <video> player backend: `bun scripts/check-player.ts`.
 //
@@ -238,6 +238,21 @@ const bridge = {
   codecs: () => JSON.stringify(['audio/eac3', 'video/hevc']),
 }
 ;(globalThis as any).RivuletPlayer = bridge
+
+// --- 4K on a phone ----------------------------------------------------------------
+// `codecs()` says HEVC on every phone, because Google's software decoder ships
+// with the platform — and a phone CPU decoding 4K in software plays a frozen
+// picture over audio that keeps going. `videoCaps()` answers the question that
+// actually matters: a *hardware* decoder that takes 3840×2160, and 10-bit.
+assert.equal(uhdPlayable('Film.2019.2160p.x265'), null, 'an APK from before videoCaps() is "unknown", never "unplayable"')
+;(bridge as { videoCaps?: () => string }).videoCaps = () => JSON.stringify({ 'video/hevc': { uhd: true, uhd10: false } })
+assert.equal(uhdPlayable('Film.2019.1080p.x265'), true, 'under 4K is not this question')
+assert.equal(uhdPlayable('Film.2019.2160p.x265'), true, 'a hardware HEVC decoder at 4K plays 8-bit')
+assert.equal(uhdPlayable('Film 2019 4K'), true, 'a UHD name with no codec is HEVC')
+assert.equal(uhdPlayable('Film.2019.2160p.HDR.x265'), false, 'HDR is 10-bit, which this decoder lacks')
+assert.equal(uhdPlayable('Film.2019.2160p.DV.HEVC'), false, 'and so is Dolby Vision')
+assert.equal(uhdPlayable('Film.2019.2160p.HDRip.x265'), true, 'HDRip is a web rip, not HDR')
+assert.equal(uhdPlayable('Film.2019.2160p.AV1'), false, 'no hardware AV1 decoder takes 4K on this device')
 
 const vlc = vlcEngine()!
 assert.ok(vlc, 'the bridge being there is what decides, not the platform')

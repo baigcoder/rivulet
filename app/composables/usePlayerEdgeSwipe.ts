@@ -12,7 +12,7 @@ export interface PlayerEdgeHud {
 /**
  * Picture gestures shared by the film player and the live overlay.
  *
- * Vertical left = volume, vertical right = brightness, horizontal = seek
+ * Vertical left = brightness, vertical right = volume, horizontal = seek
  * (when `seek` is passed and the title has a duration). Android WebView
  * reports a finger as a mouse and often drops `pointermove` on a transparent
  * catcher, so the drag is tracked on `window` with touch events — the same

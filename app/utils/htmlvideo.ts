@@ -121,6 +121,77 @@ export function deviceCodecs(): Set<string> | null {
   }
 }
 
+type UhdCaps = Record<string, { uhd: boolean, uhd10: boolean }>
+
+let uhdCache: UhdCaps | null = null
+
+/**
+ * Which video types this device decodes at 4K in hardware, and at 10-bit — or
+ * null where there is nobody to ask.
+ *
+ * `deviceCodecs` cannot answer this. It lists every decoder, and every phone
+ * has one for HEVC: Google's software decoder ships with the platform. That
+ * one cannot keep 3840×2160 in real time, and libVLC falls back to a software
+ * path when the hardware turns a stream down — which plays as a frozen picture
+ * over audio that keeps going. `videoCaps` (VlcPlayer.kt) asks the narrower
+ * question: a hardware decoder that takes the size.
+ *
+ * An APK from before `videoCaps` has no such method and answers null, not
+ * "nothing is playable". It is called on the bridge object itself, never as a
+ * detached reference: Android refuses to invoke an injected Java method
+ * without the object it was injected as.
+ */
+export function deviceUhd(): UhdCaps | null {
+  if (uhdCache)
+    return uhdCache
+  const bridge = vlcBridge() as (VlcBridge & { videoCaps?: () => string }) | null
+  if (!bridge || typeof bridge.videoCaps !== 'function')
+    return null
+  try {
+    return (uhdCache = JSON.parse(bridge.videoCaps()) as UhdCaps)
+  }
+  catch {
+    return null
+  }
+}
+
+const UHD = /\b(?:2160p|4k|uhd)\b/i
+/**
+ * 10-bit, which every flavour of HDR is, Dolby Vision included. The lookahead
+ * rather than `\b` is for HDRip, which is a web rip and not HDR at all.
+ */
+const TEN_BIT = /\b10.?bits?\b|\bhdr(?:10\+?)?(?![a-z])|\bdv\b|\bdolby.?vision\b/i
+
+/** A UHD name that names no codec is HEVC: nearly every 4K release is. */
+function uhdMime(name: string) {
+  if (/\bav1\b/i.test(name))
+    return 'video/av01'
+  if (/\bvp9\b/i.test(name))
+    return 'video/x-vnd.on2.vp9'
+  if (/\bx264\b|\bh\.?264\b|\bavc\b/i.test(name))
+    return 'video/avc'
+  return 'video/hevc'
+}
+
+/**
+ * Can this device play this release at the resolution it is?
+ *
+ * `true` for anything under 4K — not this function's question — and `null`
+ * where the device can't be asked. Otherwise whether a hardware decoder for
+ * the release's codec takes 3840×2160 at the bit depth it needs.
+ */
+export function uhdPlayable(name: string): boolean | null {
+  if (!UHD.test(name))
+    return true
+  const caps = deviceUhd()
+  if (!caps)
+    return null
+  const c = caps[uhdMime(name)]
+  if (!c)
+    return false
+  return TEN_BIT.test(name) ? c.uhd10 : c.uhd
+}
+
 /**
  * The bookkeeping both shims do for an external subtitle. The page downloads,
  * parses and draws those itself (`cueAt` / `subtitleCss` in subtitles.ts), so a

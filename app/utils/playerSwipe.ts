@@ -1,22 +1,27 @@
 /**
- * Vertical edge swipes on the picture: left = volume, right = brightness.
+ * Vertical edge swipes on the picture: left = brightness, right = volume.
  * A mostly-horizontal drag is a seek, where the title has a duration.
  *
- * The middle third stays a tap (chrome / double-tap seek) until the finger
+ * The sides are VLC's and MX Player's, which is where a phone user's hand
+ * learned this gesture. The other way round, a swipe meant for brightness
+ * turned the sound down instead, and read as a player with no brightness
+ * control at all.
+ *
+ * The middle fifth stays a tap (chrome / double-tap seek) until the finger
  * has clearly gone sideways. Numbers are in `bun run check:swipe`.
  */
 
 export type EdgeAdjust = 'volume' | 'brightness'
 
-/** Left 40% volume, right 40% brightness. Middle is a tap (or a seek). */
+/** Left 40% brightness, right 40% volume. Middle is a tap (or a seek). */
 export function edgeAdjust(x: number, width: number): EdgeAdjust | null {
   if (width <= 0)
     return null
   const t = x / width
   if (t < 0.4)
-    return 'volume'
-  if (t > 0.6)
     return 'brightness'
+  if (t > 0.6)
+    return 'volume'
   return null
 }
 

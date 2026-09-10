@@ -175,7 +175,7 @@ const timeLine = computed(() => {
 })
 const IDLE_MS = computed(() => touch.value ? 1500 : 2800)
 
-/** Left-edge vertical drag = volume, right-edge = brightness. Touch only. */
+/** Left-edge vertical drag = brightness, right-edge = volume. Touch only. */
 const {
   hud: edgeHud,
   swiping: edgeSwiping,

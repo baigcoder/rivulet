@@ -220,7 +220,7 @@ const behind = vlc || (native && !overlay)
  */
 /**
  * A finger, not a pointer. Controls get thumb-sized, the volume slider goes
- * away (left-edge swipe and the phone's own buttons own volume), and a tap on
+ * away (right-edge swipe and the phone's own buttons own volume), and a tap on
  * the picture shows the chrome rather than pausing — which is what every other
  * player on a phone does.
  */
@@ -2567,7 +2567,7 @@ function setVolume(v: number) {
   ipc(['set_property', 'volume', volume.value])
 }
 
-/** Left-edge vertical drag = volume, right-edge = brightness. Touch only. */
+/** Left-edge vertical drag = brightness, right-edge = volume. Touch only. */
 const {
   hud: edgeHud,
   swiping: edgeSwiping,
@@ -3322,7 +3322,13 @@ onMounted(() => {
   // surface. Starting both at once could open a small player, then visibly
   // stretch it to fullscreen a moment later.
   void (async () => {
-    if (props.fullscreen)
+    // On Android a film is full screen from its first frame: the status bar,
+    // the navigation bar and the rotation all belong to the player. The live
+    // pages asked for this on mount already; the film page only ever did when
+    // the fullscreen button was pressed, so both bars sat over the picture.
+    // Through `setWindowFullscreen` rather than the bridge, so the button's
+    // state matches the screen and `onBeforeUnmount` is what undoes it.
+    if (props.fullscreen || isAndroid())
       await setWindowFullscreen(true)
     startPlayer()
   })()

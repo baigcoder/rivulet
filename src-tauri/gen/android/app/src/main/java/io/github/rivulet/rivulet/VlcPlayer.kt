@@ -212,6 +212,73 @@ class RivuletPlayer(private val activity: MainActivity) {
     return out.toString()
   }
 
+  /**
+   * Which video types this device decodes at 4K *in hardware*, and at 10-bit.
+   *
+   * `codecs()` answers "is there a decoder for this type", and for HEVC every
+   * phone says yes: Google's software decoder ships with the platform. That
+   * one cannot keep 3840×2160 in real time on a phone CPU — and `start` opens
+   * media with `setHWDecoderEnabled(true, false)`, whose `false` lets libVLC
+   * fall back to a software path of its own whenever the hardware decoder
+   * turns a stream down. On a phone that plays as a frozen picture over audio
+   * that keeps going. So the question for UHD is narrower: a hardware
+   * decoder, that takes the size, with the 10-bit profile when the release is
+   * 10-bit. `uhdPlayable` in htmlvideo.ts is what asks it.
+   *
+   * `{ "video/hevc": { "uhd": true, "uhd10": true }, … }`, with a type absent
+   * when no hardware decoder takes it at 4K.
+   */
+  @JavascriptInterface
+  fun videoCaps(): String {
+    val out = JSONObject()
+    for (info in MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos) {
+      if (info.isEncoder || !isHardwareDecoder(info)) continue
+      for (type in info.supportedTypes) {
+        val mime = type.lowercase()
+        if (!mime.startsWith("video/")) continue
+        val caps = runCatching { info.getCapabilitiesForType(type) }.getOrNull() ?: continue
+        val video = caps.videoCapabilities ?: continue
+        // Both orientations: some decoders state their limits portrait.
+        val uhd = runCatching {
+          video.isSizeSupported(3840, 2160) || video.isSizeSupported(2160, 3840)
+        }.getOrDefault(false)
+        if (!uhd) continue
+        val entry = out.optJSONObject(mime) ?: JSONObject().put("uhd", true).put("uhd10", false)
+        if (caps.profileLevels.any { isTenBitProfile(mime, it.profile) })
+          entry.put("uhd10", true)
+        out.put(mime, entry)
+      }
+    }
+    return out.toString()
+  }
+
+  /**
+   * API 29 says so outright. Before it, the platform's own software decoders
+   * are recognisable by name — `OMX.google.*` on the old stack, `c2.android.*`
+   * on Codec2 — and a vendor's hardware ones are not.
+   */
+  private fun isHardwareDecoder(info: android.media.MediaCodecInfo): Boolean {
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q)
+      return info.isHardwareAccelerated && !info.isSoftwareOnly
+    val name = info.name.lowercase()
+    return !(name.startsWith("omx.google.") || name.startsWith("c2.android.") || name.contains("ffmpeg"))
+  }
+
+  /** HDR of every flavour is 10-bit, so the HDR profiles count too. */
+  private fun isTenBitProfile(mime: String, profile: Int): Boolean = when (mime) {
+    "video/hevc" -> profile == android.media.MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10 ||
+      profile == android.media.MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10 ||
+      profile == android.media.MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10Plus
+    "video/x-vnd.on2.vp9" -> profile == android.media.MediaCodecInfo.CodecProfileLevel.VP9Profile2 ||
+      profile == android.media.MediaCodecInfo.CodecProfileLevel.VP9Profile2HDR ||
+      profile == android.media.MediaCodecInfo.CodecProfileLevel.VP9Profile2HDR10Plus
+    "video/av01" -> profile == android.media.MediaCodecInfo.CodecProfileLevel.AV1ProfileMain10 ||
+      profile == android.media.MediaCodecInfo.CodecProfileLevel.AV1ProfileMain10HDR10 ||
+      profile == android.media.MediaCodecInfo.CodecProfileLevel.AV1ProfileMain10HDR10Plus
+    "video/avc" -> profile == android.media.MediaCodecInfo.CodecProfileLevel.AVCProfileHigh10
+    else -> false
+  }
+
   fun release() {
     onMain {
       main.removeCallbacks(tick)

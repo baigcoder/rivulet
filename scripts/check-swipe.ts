@@ -32,13 +32,13 @@ assert.ok(!opensDrawer(70, 70), 'a 45° drag is ambiguous, so it is a scroll')
 
 console.info('drawer swipe: ok')
 
-// --- Player picture: left = volume, right = brightness --------------------
+// --- Player picture: left = brightness, right = volume --------------------
 
-assert.equal(edgeAdjust(10, 100), 'volume', 'left 40% is volume')
-assert.equal(edgeAdjust(39, 100), 'volume')
-assert.equal(edgeAdjust(50, 100), null, 'the middle third stays a tap')
-assert.equal(edgeAdjust(61, 100), 'brightness', 'right 40% is brightness')
-assert.equal(edgeAdjust(99, 100), 'brightness')
+assert.equal(edgeAdjust(10, 100), 'brightness', 'left 40% is brightness, as in VLC and MX Player')
+assert.equal(edgeAdjust(39, 100), 'brightness')
+assert.equal(edgeAdjust(50, 100), null, 'the middle fifth stays a tap')
+assert.equal(edgeAdjust(61, 100), 'volume', 'right 40% is volume')
+assert.equal(edgeAdjust(99, 100), 'volume')
 assert.equal(edgeAdjust(0, 0), null)
 
 assert.equal(edgeDelta(-100, 100), 100, 'a full-height swipe up is +100')
@@ -93,6 +93,6 @@ assert.ok(activity.includes('fun setBrightness'), 'and setBrightness()')
 assert.ok(activity.includes('STREAM_MUSIC'), 'volume is the music stream the rocker uses')
 
 const drawer = readFileSync(new URL('../app/plugins/drawerswipe.client.ts', import.meta.url), 'utf8')
-assert.ok(drawer.includes('rivulet-video'), 'the drawer must not steal volume from the player')
+assert.ok(drawer.includes('rivulet-video'), 'the drawer must not steal the brightness swipe from the player')
 
 console.info('player swipe: ok')
