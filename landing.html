@@ -287,6 +287,7 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
+      gap: 16px;
       height: 72px;
       position: relative;
     }
@@ -294,32 +295,41 @@
     .brand {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
+      flex-shrink: 0;
       font-family: var(--display);
       font-weight: 800;
-      font-size: 1.35rem;
+      font-size: 1.25rem;
       letter-spacing: -0.02em;
+      white-space: nowrap;
     }
 
     .brand img {
       width: 34px;
       height: 34px;
+      max-width: none;
+      flex-shrink: 0;
       filter: drop-shadow(0 0 10px var(--accent-glow));
     }
 
     .nav-links {
       display: flex;
       align-items: center;
-      gap: 8px;
+      justify-content: flex-end;
+      flex: 1;
+      min-width: 0;
+      gap: 2px;
     }
 
     .nav-links a {
-      padding: 8px 16px;
+      padding: 8px 10px;
       border-radius: 999px;
-      font-size: 0.9375rem;
+      font-size: 0.8125rem;
       font-weight: 600;
       color: var(--muted);
       transition: all 0.2s ease;
+      white-space: nowrap;
+      flex-shrink: 0;
     }
 
     .nav-links a:hover, .nav-links a.active {
@@ -330,21 +340,23 @@
     .nav-actions {
       display: flex;
       align-items: center;
-      gap: 12px;
+      flex-shrink: 0;
+      gap: 8px;
     }
 
     .github-star-btn {
       display: inline-flex;
       align-items: center;
       gap: 8px;
-      padding: 8px 16px;
+      padding: 8px 14px;
       border-radius: 999px;
       background: rgba(255, 255, 255, 0.04);
       border: 1px solid var(--border);
-      font-size: 0.875rem;
+      font-size: 0.8125rem;
       font-weight: 600;
       color: var(--muted);
       transition: all 0.2s ease;
+      white-space: nowrap;
     }
 
     .github-star-btn:hover {
@@ -1272,18 +1284,7 @@
     }
 
     /* Mobile & Tablet Responsive Breakdown */
-    @media (max-width: 1024px) {
-      .grid-3 { grid-template-columns: repeat(2, 1fr); }
-      .grid-2 { grid-template-columns: 1fr; }
-      .stats-bar { grid-template-columns: repeat(2, 1fr); }
-      .theme-grid { grid-template-columns: repeat(3, 1fr); }
-      .download-grid { grid-template-columns: 1fr; }
-      .dl-card[style*="grid-column: span 2"] { grid-column: span 1 !important; }
-    }
-
-    @media (max-width: 768px) {
-      .wrap { padding: 0 16px; }
-      .section-pad { padding: 48px 0; }
+    @media (max-width: 1200px) {
       header.navbar {
         position: sticky;
         top: 0;
@@ -1303,6 +1304,8 @@
         border-top: 1px solid var(--border-bright);
         flex-direction: column;
         justify-content: flex-start;
+        align-items: stretch;
+        flex: none;
         padding: 24px 20px 40px;
         gap: 10px;
         box-shadow: 0 30px 60px rgba(0, 0, 0, 0.95);
@@ -1347,6 +1350,20 @@
       .hamburger.is-active .icon-open { display: none !important; }
       .hamburger.is-active .icon-close { display: block !important; }
       .nav-actions .github-star-btn { display: none; }
+    }
+
+    @media (max-width: 1024px) {
+      .grid-3 { grid-template-columns: repeat(2, 1fr); }
+      .grid-2 { grid-template-columns: 1fr; }
+      .stats-bar { grid-template-columns: repeat(2, 1fr); }
+      .theme-grid { grid-template-columns: repeat(3, 1fr); }
+      .download-grid { grid-template-columns: 1fr; }
+      .dl-card[style*="grid-column: span 2"] { grid-column: span 1 !important; }
+    }
+
+    @media (max-width: 768px) {
+      .wrap { padding: 0 16px; }
+      .section-pad { padding: 48px 0; }
       .desktop-only { display: none; }
       .hero { padding: 40px 0 32px; }
       .hero-actions { flex-direction: column; width: 100%; gap: 12px; }
