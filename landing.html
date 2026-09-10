@@ -181,6 +181,17 @@
       font-weight: 450;
     }
 
+    /* Package names in prose. The page's own mono, not the browser's default,
+       which is usually a size larger than the text around it. */
+    code {
+      font-family: var(--mono);
+      font-size: 0.95em;
+      color: var(--accent);
+      background: rgba(255, 255, 255, 0.05);
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+
     /* Hero Text Animated Gradient Shimmer & Aura Glow */
     .text-gradient {
       background: linear-gradient(135deg, #ffffff 0%, var(--accent) 45%, var(--warm) 80%, var(--pink) 100%);
@@ -1938,7 +1949,14 @@
               </div>
             </div>
             <div class="dl-card-desc">
-              Native Tauri + mpv desktop player binaries built for all major Linux distributions. Zero external player dependencies required.
+              Native Tauri desktop binaries for every major distribution. The player is the system's
+              <strong>mpv</strong>, so films play with no codec packs at all &mdash; the .deb, .rpm and AUR
+              packages pull in everything they need.
+            </div>
+            <div style="font-size: 0.75rem; color: var(--muted); margin-top: 10px; line-height: 1.5;">
+              The AppImage carries no dependencies by design: it needs <code>mpv</code> and
+              <code>ffmpeg</code> on PATH, plus <code>gst-plugins-good</code> and <code>gst-libav</code>
+              if you want trailers &mdash; those are decoded by the webview, not by mpv.
             </div>
           </div>
 
