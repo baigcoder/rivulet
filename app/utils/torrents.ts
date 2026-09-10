@@ -978,6 +978,39 @@ export async function torrentDetails(id: number): Promise<EngineTorrent | null> 
   }
 }
 
+/**
+ * Where a file inside a torrent actually sits on disk.
+ *
+ * `components` is the path relative to the torrent's own folder, so a
+ * file in a pack keeps its subfolders. The separator is taken from the
+ * folder it is being joined to rather than from the platform, because
+ * this runs in a webview that has no idea which OS wrote the path.
+ */
+export function mediaFilePath(folder: string, file: EngineFile): string {
+  const sep = folder.includes('\\') ? '\\' : '/'
+  const rel = file.components?.length ? file.components : [file.name]
+  return [folder.replace(/[\\/]+$/, ''), ...rel].join(sep)
+}
+
+/**
+ * Directory the file manager should open. A file's own folder, not the
+ * session root and not the `.mkv` — opening a video launches a player
+ * instead of showing it.
+ */
+export function containingFolder(folder: string, file?: EngineFile | null): string {
+  const root = folder.replace(/[\\/]+$/, '')
+  if (!file)
+    return root
+  const path = mediaFilePath(root, file)
+  const sep = root.includes('\\') ? '\\' : '/'
+  const cut = path.lastIndexOf(sep)
+  if (cut <= 0)
+    return root
+  const parent = path.slice(0, cut)
+  // `C:\file.mkv` would otherwise yield `C:`, which is not a directory.
+  return /^[a-z]:$/i.test(parent) ? parent + sep : parent
+}
+
 export function streamUrl(id: number, index: number) {
   return `${ENGINE}/torrents/${id}/stream/${index}`
 }

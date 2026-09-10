@@ -443,6 +443,241 @@ fn cache_dir(app: &tauri::AppHandle) -> PathBuf {
         .unwrap_or_else(|_| std::env::temp_dir())
 }
 
+// ── Open folder ────────────────────────────────────────────────────
+//
+// `reveal_path` is what the downloads page's folder button calls. It was
+// removed in a large refactor while the call site stayed, so the button
+// did nothing on every platform — an `invoke` of a command that is not
+// registered rejects, and the page's fallback invoked the same missing
+// command again.
+
+/// Is this directory somewhere we can actually write?
+///
+/// Asked by creating it and writing a probe file, because the answer on
+/// Windows depends on ACLs that no permission bit describes.
+fn writable_dir(dir: &std::path::Path) -> bool {
+    if std::fs::create_dir_all(dir).is_err() {
+        return false;
+    }
+    let probe = dir.join(".rivulet-write-ok");
+    let ok = std::fs::write(&probe, b"ok").is_ok();
+    let _ = std::fs::remove_file(&probe);
+    ok
+}
+
+/// Where downloads land when settings name nothing: the OS Downloads
+/// folder with our own subfolder, else the cache dir the engine uses.
+fn default_download_dir(app: &tauri::AppHandle) -> PathBuf {
+    #[cfg(desktop)]
+    {
+        if let Ok(dir) = app.path().download_dir() {
+            let with_sub = dir.join("Rivulet");
+            if writable_dir(&with_sub) {
+                return with_sub;
+            }
+        }
+    }
+    let fallback = cache_dir(app).join("rivulet-torrents");
+    let _ = std::fs::create_dir_all(&fallback);
+    fallback
+}
+
+/// Spawn and forget. The child is reaped on a thread so a file manager
+/// that outlives the app does not become a zombie, and all three streams
+/// are closed so it cannot inherit ours and block on them.
+fn spawn_detached(cmd: &mut std::process::Command) -> Result<(), String> {
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
+fn command_succeeds(cmd: &mut std::process::Command) -> bool {
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn file_uri(path: &std::path::Path) -> String {
+    url::Url::from_file_path(path)
+        .map(|u| u.to_string())
+        .unwrap_or_else(|_| format!("file://{}", path.display()))
+}
+
+/// The freedesktop way first, then the file managers, then `xdg-open`.
+///
+/// `ShowFolders` over D-Bus is the only one that reliably *selects*
+/// rather than opening a new window at the home directory, and it is
+/// answered by every desktop that ships a file manager. The binaries are
+/// the fallback for the ones that do not.
+#[cfg(target_os = "linux")]
+fn linux_reveal_dir(dir: &std::path::Path) -> Result<(), String> {
+    let uri = file_uri(dir);
+    let gdbus_list = format!("['{uri}']");
+    if command_succeeds(
+        std::process::Command::new("gdbus").args([
+            "call",
+            "--session",
+            "--dest",
+            "org.freedesktop.FileManager1",
+            "--object-path",
+            "/org/freedesktop/FileManager1",
+            "--method",
+            "org.freedesktop.FileManager1.ShowFolders",
+            &gdbus_list,
+            "",
+        ]),
+    ) {
+        return Ok(());
+    }
+
+    let dbus_array = format!("array:string:{uri:?}");
+    if command_succeeds(
+        std::process::Command::new("dbus-send").args([
+            "--session",
+            "--dest=org.freedesktop.FileManager1",
+            "--type=method_call",
+            "/org/freedesktop/FileManager1",
+            "org.freedesktop.FileManager1.ShowFolders",
+            &dbus_array,
+            "string:",
+        ]),
+    ) {
+        return Ok(());
+    }
+
+    let dir_s = dir.to_string_lossy();
+    for bin in ["dolphin", "nautilus", "nemo", "thunar", "pcmanfm", "xdg-open"] {
+        let mut cmd = std::process::Command::new(bin);
+        cmd.arg(dir_s.as_ref());
+        // An AppImage's own loader variables must not follow a file
+        // manager out of the bundle, or it loads our libraries and dies.
+        if std::env::var_os("APPIMAGE").is_some() {
+            cmd.env_remove("LD_LIBRARY_PATH")
+                .env_remove("APPDIR")
+                .env_remove("APPIMAGE")
+                .env_remove("ARGV0")
+                .env_remove("PYTHONHOME")
+                .env_remove("PYTHONPATH");
+        }
+        if spawn_detached(&mut cmd).is_ok() {
+            return Ok(());
+        }
+    }
+    Err(format!("could not open {}", dir.display()))
+}
+
+fn open_in_file_manager(path: &std::path::Path) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        // A video path must never reach xdg-open — that launches a player.
+        let dir = if path.is_file() {
+            path.parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or(path)
+        } else {
+            path
+        };
+        linux_reveal_dir(dir)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut cmd = std::process::Command::new("open");
+        if path.is_file() {
+            cmd.arg("-R").arg(path);
+        } else {
+            cmd.arg(path);
+        }
+        spawn_detached(&mut cmd)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // explorer's `/select,` flag is one argv token; splitting it makes
+        // it open the user's Documents folder instead.
+        let mut cmd = std::process::Command::new("explorer");
+        if path.is_file() {
+            cmd.arg(format!("/select,{}", path.display()));
+        } else {
+            cmd.arg(path);
+        }
+        spawn_detached(&mut cmd)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        let _ = path;
+        Err("this device cannot open folders".into())
+    }
+}
+
+/// Walk up until something exists, so an unfinished torrent still reveals
+/// its parent rather than failing on a folder the engine has not created.
+fn existing_path_for_reveal(path: &str) -> Result<PathBuf, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("no path".into());
+    }
+    let mut p = PathBuf::from(trimmed);
+    while !p.exists() {
+        if !p.pop() {
+            return Err(format!("nothing on disk at {trimmed}"));
+        }
+    }
+    Ok(p)
+}
+
+/// Show a folder in the system file manager. An empty path means "the
+/// place downloads go", which is what the page sends when a fresh add has
+/// no `output_folder` yet.
+#[tauri::command]
+fn reveal_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let trimmed = path.trim();
+    let candidate = if trimmed.is_empty() {
+        default_download_dir(&app)
+    } else {
+        PathBuf::from(trimmed)
+    };
+    let target = match existing_path_for_reveal(&candidate.to_string_lossy()) {
+        Ok(p) => p,
+        Err(_) => {
+            let fallback = default_download_dir(&app);
+            std::fs::create_dir_all(&fallback).map_err(|e| e.to_string())?;
+            fallback
+        }
+    };
+    eprintln!(
+        "[rivulet] reveal_path {} -> {}",
+        candidate.display(),
+        target.display()
+    );
+    open_in_file_manager(&target)
+}
+
+#[cfg(test)]
+mod reveal_path_tests {
+    #[test]
+    fn empty_and_blank_paths_are_rejected() {
+        assert!(super::existing_path_for_reveal("").is_err());
+        assert!(super::existing_path_for_reveal("   ").is_err());
+    }
+
+    /// A folder the engine has not written yet still reveals an ancestor.
+    #[test]
+    fn a_missing_path_walks_up_to_one_that_exists() {
+        let missing = std::env::temp_dir()
+            .join("rivulet-reveal-nope")
+            .join("also-nope");
+        let found = super::existing_path_for_reveal(missing.to_str().unwrap()).unwrap();
+        assert!(found.exists());
+    }
+}
+
 #[derive(serde::Serialize)]
 struct DiskSpace {
     /// Bytes a normal process may still write.
@@ -842,6 +1077,7 @@ pub fn run() {
             disk_space,
             download_url,
             can_self_update,
+            reveal_path,
             // Free TV IPTV — DB-backed query surface. Premium TV (Xtream +
             // user-added M3U) has moved to a separate `premium/` module and
             // a local HTTP API at 127.0.0.1:3032; nothing here touches that

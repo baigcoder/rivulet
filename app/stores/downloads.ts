@@ -74,6 +74,28 @@ export const useDownloadsStore = defineStore('downloads', () => {
     return (keyStr && cached.value[keyStr]) || null
   }
 
+  /**
+   * The reverse of `cachedFor`: which title a torrent belongs to.
+   *
+   * `cached` is keyed by progress key because that is the question the
+   * detail page asks ("does this film have an offline copy"). The
+   * downloads page asks the opposite — it has a row and wants the title
+   * it was filed under, so Play can hand the player a TMDB id instead of
+   * a release filename. Without it the pause overlay falls back to plain
+   * text where the title treatment belongs, and there is no artwork.
+   *
+   * A linear scan over a map holding one entry per cached title, called
+   * once per Play — not worth a second index.
+   */
+  function titleFor(hash: string) {
+    const want = hash.trim().toLowerCase()
+    if (!want)
+      return null
+    const found = Object.entries(cached.value)
+      .find(([, v]) => v.hash.trim().toLowerCase() === want)
+    return found ? parseKey(found[0]) : null
+  }
+
   /** User's own ceiling on the cache, in bytes. 0 = whatever the disk allows. */
   const cap = useLocalStorage(key('storageCap'), 0)
 
@@ -540,6 +562,7 @@ export const useDownloadsStore = defineStore('downloads', () => {
     release,
     metered,
     cachedFor,
+    titleFor,
     start,
   }
 })

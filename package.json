@@ -18,7 +18,7 @@
     "i18n": "bun scripts/i18n.ts",
     "i18n:locales": "bun scripts/i18n-locales.ts",
     "check:i18n": "bun scripts/i18n.ts --check",
-    "check:types": "vue-tsc --noEmit",
+    "check:types": "bun scripts/check-types.ts",
     "check:android-downloads": "bun scripts/check-android-downloads.ts",
     "check:brand": "bun scripts/check-brand.ts",
     "check:boot": "bun scripts/check-boot.ts",
