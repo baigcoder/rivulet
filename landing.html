@@ -1474,9 +1474,9 @@
         </p>
 
         <div class="hero-actions hero-actions-anim">
-          <a href="#download" class="btn btn-primary" id="main-dl-link">
+          <a href="https://github.com/baigcoder/rivulet/releases/latest/download/Rivulet.AppImage" class="btn btn-primary" id="main-dl-link">
             <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-            <span id="main-dl-text">Download Rivulet</span>
+            <span id="main-dl-text">Download v0.6.13</span>
           </a>
 
           <a href="#player" class="btn btn-secondary">
@@ -1939,8 +1939,8 @@
               <span>Fedora / RHEL (.rpm)</span>
             </a>
             <a href="https://github.com/baigcoder/rivulet/releases/latest" target="_blank" rel="noreferrer" class="btn btn-secondary" style="padding: 10px 14px; font-size: 0.8125rem;">
-              <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-              <span>Arch / Other (.tar.gz)</span>
+              <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+              <span>All files on GitHub</span>
             </a>
           </div>
         </div>
@@ -2002,7 +2002,7 @@
               </div>
               <div>
                 <div class="dl-card-title">macOS Desktop</div>
-                <div style="font-size: 0.75rem; color: #cba6f7; font-family: var(--mono);">Apple Silicon (M1/M2/M3) & Intel</div>
+                <div style="font-size: 0.75rem; color: #cba6f7; font-family: var(--mono);">Apple Silicon (M1 and later)</div>
               </div>
             </div>
             <div class="dl-card-desc">
@@ -2123,30 +2123,29 @@
 
   <!-- Interactive Scripts -->
   <script>
-    // Platform Auto Detection & Direct Download Scroll
-    (function detectOS() {
-      const ua = navigator.userAgent;
-      let os = 'Linux';
+    // Hero button downloads the latest file for this OS. Grid buttons use
+    // the same CI names (`Rivulet.AppImage`, `Rivulet_Setup.exe`, …).
+    (function downloads() {
+      var DL = 'https://github.com/baigcoder/rivulet/releases/latest/download/';
+      var files = {
+        Linux: DL + 'Rivulet.AppImage',
+        Windows: DL + 'Rivulet_Setup.exe',
+        macOS: DL + 'Rivulet.dmg',
+        Android: DL + 'Rivulet.apk'
+      };
+      var ua = navigator.userAgent;
+      var os = 'Linux';
+      if (/android/i.test(ua)) os = 'Android';
+      else if (/windows|win32/i.test(ua)) os = 'Windows';
+      else if (/mac os x|macintosh/i.test(ua) && !/iphone|ipad/i.test(ua)) os = 'macOS';
 
-      if (/android/i.test(ua)) {
-        os = 'Android';
-      } else if (/windows|win32/i.test(ua)) {
-        os = 'Windows';
-      } else if (/mac os x|macintosh/i.test(ua) && !/iphone|ipad/i.test(ua)) {
-        os = 'macOS';
-      }
-
-      const pName = document.getElementById('detected-platform-name');
-      const mainBtnText = document.getElementById('main-dl-text');
-
+      var pName = document.getElementById('detected-platform-name');
+      var mainBtn = document.getElementById('main-dl-link');
+      var mainBtnText = document.getElementById('main-dl-text');
       if (pName) pName.textContent = os;
-      if (mainBtnText) mainBtnText.textContent = `Download for ${os}`;
-    })();
+      if (mainBtn) mainBtn.href = files[os];
+      if (mainBtnText) mainBtnText.textContent = 'Download v0.6.13 for ' + os;
 
-    // The download buttons already point at /releases/latest/download/…
-    // (fixed asset names from CI). This badge is the version those URLs
-    // currently resolve to.
-    (function latestRelease() {
       fetch('https://api.github.com/repos/baigcoder/rivulet/releases/latest')
         .then(function (res) { return res.ok ? res.json() : null; })
         .then(function (rel) {
@@ -2160,6 +2159,7 @@
           });
           var badge = document.getElementById('release-badge');
           if (badge) badge.setAttribute('aria-label', 'Latest release ' + rel.tag_name);
+          if (mainBtnText) mainBtnText.textContent = 'Download ' + rel.tag_name + ' for ' + os;
         })
         .catch(function () { /* keep the version baked into the page */ });
     })();
