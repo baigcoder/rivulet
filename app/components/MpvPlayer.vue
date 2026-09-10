@@ -312,6 +312,9 @@ const paused = ref(false)
  */
 const behindLive = ref(false)
 const buffering = ref(false)
+/** Live: when paused-for-cache started, so a silent panel can reopen. */
+let liveStallSince = 0
+let liveRecoverAfter = 0
 const ended = ref(false)
 const duration = ref(0)
 const position = ref(0)
@@ -2184,6 +2187,7 @@ async function stopPlayer() {
   chapters.value = []
   currentChapter.value = -1
   behindLive.value = false
+  liveStallSince = 0
   if (native)
     await invoke('player_stop').catch(() => {})
   else
@@ -2336,6 +2340,19 @@ async function poll() {
   if (typeof p.pause === 'boolean')
     paused.value = p.pause
   buffering.value = p['paused-for-cache'] === true
+  if (isLive.value && started.value && videoWidth.value > 0 && buffering.value && !behindLive.value) {
+    if (!liveStallSince)
+      liveStallSince = Date.now()
+    else if (Date.now() - liveStallSince > 8_000 && Date.now() >= liveRecoverAfter) {
+      liveRecoverAfter = Date.now() + 15_000
+      liveStallSince = 0
+      void goLive()
+      return
+    }
+  }
+  else {
+    liveStallSince = 0
+  }
   if (typeof p.duration === 'number')
     duration.value = p.duration
   if (typeof p.volume === 'number' && !volumeHeld.value)

@@ -85,6 +85,20 @@ fn looks_like_hls(url: &str) -> bool {
     path.ends_with(".m3u8") || path.ends_with(".m3u")
 }
 
+/// Xtream live MPEG-TS (`/live/user/pass/id.ts`), not an HLS playlist
+/// and not a finite VOD file. These feeds are one-connection, not
+/// seekable, and often go silent without FIN — that is the "played,
+/// then Buffering forever" stall.
+fn is_live_mpegts(url: &str) -> bool {
+    let path = url_path(url);
+    (path.contains("/live/") || path.contains("/timeshift/")) && !looks_like_hls(url)
+}
+
+/// Xtream/CDN often stop sending bytes without closing TCP. reqwest
+/// waits forever, mpv empties `cache-secs` and sits on Buffering.
+/// Cut the pipe so lavf can reconnect.
+const LIVE_STALL: Duration = Duration::from_secs(5);
+
 /// A `.ts` request that 302'd onto a playlist is the transcode ladder,
 /// not the original 4K feed. Do not cache that hop.
 fn is_hls_downgrade(from: &str, to: &str) -> bool {
@@ -294,15 +308,27 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
     // mp4 files both support it, and the upstream's CDN may return a 206
     // that we pass through verbatim. A HEAD from lavf must not become a
     // full GET: that starts the movie twice and is the long Buffering wait.
+    // Live MPEG-TS is worse: Range/HEAD opens a second Xtream slot, the
+    // playing connection dies, and the player buffers until the user zaps.
     let is_head = request.starts_with("HEAD ");
-    let range = extract_header(&request, "Range")
-        .or_else(|| is_head.then(|| "bytes=0-0".to_string()));
+    let live_ts = is_live_mpegts(&target_url);
+    if is_head && live_ts {
+        write_live_head(stream).await?;
+        return Ok(());
+    }
+    let range = if live_ts {
+        None
+    } else {
+        extract_header(&request, "Range").or_else(|| is_head.then(|| "bytes=0-0".to_string()))
+    };
     eprintln!("[iptv-proxy] {} {target_url}", if is_head { "HEAD" } else { "GET" });
 
     let ua = default_upstream_ua(&target_url, custom_ua.as_deref());
     let rf = custom_referer.as_deref();
     // Hold only while following the resolver 302 — not while the movie
     // body streams, or a Range seek would wait on the first connection.
+    // Live MPEG-TS keeps the lock for the body so a probe cannot steal
+    // the one Xtream slot from the playing GET.
     let gate = url_gate(&target_url);
     let _resolve = gate.lock().await;
     let mut fetch_url = cached_redirect(&target_url).unwrap_or_else(|| target_url.clone());
@@ -401,7 +427,9 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
     }
 
     remember_redirect(&target_url, resp.url().as_str());
-    drop(_resolve);
+    if !live_ts {
+        drop(_resolve);
+    }
 
     let content_type = resp
         .headers()
@@ -461,17 +489,31 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.parse::<u64>().ok());
 
-    let mut header = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: {content_type}\r\n",
-        status.as_u16(),
-        status.canonical_reason().unwrap_or("OK"),
-    );
-    if let Some(len) = upstream_length {
-        header.push_str(&format!("Content-Length: {len}\r\n"));
+    // Chunked live TS is why lavf never reconnects: it treats each
+    // chunk boundary as a file and will not reopen on EOF. HTTP/1.0
+    // identity (close = end) is what Icecast / IPTV proxies send.
+    let use_identity = live_ts || (upstream_length.is_none() && is_live_mpegts(&fetch_url));
+    let mut header = if use_identity {
+        format!(
+            "HTTP/1.0 {} {}\r\nContent-Type: {content_type}\r\nCache-Control: no-store\r\n",
+            status.as_u16(),
+            status.canonical_reason().unwrap_or("OK"),
+        )
     } else {
-        // Upstream used chunked transfer encoding (or no length at all).
-        // Forward as chunked so the browser can frame each chunk.
-        header.push_str("Transfer-Encoding: chunked\r\n");
+        format!(
+            "HTTP/1.1 {} {}\r\nContent-Type: {content_type}\r\n",
+            status.as_u16(),
+            status.canonical_reason().unwrap_or("OK"),
+        )
+    };
+    if !use_identity {
+        if let Some(len) = upstream_length {
+            header.push_str(&format!("Content-Length: {len}\r\n"));
+        } else {
+            // Upstream used chunked transfer encoding (or no length at all).
+            // Forward as chunked so the browser can frame each chunk.
+            header.push_str("Transfer-Encoding: chunked\r\n");
+        }
     }
     for (k, v) in CORS_HEADERS {
         header.push_str(&format!("{k}: {v}\r\n"));
@@ -483,6 +525,9 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
         "ETag",
         "Last-Modified",
     ] {
+        if use_identity && (h == "Content-Range" || h == "Accept-Ranges") {
+            continue;
+        }
         if let Some(v) = resp.headers().get(h) {
             if let Ok(s) = v.to_str() {
                 header.push_str(&format!("{h}: {s}\r\n"));
@@ -506,9 +551,20 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
     // wrap each frame in chunked encoding so the browser knows where each
     // chunk ends.
     let mut resp = resp;
-    let use_chunked = upstream_length.is_none();
+    let use_chunked = !use_identity && upstream_length.is_none();
     loop {
-        match resp.chunk().await {
+        let next = if live_ts || use_identity {
+            match tokio::time::timeout(LIVE_STALL, resp.chunk()).await {
+                Ok(inner) => inner,
+                Err(_) => {
+                    eprintln!("[iptv-proxy] live stall, closing {target_url}");
+                    break;
+                }
+            }
+        } else {
+            resp.chunk().await
+        };
+        match next {
             Ok(Some(chunk)) => {
                 if use_chunked {
                     // HTTP/1.1 chunked transfer encoding: each chunk is
@@ -854,6 +910,19 @@ fn extract_header(request: &str, name: &str) -> Option<String> {
     None
 }
 
+async fn write_live_head(stream: &mut tokio::net::TcpStream) -> anyhow::Result<()> {
+    let mut header = String::from(
+        "HTTP/1.1 200 OK\r\nContent-Type: video/mp2t\r\nAccept-Ranges: none\r\n",
+    );
+    for (k, v) in CORS_HEADERS {
+        header.push_str(&format!("{k}: {v}\r\n"));
+    }
+    header.push_str("Connection: close\r\n\r\n");
+    stream.write_all(header.as_bytes()).await?;
+    stream.shutdown().await?;
+    Ok(())
+}
+
 async fn write_response(
     stream: &mut tokio::net::TcpStream,
     status: u16,
@@ -889,8 +958,8 @@ async fn write_preflight(stream: &mut tokio::net::TcpStream) -> anyhow::Result<(
 #[cfg(test)]
 mod tests {
     use super::{
-        default_upstream_ua, hls_bandwidth, hls_height, is_hls_downgrade, is_xtream_media_url,
-        prefer_highest_hls_rung, IPTV_PLAYER_UA,
+        default_upstream_ua, hls_bandwidth, hls_height, is_hls_downgrade, is_live_mpegts,
+        is_xtream_media_url, prefer_highest_hls_rung, IPTV_PLAYER_UA,
     };
 
     #[test]
@@ -948,6 +1017,22 @@ uhd.m3u8\n";
         assert!(!is_hls_downgrade(
             "http://cdn/file.ts",
             "http://cdn/file.ts?token=1"
+        ));
+    }
+
+    #[test]
+    fn xtream_live_ts_is_mpegts_and_playlists_are_not() {
+        assert!(is_live_mpegts(
+            "http://panel.example:8080/live/user/pass/1234.ts"
+        ));
+        assert!(is_live_mpegts(
+            "http://panel.example:8080/live/user/pass/1234"
+        ));
+        assert!(!is_live_mpegts(
+            "http://panel.example:8080/live/user/pass/1234.m3u8"
+        ));
+        assert!(!is_live_mpegts(
+            "http://panel.example:8080/movie/user/pass/99.mp4"
         ));
     }
 }

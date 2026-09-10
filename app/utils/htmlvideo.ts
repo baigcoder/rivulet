@@ -287,17 +287,21 @@ export function videoEngine(video: HTMLVideoElement): PlayerEngine {
       const Hls = mod.default
       if (!Hls?.isSupported())
         return false
+      const live = /\/live\/|\.m3u8(\?|$)/i.test(url)
       // A live playlist wants a short back-buffer: the default keeps
       // everything played, which on a channel left on for an hour is hundreds
       // of megabytes of segments a TV does not have to spare.
       hls = new Hls({
-        backBufferLength: 30,
+        backBufferLength: live ? 15 : 30,
         enableWorker: true,
         // Default maxBufferLength is 30s — Direct play then sits on
         // "Buffering…" while it prefetches half a minute. A second or two
-        // is enough to start; hls.js grows the buffer after playback.
-        maxBufferLength: 4,
-        maxMaxBufferLength: 16,
+        // is enough to start a file; a live channel needs more headroom
+        // or the first network hitch empties the buffer and never fills.
+        maxBufferLength: live ? 12 : 4,
+        maxMaxBufferLength: live ? 30 : 16,
+        liveSyncDurationCount: 3,
+        liveMaxLatencyDurationCount: 10,
         startFragPrefetch: true,
       }) as unknown as HlsInstance
       hls.on('hlsError', (_e, data) => {

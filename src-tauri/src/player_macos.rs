@@ -226,8 +226,10 @@ pub fn player_start(
 			for (k, v) in player_direct::live_kv() {
 				set(k, v);
 			}
+			set("stream-lavf-o", player_direct::live_stream_lavf_o());
+		} else {
+			set("stream-lavf-o", player_direct::stream_lavf_o(engine_stream));
 		}
-		set("stream-lavf-o", player_direct::stream_lavf_o(engine_stream));
 		set("keep-open", "no");
 		// Per-stream User-Agent / Referer so the upstream sees the same
 		// headers it would see through the IPTV proxy.

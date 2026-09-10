@@ -76,8 +76,9 @@ pub fn cache_cli(engine: bool) -> &'static [&'static str] {
 pub fn live_cli() -> &'static [&'static str] {
 	&[
 		"--cache-pause=yes",
-		"--cache-secs=8",
-		"--demuxer-readahead-secs=4",
+		"--cache-pause-wait=3",
+		"--cache-secs=12",
+		"--demuxer-readahead-secs=6",
 		"--demuxer-lavf-analyzeduration=2",
 		"--demuxer-lavf-probesize=8388608",
 		"--demuxer-max-bytes=64M",
@@ -86,6 +87,7 @@ pub fn live_cli() -> &'static [&'static str] {
 		"--vd-lavc-skiploopfilter=none",
 		"--vd-lavc-skipframe=none",
 		"--hls-bitrate=max",
+		"--network-timeout=15",
 	]
 }
 
@@ -93,8 +95,9 @@ pub fn live_cli() -> &'static [&'static str] {
 pub fn live_kv() -> &'static [(&'static str, &'static str)] {
 	&[
 		("cache-pause", "yes"),
-		("cache-secs", "8"),
-		("demuxer-readahead-secs", "4"),
+		("cache-pause-wait", "3"),
+		("cache-secs", "12"),
+		("demuxer-readahead-secs", "6"),
 		("demuxer-lavf-analyzeduration", "2"),
 		("demuxer-lavf-probesize", "8388608"),
 		("demuxer-max-bytes", "64M"),
@@ -103,6 +106,7 @@ pub fn live_kv() -> &'static [(&'static str, &'static str)] {
 		("vd-lavc-skiploopfilter", "none"),
 		("vd-lavc-skipframe", "none"),
 		("hls-bitrate", "max"),
+		("network-timeout", "15"),
 	]
 }
 
@@ -142,6 +146,13 @@ pub fn stream_lavf_o(engine: bool) -> &'static str {
 	} else {
 		"reconnect=1,reconnect_streamed=1,reconnect_delay_max=2,timeout=90000000,rw_timeout=90000000"
 	}
+}
+
+/// Live MPEG-TS through the loopback proxy. Direct's 90s rw_timeout is
+/// for a debrid unlock; on a live stall it is 90s of Buffering. EOF
+/// from the proxy (silent panel, no FIN) must reopen the same URL.
+pub fn live_stream_lavf_o() -> &'static str {
+	"reconnect=1,reconnect_streamed=1,reconnect_at_eof=1,reconnect_on_network_error=1,reconnect_delay_max=4,timeout=12000000,rw_timeout=12000000"
 }
 
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]

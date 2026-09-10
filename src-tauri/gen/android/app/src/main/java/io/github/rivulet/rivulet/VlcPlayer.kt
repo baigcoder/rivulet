@@ -120,9 +120,9 @@ class RivuletPlayer(private val activity: MainActivity) {
       // them and the picture stays 1080p-soft. Hardware decode keeps
       // this from stalling start; skipping the loop filter / IDCT is
       // what made UHD look like a transcode.
-      media.addOption(":network-caching=1200")
+      media.addOption(":network-caching=3000")
       media.addOption(":file-caching=1200")
-      media.addOption(":live-caching=1200")
+      media.addOption(":live-caching=3000")
       // Keep every HEVC loop-filter / IDCT coefficient. The previous
       // skip=4 path is why Android 4K looked like a 720p transcode.
       media.addOption(":avcodec-skiploopfilter=0")

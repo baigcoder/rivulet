@@ -406,7 +406,14 @@ pub fn player_start(
 		command.arg("--target-colorspace-hint=no");
 	}
 	command
-		.arg(format!("--stream-lavf-o={}", player_direct::stream_lavf_o(engine)))
+		.arg(format!(
+			"--stream-lavf-o={}",
+			if live.unwrap_or(false) {
+				player_direct::live_stream_lavf_o()
+			} else {
+				player_direct::stream_lavf_o(engine)
+			}
+		))
 		.arg("--keep-open=no")
 		.arg("--no-terminal")
 		.arg("--msg-level=all=warn")
