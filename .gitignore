@@ -37,6 +37,9 @@ src-tauri/*.db
 # TMDB token substituted into it.
 packaging/flatpak/generated
 
+# Vercel static output (built from public/ + landing.html)
+.vercel-static
+
 # Build artifacts
 *.apk
 *.AppImage

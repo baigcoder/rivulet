@@ -1,7 +1,7 @@
 {
   "framework": null,
-  "installCommand": "echo skip-install",
-  "buildCommand": "cp landing.html public/landing.html && test -f public/landing.html && test -f public/logo.svg",
-  "outputDirectory": "public",
+  "installCommand": "",
+  "buildCommand": "mkdir -p .vercel-static && cp -a public/. .vercel-static/ && cp landing.html .vercel-static/landing.html && test -f .vercel-static/landing.html && test -f .vercel-static/logo.svg",
+  "outputDirectory": ".vercel-static",
   "rewrites": [{ "source": "/", "destination": "/landing.html" }]
 }
