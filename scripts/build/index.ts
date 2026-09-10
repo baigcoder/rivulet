@@ -181,6 +181,28 @@ async function buildDesktop(extra: string[]) {
   if (!bundles)
     die(`No idea what to bundle on ${process.platform}.`)
 
+  // First, because everything below it is wasted without this. The cross
+  // builds check rustup in `checkRustTargets`, and a native build checked
+  // nothing — so on a machine with no Rust it downloaded mpv and yt-dlp,
+  // then ended in `failed to run 'cargo metadata' … program not found`,
+  // which is precisely the kind of trace the rest of this file exists to
+  // pre-empt. Only cargo is tested: rustc finds the MSVC linker through
+  // the registry rather than PATH, so checking for `link.exe` here would
+  // fail on machines that build fine.
+  if (!have('cargo')) {
+    die(
+      'Rust is not installed, and the whole app behind the frontend is Rust.\n'
+      + '  Everything else here would download first and fail after it.\n'
+      + (process.platform === 'win32'
+        ? '    winget install --id Rustlang.Rustup -e\n'
+          + '  A Windows build also needs the MSVC toolchain (cl.exe/link.exe):\n'
+          + '    winget install --id Microsoft.VisualStudio.2022.BuildTools -e \\\n'
+          + '      --override "--quiet --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"\n'
+          + '  Budget ~20 GB free: 720 crates of release build land in src-tauri/target.'
+        : '    curl --proto \'=https\' --tlsv1.2 -sSf https://sh.rustup.rs | sh'),
+    )
+  }
+
   if (process.platform === 'linux' && spawnSync('pkg-config', ['--exists', 'webkit2gtk-4.1']).status !== 0) {
     die(
       'WebKitGTK development files are missing — Tauri cannot link without them.\n'
