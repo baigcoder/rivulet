@@ -1504,7 +1504,7 @@
         <div class="hero-actions hero-actions-anim">
           <a href="https://github.com/baigcoder/rivulet/releases/latest/download/Rivulet.AppImage" class="btn btn-primary" id="main-dl-link">
             <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-            <span id="main-dl-text">Download v0.6.14</span>
+            <span id="main-dl-text">Download v0.6.15</span>
           </a>
 
           <a href="#player" class="btn btn-secondary">
@@ -1909,12 +1909,12 @@
   <section class="section-pad section-border" id="download">
     <div class="wrap">
       <div style="text-align: center; margin-bottom: 40px;">
-        <span class="kicker">Get Rivulet · <span data-release-version>v0.6.14</span></span>
+        <span class="kicker">Get Rivulet · <span data-release-version>v0.6.15</span></span>
         <h2 style="margin-top: 12px; max-width: 20ch; margin-left: auto; margin-right: auto;">
           Put it on the machine you watch on.
         </h2>
         <p class="lede" style="margin: 16px auto 0;">
-          Latest stable <strong data-release-version>v0.6.14</strong>. One download. No account. Native binaries for Linux, Windows, macOS, and Android TV.
+          Latest stable <strong data-release-version>v0.6.15</strong>. One download. No account. Native binaries for Linux, Windows, macOS, and Android TV.
         </p>
         <p style="font-family: var(--mono); font-size: 0.875rem; color: var(--muted); margin-top: 12px;">
           Detected Platform: <strong id="detected-platform-name" style="color: var(--accent);">Linux</strong>
@@ -1925,12 +1925,12 @@
           href="https://github.com/baigcoder/rivulet/releases/latest"
           target="_blank"
           rel="noreferrer"
-          aria-label="Latest release v0.6.14"
+          aria-label="Latest release v0.6.15"
         >
           <span class="release-badge-live" aria-hidden="true"></span>
           <img src="/logo.svg" width="22" height="22" alt="" />
           <span class="release-badge-label">Latest</span>
-          <strong data-release-version>v0.6.14</strong>
+          <strong data-release-version>v0.6.15</strong>
         </a>
       </div>
 
@@ -1945,7 +1945,7 @@
               </div>
               <div>
                 <div class="dl-card-title">Linux Operating System</div>
-                <div style="font-size: 0.75rem; color: var(--accent); font-family: var(--mono);"><span data-release-version>v0.6.14</span> · Debian · Ubuntu · Fedora · Arch</div>
+                <div style="font-size: 0.75rem; color: var(--accent); font-family: var(--mono);"><span data-release-version>v0.6.15</span> · Debian · Ubuntu · Fedora · Arch</div>
               </div>
             </div>
             <div class="dl-card-desc">
@@ -1989,7 +1989,7 @@
               </div>
               <div>
                 <div class="dl-card-title">Android & TV</div>
-                <div style="font-size: 0.75rem; color: #34d399; font-family: var(--mono);"><span data-release-version>v0.6.14</span> · Phone · Tablet · Android TV</div>
+                <div style="font-size: 0.75rem; color: #34d399; font-family: var(--mono);"><span data-release-version>v0.6.15</span> · Phone · Tablet · Android TV</div>
               </div>
             </div>
             <div class="dl-card-desc">
@@ -2013,7 +2013,7 @@
               </div>
               <div>
                 <div class="dl-card-title">Windows OS</div>
-                <div style="font-size: 0.75rem; color: #38bdf8; font-family: var(--mono);"><span data-release-version>v0.6.14</span> · Windows 10 / 11 (64-bit)</div>
+                <div style="font-size: 0.75rem; color: #38bdf8; font-family: var(--mono);"><span data-release-version>v0.6.15</span> · Windows 10 / 11 (64-bit)</div>
               </div>
             </div>
             <div class="dl-card-desc">
@@ -2037,7 +2037,7 @@
               </div>
               <div>
                 <div class="dl-card-title">macOS Desktop</div>
-                <div style="font-size: 0.75rem; color: #cba6f7; font-family: var(--mono);"><span data-release-version>v0.6.14</span> · Apple Silicon (M1 and later)</div>
+                <div style="font-size: 0.75rem; color: #cba6f7; font-family: var(--mono);"><span data-release-version>v0.6.15</span> · Apple Silicon (M1 and later)</div>
               </div>
             </div>
             <div class="dl-card-desc">
@@ -2179,7 +2179,7 @@
       var mainBtnText = document.getElementById('main-dl-text');
       if (pName) pName.textContent = os;
       if (mainBtn) mainBtn.href = files[os];
-      if (mainBtnText) mainBtnText.textContent = 'Download v0.6.14 for ' + os;
+      if (mainBtnText) mainBtnText.textContent = 'Download v0.6.15 for ' + os;
 
       fetch('https://api.github.com/repos/baigcoder/rivulet/releases/latest')
         .then(function (res) { return res.ok ? res.json() : null; })
