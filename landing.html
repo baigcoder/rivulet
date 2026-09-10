@@ -287,26 +287,28 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 16px;
-      height: 72px;
+      flex-wrap: nowrap;
+      gap: 12px;
+      height: 56px;
       position: relative;
+      container-type: inline-size;
     }
 
     .brand {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       flex-shrink: 0;
       font-family: var(--display);
       font-weight: 800;
-      font-size: 1.25rem;
+      font-size: 1.05rem;
       letter-spacing: -0.02em;
       white-space: nowrap;
     }
 
     .brand img {
-      width: 34px;
-      height: 34px;
+      width: 28px;
+      height: 28px;
       max-width: none;
       flex-shrink: 0;
       filter: drop-shadow(0 0 10px var(--accent-glow));
@@ -316,20 +318,24 @@
       display: flex;
       align-items: center;
       justify-content: flex-end;
-      flex: 1;
+      flex: 1 1 auto;
+      flex-wrap: nowrap;
       min-width: 0;
-      gap: 2px;
+      gap: 0;
+      overflow: hidden;
     }
 
     .nav-links a {
-      padding: 8px 10px;
+      padding: 6px 8px;
       border-radius: 999px;
-      font-size: 0.8125rem;
+      font-size: 0.75rem;
       font-weight: 600;
       color: var(--muted);
       transition: all 0.2s ease;
       white-space: nowrap;
       flex-shrink: 0;
+      hyphens: none;
+      word-break: keep-all;
     }
 
     .nav-links a:hover, .nav-links a.active {
@@ -341,22 +347,24 @@
       display: flex;
       align-items: center;
       flex-shrink: 0;
+      flex-wrap: nowrap;
       gap: 8px;
     }
 
     .github-star-btn {
       display: inline-flex;
       align-items: center;
-      gap: 8px;
-      padding: 8px 14px;
+      gap: 6px;
+      padding: 6px 10px;
       border-radius: 999px;
       background: rgba(255, 255, 255, 0.04);
       border: 1px solid var(--border);
-      font-size: 0.8125rem;
+      font-size: 0.75rem;
       font-weight: 600;
       color: var(--muted);
       transition: all 0.2s ease;
       white-space: nowrap;
+      flex-shrink: 0;
     }
 
     .github-star-btn:hover {
@@ -1283,8 +1291,17 @@
       .release-badge strong.is-fresh { animation: none; }
     }
 
+    /* Hide GitHub label when the 1280px bar is tight (viewport media misses this). */
+    @container (max-width: 1260px) {
+      .nav-actions .github-star-btn span { display: none; }
+    }
+
     /* Mobile & Tablet Responsive Breakdown */
-    @media (max-width: 1200px) {
+    @media (max-width: 1360px) {
+      .nav-actions .github-star-btn span { display: none; }
+    }
+
+    @media (max-width: 1280px) {
       header.navbar {
         position: sticky;
         top: 0;
@@ -1293,11 +1310,11 @@
       .nav-links {
         display: none;
         position: fixed;
-        top: 72px;
+        top: 56px;
         left: 0;
         right: 0;
         bottom: 0;
-        height: calc(100vh - 72px);
+        height: calc(100vh - 56px);
         background: rgba(8, 9, 11, 0.98);
         backdrop-filter: blur(30px);
         -webkit-backdrop-filter: blur(30px);
@@ -1306,11 +1323,11 @@
         justify-content: flex-start;
         align-items: stretch;
         flex: none;
+        overflow: auto;
         padding: 24px 20px 40px;
         gap: 10px;
         box-shadow: 0 30px 60px rgba(0, 0, 0, 0.95);
         z-index: 999;
-        overflow-y: auto;
       }
       .nav-links.is-open {
         display: flex;
@@ -1346,7 +1363,7 @@
         padding-top: 16px;
         border-top: 1px solid var(--border);
       }
-      .hamburger { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; }
+      .hamburger { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; }
       .hamburger.is-active .icon-open { display: none !important; }
       .hamburger.is-active .icon-close { display: block !important; }
       .nav-actions .github-star-btn { display: none; }
@@ -1427,12 +1444,12 @@
 
       <nav class="nav-links" id="nav-menu">
         <a href="#watch">Engine</a>
-        <a href="#dual-mode">Dual-Mode</a>
+        <a href="#dual-mode">Dual</a>
         <a href="#player">Player</a>
-        <a href="#live">Live TV</a>
+        <a href="#live">Live</a>
         <a href="#codecs">Codecs</a>
         <a href="#themes">Themes</a>
-        <a href="#download">Downloads</a>
+        <a href="#download">Get</a>
         <a href="#faq">FAQ</a>
         <div class="nav-drawer-actions">
           <a href="#download" class="btn btn-primary" style="width: 100%; justify-content: center; gap: 8px; font-size: 0.9375rem;">
@@ -1449,9 +1466,9 @@
       <div class="nav-actions">
         <a href="https://github.com/baigcoder/rivulet" target="_blank" class="github-star-btn" rel="noreferrer">
           <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
-          <span class="desktop-only">Star on GitHub</span>
+          <span class="desktop-only">Star</span>
         </a>
-        <a href="#download" class="btn btn-primary" style="padding: 8px 18px; font-size: 0.875rem;">Download</a>
+        <a href="#download" class="btn btn-primary" style="padding: 6px 14px; font-size: 0.8125rem;">Download</a>
         <button type="button" class="hamburger" id="nav-toggle" aria-label="Toggle navigation menu" aria-expanded="false">
           <svg class="icon-open" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
           <svg class="icon-close" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="display:none;"><path d="M6 18L18 6M6 6l12 12"/></svg>
@@ -1881,12 +1898,12 @@
   <section class="section-pad section-border" id="download">
     <div class="wrap">
       <div style="text-align: center; margin-bottom: 40px;">
-        <span class="kicker">Get Rivulet</span>
+        <span class="kicker">Get Rivulet · <span data-release-version>v0.6.13</span></span>
         <h2 style="margin-top: 12px; max-width: 20ch; margin-left: auto; margin-right: auto;">
           Put it on the machine you watch on.
         </h2>
         <p class="lede" style="margin: 16px auto 0;">
-          One download. No account. High performance native binaries for all main OS environments.
+          Latest stable <strong data-release-version>v0.6.13</strong>. One download. No account. Native binaries for Linux, Windows, macOS, and Android TV.
         </p>
         <p style="font-family: var(--mono); font-size: 0.875rem; color: var(--muted); margin-top: 12px;">
           Detected Platform: <strong id="detected-platform-name" style="color: var(--accent);">Linux</strong>
@@ -1917,7 +1934,7 @@
               </div>
               <div>
                 <div class="dl-card-title">Linux Operating System</div>
-                <div style="font-size: 0.75rem; color: var(--accent); font-family: var(--mono);">Debian · Ubuntu · Fedora · Arch · Universal</div>
+                <div style="font-size: 0.75rem; color: var(--accent); font-family: var(--mono);"><span data-release-version>v0.6.13</span> · Debian · Ubuntu · Fedora · Arch</div>
               </div>
             </div>
             <div class="dl-card-desc">
@@ -1954,7 +1971,7 @@
               </div>
               <div>
                 <div class="dl-card-title">Android & TV</div>
-                <div style="font-size: 0.75rem; color: #34d399; font-family: var(--mono);">Phone · Tablet · Android TV</div>
+                <div style="font-size: 0.75rem; color: #34d399; font-family: var(--mono);"><span data-release-version>v0.6.13</span> · Phone · Tablet · Android TV</div>
               </div>
             </div>
             <div class="dl-card-desc">
@@ -1978,7 +1995,7 @@
               </div>
               <div>
                 <div class="dl-card-title">Windows OS</div>
-                <div style="font-size: 0.75rem; color: #38bdf8; font-family: var(--mono);">Windows 10 / 11 (64-bit)</div>
+                <div style="font-size: 0.75rem; color: #38bdf8; font-family: var(--mono);"><span data-release-version>v0.6.13</span> · Windows 10 / 11 (64-bit)</div>
               </div>
             </div>
             <div class="dl-card-desc">
@@ -2002,7 +2019,7 @@
               </div>
               <div>
                 <div class="dl-card-title">macOS Desktop</div>
-                <div style="font-size: 0.75rem; color: #cba6f7; font-family: var(--mono);">Apple Silicon (M1 and later)</div>
+                <div style="font-size: 0.75rem; color: #cba6f7; font-family: var(--mono);"><span data-release-version>v0.6.13</span> · Apple Silicon (M1 and later)</div>
               </div>
             </div>
             <div class="dl-card-desc">
