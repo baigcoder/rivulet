@@ -174,7 +174,14 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
    */
   let listController: AbortController | null = null
   let listRequestId = 0
-  let vodCatRequestId = 0
+  /**
+   * One id per VOD section, not one shared between them. `prefetchVod`
+   * asks for both category lists at once, and a single counter meant the
+   * first answer back was always "superseded" by the second request and
+   * thrown away — so every tab hop re-downloaded a list the prefetch had
+   * already paid for.
+   */
+  const vodCatRequestId: Record<'movies' | 'series', number> = { movies: 0, series: 0 }
 
   let searchTimer: ReturnType<typeof setTimeout> | null = null
   watch(searchQuery, v => {
@@ -415,6 +422,10 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
     searchQuery.value = ''
     searchDebounced.value = ''
     contentSection.value = 'live'
+    // A category list still in flight belongs to the account that just
+    // went away; bumping both ids is what stops it landing on the next one.
+    vodCatRequestId.movies++
+    vodCatRequestId.series++
     vodMovieCategories.value = []
     vodSeriesCategories.value = []
     selectedVodCategory.value = ''
@@ -533,14 +544,16 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
       return
     if (section === 'series' && vodSeriesCategories.value.length > 0)
       return
-    const reqId = ++vodCatRequestId
+    const reqId = ++vodCatRequestId[section]
     try {
       const cats = section === 'movies'
         ? await premiumApi.vodMovieCategories()
         : await premiumApi.vodSeriesCategories()
-      // A slow movies response must not overwrite series categories after
-      // the user has already switched tabs.
-      if (reqId !== vodCatRequestId || contentSection.value !== section)
+      // Only a newer request for the *same* section supersedes this one.
+      // Which tab is on screen is deliberately not part of the test: the
+      // prefetch runs while the user is still on live channels, and its
+      // whole point is to have both lists ready before they get there.
+      if (reqId !== vodCatRequestId[section])
         return
       if (section === 'movies')
         vodMovieCategories.value = cats
@@ -548,9 +561,12 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
         vodSeriesCategories.value = cats
     }
     catch (e) {
-      if (reqId !== vodCatRequestId)
+      if (reqId !== vodCatRequestId[section])
         return
-      error.value = message(e)
+      // A prefetch failing off screen is not worth an error banner over
+      // whatever the user is actually looking at; the tab hop retries.
+      if (contentSection.value === section)
+        error.value = message(e)
     }
   }
 

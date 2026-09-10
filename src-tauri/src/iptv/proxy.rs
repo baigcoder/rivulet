@@ -140,7 +140,16 @@ fn stream_get(
 
 /// After the first 302, mpv still probes the *resolver* URL two or three
 /// times. Remember the CDN location so those extra GETs skip the unlock.
-const REDIR_TTL: Duration = Duration::from_secs(10 * 60);
+///
+/// Ninety seconds, not ten minutes. The probes this exists for all
+/// arrive within seconds of a zap, and the location it caches is not
+/// ours to assume is durable: a panel's 302 commonly lands on a
+/// tokenised CDN path whose own expiry is minutes away (one measured
+/// here carried a timestamp four minutes out). Past that the cached hop
+/// is a dead URL, and while the retry below does recover from one, the
+/// recovery costs a stall and a second upstream connection — on an
+/// account whose limit is often exactly one.
+const REDIR_TTL: Duration = Duration::from_secs(90);
 
 struct Redirect {
     url: String,
@@ -798,7 +807,7 @@ fn valid_youtube_id(id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
-fn parse_youtube_embed(request: &str) -> Option<(String, bool, bool, bool)> {
+fn parse_youtube_embed(request: &str) -> Option<(String, bool, bool, bool, bool)> {
     let first_line = request.lines().next()?;
     let path = first_line.split_whitespace().nth(1)?;
     let query = path.split_once('?')?.1;
@@ -806,6 +815,10 @@ fn parse_youtube_embed(request: &str) -> Option<(String, bool, bool, bool)> {
     let mut autoplay = true;
     let mut mute = false;
     let mut looping = false;
+    // Controls on unless asked otherwise: a trailer the user opened is a
+    // video they are watching, and the one caller that wants them gone
+    // is the cover hero, which says so.
+    let mut controls = true;
     for pair in query.split('&') {
         let (k, v) = pair.split_once('=')?;
         let decoded = urlencoding::decode(v).ok()?.into_owned();
@@ -814,6 +827,7 @@ fn parse_youtube_embed(request: &str) -> Option<(String, bool, bool, bool)> {
             "autoplay" => autoplay = decoded != "0",
             "mute" => mute = decoded == "1",
             "loop" => looping = decoded == "1",
+            "controls" => controls = decoded != "0",
             _ => {}
         }
     }
@@ -821,14 +835,14 @@ fn parse_youtube_embed(request: &str) -> Option<(String, bool, bool, bool)> {
     if !valid_youtube_id(&id) {
         return None;
     }
-    Some((id, autoplay, mute, looping))
+    Some((id, autoplay, mute, looping, controls))
 }
 
 async fn serve_youtube_embed(
     stream: &mut tokio::net::TcpStream,
     request: &str,
 ) -> anyhow::Result<()> {
-    let (id, autoplay, mute, looping) = match parse_youtube_embed(request) {
+    let (id, autoplay, mute, looping, controls) = match parse_youtube_embed(request) {
         Some(v) => v,
         None => {
             write_response(stream, 400, "Bad Request", "text/plain", b"invalid v").await?;
@@ -844,11 +858,34 @@ async fn serve_youtube_embed(
     if mute {
         params.push_str("&mute=1");
     }
-    // YouTube ignores loop unless playlist names this same video.
-    if looping {
+    // YouTube ignores `loop` unless `playlist` names this same video — but a
+    // playlist, even one video long, is what makes it paint **previous and
+    // next buttons** over the picture. On the cover hero that is the whole
+    // complaint: a decorative background wearing a play button and two skip
+    // arrows. So a hero loops by watching for the ended state and seeking
+    // back to zero (`loop_ended` below), and only a player with visible
+    // controls gets the playlist form.
+    if looping && controls {
         params.push_str("&loop=1&playlist=");
         params.push_str(&id);
     }
+    // The cover hero: mute is the app's own button, and nothing else here is
+    // for pressing. `controls` takes the bar, `fs` the fullscreen button,
+    // `iv_load_policy`/`cc_load_policy` the annotations and captions, and
+    // `disablekb` the keyboard — which on a TV matters twice over, because a
+    // d-pad press must never reach YouTube and seek the trailer.
+    if !controls {
+        params.push_str(
+            "&controls=0&modestbranding=1&fs=0&disablekb=1&iv_load_policy=3&cc_load_policy=0",
+        );
+    }
+    // Restarting on `ended` (state 0) is the loop for a hero. Harmless for a
+    // playlist-looped player, which never reports ended in the first place.
+    let loop_ended = if looping && !controls {
+        r#"if(d&&d.info&&d.info.playerState===0){send("seekTo",[0,true]);send("playVideo");}"#
+    } else {
+        ""
+    };
     // Forwards mute/unMute/quality from the page, and player state back up, so
     // the volume button does not reload the iframe and the hero can hide YouTube's
     // spinner until 720p is actually playing.
@@ -877,6 +914,7 @@ async fn serve_youtube_embed(
     parent.postMessage(typeof e.data==="string"?e.data:JSON.stringify(e.data),"*");
     var d=e.data;if(typeof d==="string"){{try{{d=JSON.parse(d)}}catch(x){{return}}}}
     if(d&&(d.event==="onReady"||(d.info&&d.info.playerState===1)))lock();
+    {loop_ended}
   }});
   f.addEventListener("load",function(){{
     f.contentWindow.postMessage(JSON.stringify({{event:"listening"}}),yt);

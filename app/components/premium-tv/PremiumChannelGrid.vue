@@ -76,37 +76,50 @@ function rebuildRows(): void {
 
 // Appending a page must not re-key every existing row: that re-mounts every
 // card on screen, which is a visible flash and a fresh logo request each.
-let prevLen = 0
+//
+// Whether this is an append cannot be read off the length. A category
+// hop replaces the list wholesale, and two categories that happen to
+// return the same number of channels — the common case, because every
+// page is `PAGE_SIZE` — looked to the length test like nothing had
+// changed at all, so the grid went on drawing the *previous* category's
+// channels. So the test is identity: an append keeps the array the
+// previous pass ended with as its own prefix.
+let prevItems: IPTVChannel[] = []
+function isAppend(next: readonly IPTVChannel[]): boolean {
+  const n = prevItems.length
+  if (n === 0 || next.length <= n)
+    return false
+  return next[0] === prevItems[0] && next[n - 1] === prevItems[n - 1]
+}
 watch(
   () => props.channels,
   next => {
     const c = cols.value
-    if (next.length < prevLen) {
-      prevLen = next.length
+    const prevLen = prevItems.length
+    if (!isAppend(next)) {
+      prevItems = next.slice()
       rebuildRows()
       return
     }
-    if (next.length > prevLen) {
-      const result = rows.value.slice()
-      const last = result[result.length - 1]
-      let i = prevLen
-      // The last row of the previous page is usually partial; fill it
-      // before starting new rows, or the grid grows a ragged gap.
-      if (last && last.length < c) {
-        const tail = [...last]
-        while (i < next.length && tail.length < c) {
-          const item = next[i++]
-          if (item)
-            tail.push(item)
-        }
-        result[result.length - 1] = tail
+    const result = rows.value.slice()
+    const last = result[result.length - 1]
+    let i = prevLen
+    // The last row of the previous page is usually partial; fill it
+    // before starting new rows, or the grid grows a ragged gap.
+    if (last && last.length < c) {
+      const tail = [...last]
+      while (i < next.length && tail.length < c) {
+        const item = next[i++]
+        if (item)
+          tail.push(item)
       }
-      for (; i < next.length; i += c)
-        result.push(next.slice(i, i + c))
-      prevLen = next.length
-      rows.value = result
-      triggerRef(rows)
+      result[result.length - 1] = tail
     }
+    for (; i < next.length; i += c)
+      result.push(next.slice(i, i + c))
+    prevItems = next.slice()
+    rows.value = result
+    triggerRef(rows)
   },
   { immediate: true },
 )

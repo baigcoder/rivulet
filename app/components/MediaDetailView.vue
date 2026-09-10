@@ -182,7 +182,15 @@ const heroSrc = computed(() => {
   const key = trailerKey.value
   if (!key || videoHidden.value || !heroIdle.value)
     return ''
-  return youtubeEmbedSrc(key, { mute: true, loop: true })
+  // Nothing here can play, so don't mount an embed to find that out five
+  // seconds at a time: `nextTrailer` would walk every key a title has, each
+  // one a fresh iframe and a fresh YouTube page load, to arrive at the hero
+  // hiding itself either way.
+  if (youtubeCodecsMissing())
+    return ''
+  // Background art, not a player: no bar, no centre play button, no skip
+  // arrows. Mute is the app's own button beside the hero, over postMessage.
+  return youtubeEmbedSrc(key, { mute: true, loop: true, controls: false })
 })
 
 const heroFrame = ref<HTMLIFrameElement | null>(null)
@@ -257,11 +265,20 @@ function onTrailerReady() {
 
 // Only ever armed while the dialog is open, and generous: a slow line is not a
 // missing decoder, and calling one the other is the worse mistake of the two.
+//
+// The timeout is the fallback, not the first answer. A webview with MSE and no
+// decoders behind it can be recognised on the spot (`youtubeCodecsMissing`),
+// and nine seconds of YouTube's own unexplained error is a long time to sit in
+// front of an answer we already had.
 watch(trailer, open => {
   clearTimeout(trailerWait)
   trailerBroken.value = false
   if (!open || import.meta.server)
     return
+  if (youtubeCodecsMissing()) {
+    trailerBroken.value = true
+    return
+  }
   trailerWait = window.setTimeout(() => (trailerBroken.value = true), 9000)
 })
 
@@ -274,6 +291,15 @@ function onHeroMessage(e: MessageEvent) {
     return
   if (youtubeError(e.data)) {
     nextTrailer()
+    return
+  }
+  // The hero loops itself. A `playlist=`-based loop is what YouTube wants
+  // for this, and it draws previous/next buttons over the picture to go
+  // with it — see `youtubeEmbedSrc`. The Tauri build's relay does the same
+  // thing inside the iframe; this covers `bun run dev`.
+  if (youtubeEnded(e.data)) {
+    heroCommand('seekTo', [0, true])
+    heroCommand('playVideo')
     return
   }
   if (!youtubePlaying(e.data))
@@ -533,12 +559,11 @@ watch(() => props.id, () => {
             <iframe
               ref="heroFrame"
               :src="heroSrc"
-              class="absolute left-1/2 top-1/2 h-full w-full -translate-x-1/2 -translate-y-1/2 scale-[1.45] transition-opacity duration-300"
+              class="pointer-events-none absolute left-1/2 top-1/2 h-full w-full -translate-x-1/2 -translate-y-1/2 scale-[1.45] transition-opacity duration-300"
               :class="heroPlaying ? 'opacity-100' : 'opacity-0'"
               frameborder="0"
               allow="autoplay; encrypted-media; gyroscope; picture-in-picture; web-share"
               referrerpolicy="strict-origin-when-cross-origin"
-              allowfullscreen
               tabindex="-1"
               aria-hidden="true"
               @load="onHeroReady"

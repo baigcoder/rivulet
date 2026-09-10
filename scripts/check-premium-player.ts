@@ -475,6 +475,80 @@ check('a live channel shows a loader until the first frame', () => {
   )
 })
 
+// ── Which list is on screen ──────────────────────────────────────
+//
+// Both grids keep their rows in a `shallowRef` and append a new page to
+// it rather than rebuilding, so that paging does not re-key — and so
+// re-mount — every card already drawn. That optimisation is only safe
+// while "is this an append" is answered correctly, and it was answered
+// by comparing lengths.
+//
+// Lengths cannot answer it. A section hop (Movies ⇄ TV shows) and a
+// category hop both replace the list wholesale, and every list is paged
+// in `PAGE_SIZE` chunks — so the new list is very often *exactly* as
+// long as the old one, which the length test read as "nothing changed"
+// and left the previous list drawn. That is how the TV shows tab came to
+// show movies.
+
+check('neither grid decides "this is an append" from the length alone', () => {
+  for (const f of [GRID, VOD_GRID]) {
+    const s = read(f)
+    assert.ok(
+      s.includes('function isAppend('),
+      `${f} must test for an append explicitly`,
+    )
+    assert.ok(
+      !/next\.length\s*[<>]\s*prevLen/.test(s),
+      `${f} still branches on the length; two sections of equal length would keep the old rows`,
+    )
+  }
+})
+
+check('an append is recognised by identity, not by count', () => {
+  for (const f of [GRID, VOD_GRID]) {
+    const s = read(f)
+    const fn = /function isAppend\([\s\S]*?\n\}/.exec(s)
+    assert.ok(fn, `${f} has no isAppend body`)
+    // The prefix test: same first element, same last element of what was
+    // there before. Both are `===` on the item objects, which the store
+    // preserves across a `[...old, ...page]` append and cannot preserve
+    // across a fetch of a different list.
+    assert.ok(
+      fn[0].includes('next[0] === prevItems[0]'),
+      `${f} must check the first item is the same object`,
+    )
+    assert.ok(
+      /next\[n - 1\] === prevItems\[n - 1\]/.test(fn[0]),
+      `${f} must check the previous list is still a prefix`,
+    )
+  }
+})
+
+check('a list that is not an append rebuilds every row', () => {
+  for (const f of [GRID, VOD_GRID]) {
+    const s = read(f)
+    assert.ok(
+      /if \(!isAppend\(next\)\) \{[\s\S]{0,160}rebuildRows\(\)/.test(s),
+      `${f} must rebuild when the list was replaced`,
+    )
+  }
+})
+
+check('the VOD grid draws the section it was told to draw', () => {
+  const s = read(VOD_GRID)
+  // `items` is the switch: `kind` picks between the two lists, and
+  // everything downstream (rows, the virtualizer, the card template)
+  // has to follow it and not a stale copy.
+  assert.ok(
+    /const items = computed\(\(\) => props\.kind === 'movie' \? \(props\.movies \?\? \[\]\) : \(props\.series \?\? \[\]\)\)/.test(s),
+    'items must be derived from kind',
+  )
+  assert.ok(
+    s.includes('watch(items,'),
+    'the rows must be rebuilt from `items`, which is what changes on a section hop',
+  )
+})
+
 // ── Report ───────────────────────────────────────────────────────
 
 const passed = results.filter(r => r.passed).length

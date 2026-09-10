@@ -18,9 +18,11 @@ pub mod commands;
 pub mod entitlement;
 pub mod routes_premium;
 
+use std::collections::HashMap;
 use std::io::Read;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use axum::body::Body;
 use axum::http::{header, HeaderValue, Method, StatusCode};
@@ -240,6 +242,227 @@ pub fn build_router(state: ApiState) -> Router {
 /// in the webview and against nothing at all in mpv.
 pub const ADDR: &str = "127.0.0.1:3032";
 
+// ── Channel logo proxy ─────────────────────────────────────────────
+
+/// How long a failed logo is remembered as failed.
+///
+/// The point is not to save a byte of bandwidth, it is to stop the
+/// webview asking again. A 50,000-channel grid scrolled twice asks for
+/// the same dead logo twice, and each ask costs a connection attempt and
+/// up to `LOGO_TIMEOUT` of a blocking thread.
+const LOGO_MISS_TTL: Duration = Duration::from_secs(10 * 60);
+
+/// How long a whole logo *host* is skipped after it has failed
+/// repeatedly.
+///
+/// This is the case that matters in practice. A provider does not serve
+/// its own artwork — it points every one of its 50,000 channels at one
+/// image host, so when that host is down (one real provider answers 502
+/// after six seconds, for every logo it has) the per-URL cache above
+/// never helps: each URL is a first offence. Failing the whole host fast
+/// is what keeps a dead logo CDN from turning into a dead grid.
+const LOGO_HOST_PENALTY: Duration = Duration::from_secs(2 * 60);
+
+/// Consecutive failures before a host is skipped. Three, so one
+/// genuinely missing logo among working ones does not blind the rest.
+const LOGO_HOST_STRIKES: u32 = 3;
+
+/// Total budget for one logo. Well under the old 8s: a logo the grid is
+/// still waiting for after this is one the viewer has scrolled past.
+const LOGO_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Logos in flight at once.
+///
+/// Every fetch holds a `spawn_blocking` thread for as long as the
+/// upstream takes, and a fast scroll asks for hundreds. Left unbounded
+/// that saturates tokio's blocking pool — which is shared with
+/// everything else in the process that blocks — so a dead image host
+/// stalled work that had nothing to do with logos.
+const LOGO_CONCURRENCY: usize = 8;
+
+/// Cap on a logo body. A channel logo is a few KB; anything at this size
+/// is not artwork, and the whole thing is read into memory.
+const LOGO_MAX_BYTES: usize = 4 * 1024 * 1024;
+
+/// One pooled agent for every logo, built once.
+///
+/// It was previously built per request, which threw away the connection
+/// pool and the TLS session cache — sixty visible cards meant sixty
+/// fresh handshakes to the same host.
+static LOGO_AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+
+fn logo_agent() -> &'static ureq::Agent {
+    LOGO_AGENT.get_or_init(|| {
+        ureq::Agent::new_with_config(
+            ureq::config::Config::builder()
+                .timeout_global(Some(LOGO_TIMEOUT))
+                .user_agent("Rivulet")
+                .build(),
+        )
+    })
+}
+
+static LOGO_GATE: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
+
+fn logo_gate() -> &'static Arc<tokio::sync::Semaphore> {
+    LOGO_GATE.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(LOGO_CONCURRENCY)))
+}
+
+#[derive(Default)]
+struct LogoHealth {
+    /// URLs known to have failed, and when. Bounded — see `note_miss`.
+    misses: HashMap<String, Instant>,
+    /// Per-host consecutive failure count and, once struck out, the
+    /// moment the host may be tried again.
+    hosts: HashMap<String, (u32, Option<Instant>)>,
+}
+
+static LOGO_HEALTH: OnceLock<Mutex<LogoHealth>> = OnceLock::new();
+
+fn logo_health() -> &'static Mutex<LogoHealth> {
+    LOGO_HEALTH.get_or_init(|| Mutex::new(LogoHealth::default()))
+}
+
+/// `true` if this URL, or the host it is on, is known bad right now.
+fn logo_is_known_bad(url: &str, host: &str) -> bool {
+    let mut health = logo_health().lock().unwrap_or_else(|e| e.into_inner());
+
+    let miss = health.misses.get(url).copied();
+    match miss {
+        Some(at) if at.elapsed() < LOGO_MISS_TTL => return true,
+        Some(_) => {
+            health.misses.remove(url);
+        }
+        None => {}
+    }
+
+    let penalty = health.hosts.get(host).and_then(|&(_, until)| until);
+    match penalty {
+        Some(until) if Instant::now() < until => true,
+        Some(_) => {
+            // The penalty is up. Clear it but keep the strike count, so a
+            // host that is still down is struck out again by its next
+            // failure rather than getting a fresh three.
+            if let Some(entry) = health.hosts.get_mut(host) {
+                entry.1 = None;
+            }
+            false
+        }
+        None => false,
+    }
+}
+
+fn note_miss(url: &str, host: &str) {
+    let mut health = logo_health().lock().unwrap_or_else(|e| e.into_inner());
+    // A catalog holds more distinct logo URLs than it is worth
+    // remembering failures for. Drop the expired ones first; if that is
+    // not enough, drop the lot — the host breaker below is the part that
+    // carries the load anyway.
+    if health.misses.len() >= 4096 {
+        health.misses.retain(|_, at| at.elapsed() < LOGO_MISS_TTL);
+        if health.misses.len() >= 4096 {
+            health.misses.clear();
+        }
+    }
+    health.misses.insert(url.to_string(), Instant::now());
+    if health.hosts.len() > 256 {
+        health.hosts.clear();
+    }
+    let entry = health.hosts.entry(host.to_string()).or_insert((0, None));
+    entry.0 = entry.0.saturating_add(1);
+    if entry.0 >= LOGO_HOST_STRIKES {
+        entry.1 = Some(Instant::now() + LOGO_HOST_PENALTY);
+    }
+}
+
+fn note_hit(url: &str, host: &str) {
+    let mut health = logo_health().lock().unwrap_or_else(|e| e.into_inner());
+    health.misses.remove(url);
+    health.hosts.remove(host);
+}
+
+/// A logo the proxy could not get, in a form the page will not ask for
+/// again.
+///
+/// `404`, not a placeholder image: the cards already draw their own
+/// fallback on an `<img>` error (see `PremiumChannelCard`), and that is a
+/// better tile than a transparent pixel. The `Cache-Control` is the whole
+/// point — without it the webview re-requests every dead logo on every
+/// scroll.
+fn logo_unavailable() -> Response {
+    let mut response = Response::new(Body::empty());
+    *response.status_mut() = StatusCode::NOT_FOUND;
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=600"),
+    );
+    response
+}
+
+/// Reject anything that is not a public address.
+///
+/// The old check was three literal hostnames, which let through every
+/// other way of naming this machine or the network it is on: `127.0.0.2`,
+/// `[::1]`, `10.x`, `192.168.x`, and the cloud metadata address. This
+/// route takes a URL out of a provider's catalog and fetches it from
+/// inside the user's network, so it is exactly the shape of thing that
+/// should not be pointable at the user's router.
+///
+/// It is a check on the URL, not on where the URL resolves: a domain
+/// whose A record is `192.168.1.1` still gets through. Closing that
+/// needs the resolution and the connection to be the same decision,
+/// which is a custom resolver on the agent rather than a test here.
+fn logo_host_is_public(host: &url::Host<&str>) -> bool {
+    use std::net::IpAddr;
+    match host {
+        url::Host::Domain(name) => {
+            let lower = name.to_ascii_lowercase();
+            !(lower == "localhost"
+                || lower.ends_with(".localhost")
+                || lower.ends_with(".local")
+                || lower.ends_with(".internal")
+                || lower.ends_with(".home.arpa"))
+        }
+        url::Host::Ipv4(ip) => ip_is_public(&IpAddr::V4(*ip)),
+        url::Host::Ipv6(ip) => ip_is_public(&IpAddr::V6(*ip)),
+    }
+}
+
+fn ip_is_public(ip: &std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    match ip {
+        IpAddr::V4(v4) => {
+            let o = v4.octets();
+            !(v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_broadcast()
+                || v4.is_unspecified()
+                || v4.is_documentation()
+                || v4.is_multicast()
+                || o[0] == 0
+                // 100.64.0.0/10, carrier-grade NAT — and what a phone
+                // on mobile data sits behind.
+                || (o[0] == 100 && (o[1] & 0xc0) == 64))
+        }
+        IpAddr::V6(v6) => {
+            let mapped_is_private = v6
+                .to_ipv4_mapped()
+                .map(|m| !ip_is_public(&IpAddr::V4(m)))
+                .unwrap_or(false);
+            !(v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                // fc00::/7 unique-local.
+                || (v6.segments()[0] & 0xfe00) == 0xfc00
+                // fe80::/10 link-local.
+                || (v6.segments()[0] & 0xffc0) == 0xfe80
+                // An IPv4-mapped address is an IPv4 address wearing a hat.
+                || mapped_is_private)
+        }
+    }
+}
+
 /// Image proxy for channel logos. Provider logo URLs are often `http://`
 /// which the Android webview blocks as mixed content from its
 /// `https://tauri.localhost` origin. This handler fetches the image
@@ -249,6 +472,11 @@ pub const ADDR: &str = "127.0.0.1:3032";
 /// reqwest's `rustls` feature pulls in `rustls-platform-verifier`, which
 /// panics on Android unless JNI-initialized — and the premium API has no
 /// access to the JNI env.
+///
+/// Everything above this function exists because of scale. A 50,000
+/// channel catalog points at one logo host, and when that host is slow or
+/// down the honest answer has to arrive quickly and stay cached, or the
+/// grid waits on artwork nobody is looking at any more.
 async fn proxy_image(
     axum::extract::RawQuery(raw): axum::extract::RawQuery,
 ) -> Result<Response, StatusCode> {
@@ -257,26 +485,36 @@ async fn proxy_image(
         .find(|(k, _)| k == "url")
         .map(|(_, v)| v.into_owned())
         .ok_or(StatusCode::BAD_REQUEST)?;
-    // Validate: only http(s) URLs, no local addresses
+    // Validate: only http(s) URLs, and nothing on this machine or this
+    // network.
     let parsed = url::Url::parse(&url).map_err(|_| StatusCode::BAD_REQUEST)?;
     let scheme = parsed.scheme();
     if scheme != "http" && scheme != "https" {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let host = parsed.host_str().unwrap_or("");
-    if host == "localhost" || host == "127.0.0.1" || host == "0.0.0.0" || host.ends_with(".local") {
+    let Some(host) = parsed.host() else {
+        return Err(StatusCode::BAD_REQUEST);
+    };
+    if !logo_host_is_public(&host) {
         return Err(StatusCode::BAD_REQUEST);
     }
+    let host_key = host.to_string();
+
+    if logo_is_known_bad(&url, &host_key) {
+        return Ok(logo_unavailable());
+    }
+
+    // Queue behind the gate rather than starting an unbounded number of
+    // blocking fetches. A closed semaphore is the only error and nothing
+    // closes this one.
+    let Ok(permit) = logo_gate().clone().acquire_owned().await else {
+        return Ok(logo_unavailable());
+    };
 
     let url_clone = url.clone();
-    let bytes = tokio::task::spawn_blocking(move || {
-        let agent = ureq::Agent::new_with_config(
-            ureq::config::Config::builder()
-                .timeout_global(Some(std::time::Duration::from_secs(8)))
-                .user_agent("Rivulet")
-                .build(),
-        );
-        let resp = agent
+    let fetched = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let resp = logo_agent()
             .get(&url_clone)
             .call()
             .map_err(|_| StatusCode::BAD_GATEWAY)?;
@@ -287,21 +525,39 @@ async fn proxy_image(
             .unwrap_or("image/jpeg")
             .to_string();
         let mut buf = Vec::new();
+        // `take` rather than a bare `read_to_end`: this reads a URL out
+        // of a provider's catalog, and a provider does not get to decide
+        // how much of this process's memory that is worth.
         resp.into_body()
             .into_reader()
+            .take(LOGO_MAX_BYTES as u64 + 1)
             .read_to_end(&mut buf)
             .map_err(|_| StatusCode::BAD_GATEWAY)?;
+        if buf.is_empty() || buf.len() > LOGO_MAX_BYTES {
+            return Err(StatusCode::BAD_GATEWAY);
+        }
         Ok::<_, StatusCode>((buf, content_type))
     })
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
+    .await;
 
-    let (body, content_type) = bytes;
+    let (body, content_type) = match fetched {
+        Ok(Ok(pair)) => {
+            note_hit(&url, &host_key);
+            pair
+        }
+        // A failed fetch and a panicked task are the same thing to the
+        // page: no logo, and don't ask again for a while.
+        Ok(Err(_)) | Err(_) => {
+            note_miss(&url, &host_key);
+            return Ok(logo_unavailable());
+        }
+    };
 
     let mut response = Response::new(Body::from(body));
     response.headers_mut().insert(
         header::CONTENT_TYPE,
-        HeaderValue::from_str(&content_type).unwrap_or_else(|_| HeaderValue::from_static("image/jpeg")),
+        HeaderValue::from_str(&content_type)
+            .unwrap_or_else(|_| HeaderValue::from_static("image/jpeg")),
     );
     // Cache for 7 days — logos rarely change
     response.headers_mut().insert(

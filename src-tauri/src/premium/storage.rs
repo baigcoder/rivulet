@@ -82,6 +82,15 @@ CREATE TABLE IF NOT EXISTS iptv_premium_channels (
 );
 CREATE INDEX IF NOT EXISTS iptv_premium_channels_cat
   ON iptv_premium_channels (connection_id, category_id);
+-- On `category_name`, and not only on `category_id`, because
+-- `category_name` is what the reads actually filter by: the rail sends
+-- back the label it drew, so `query_channels` compares that column, and
+-- `category_counts` groups by it. With just the `category_id` index both
+-- were a full scan of the channel table — 53,782 rows on a large panel,
+-- twice per category click, since the page and its total are two
+-- queries.
+CREATE INDEX IF NOT EXISTS iptv_premium_channels_catname
+  ON iptv_premium_channels (connection_id, category_name);
 CREATE INDEX IF NOT EXISTS iptv_premium_channels_country
   ON iptv_premium_channels (connection_id, country);
 CREATE INDEX IF NOT EXISTS iptv_premium_channels_name
@@ -184,7 +193,25 @@ impl PremiumState {
             std::fs::create_dir_all(parent).ok();
         }
         let conn = Connection::open(db_path)?;
-        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")?;
+        // Sized for a large panel: 50-70k channel rows replaced in one
+        // transaction on every catalog import, then paged over.
+        //
+        // `synchronous = NORMAL` is the one worth explaining. Under WAL
+        // it stops fsyncing every commit, and what that risks is losing
+        // the last transaction to an OS crash — which here is a *cache*
+        // of a catalog that is re-downloadable by definition, against a
+        // fsync per import on a TV box's flash. `temp_store` and
+        // `cache_size` (32 MB, negative means KiB) keep the sort and the
+        // index build for that import off disk, and `busy_timeout` is
+        // what stops a page query racing an import into `SQLITE_BUSY`.
+        conn.execute_batch(
+            "PRAGMA journal_mode = WAL;
+             PRAGMA foreign_keys = ON;
+             PRAGMA synchronous = NORMAL;
+             PRAGMA temp_store = MEMORY;
+             PRAGMA cache_size = -32000;
+             PRAGMA busy_timeout = 5000;",
+        )?;
         conn.execute_batch(SCHEMA)?;
         migrate(&conn)?;
         conn.execute_batch(POST_MIGRATION_INDEXES)?;

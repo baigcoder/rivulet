@@ -20,7 +20,7 @@
 import assert from 'node:assert'
 import { readdirSync, readFileSync } from 'node:fs'
 import process from 'node:process'
-import { youtubeCommand, youtubeError, youtubePlaying } from '../app/utils/youtube'
+import { youtubeCommand, youtubeEmbedSrc, youtubeEnded, youtubeError, youtubePlaying } from '../app/utils/youtube'
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
 
@@ -497,6 +497,45 @@ assert.equal(youtubePlaying('{"info":{"playerState":1}}'), true)
 assert.equal(youtubePlaying('{"info":{"playerState":3}}'), false)
 assert.equal(youtubeError('{"event":"onError","info":150}'), true)
 assert.equal(youtubeError('{"info":{"playerState":1}}'), false)
+
+// ── The cover hero is background art, not a player ───────────────
+//
+// YouTube ignores `loop` unless `playlist` names the same video, and a
+// playlist — even a one-video one — is what makes it paint previous/next
+// buttons over the picture. Together with the centre play button, that is the
+// whole "why is there a play and two skip arrows on the cover". So the hero
+// asks for no controls and loops on `ended` instead, and only a player the
+// user opened deliberately gets the playlist form.
+//
+// This was in the app once and was lost in a large unrelated refactor
+// (`3e99f0e`), which is why it is pinned here rather than left to the reader.
+const heroSrc = youtubeEmbedSrc('abc12345678', { mute: true, loop: true, controls: false })
+const dialogSrc = youtubeEmbedSrc('abc12345678', { loop: true })
+// `disablekb` matters twice over on a TV: a d-pad press must never reach
+// YouTube and seek the trailer running behind the page.
+for (const p of ['controls=0', 'fs=0', 'disablekb=1', 'iv_load_policy=3']) {
+  assert.ok(heroSrc.includes(p), `the hero embed must set ${p}`)
+}
+assert.doesNotMatch(heroSrc, /playlist=/, 'a playlist loop draws skip buttons on the hero')
+assert.doesNotMatch(dialogSrc, /controls=0/, 'a trailer the user opened keeps its controls')
+assert.match(dialogSrc, /playlist=/, 'a visible player loops the way YouTube wants')
+assert.equal(youtubeEnded('{"info":{"playerState":0}}'), true)
+assert.equal(youtubeEnded('{"info":{"playerState":1}}'), false)
+assert.match(detail, /controls: false/, 'the hero must ask for no controls')
+assert.match(detail, /pointer-events-none/, 'nothing may hover the hero into showing YouTube chrome')
+assert.match(detail, /youtubeEnded/, 'the browser build loops the hero itself')
+assert.match(
+  read('src-tauri/src/iptv/proxy.rs'),
+  /looping && controls/,
+  'the relay must only use a playlist when controls are shown',
+)
+// A raw youtube.com iframe has no relay in front of it, and a `tauri://`
+// origin is exactly what YouTube refuses.
+assert.doesNotMatch(
+  read('app/pages/index.vue'),
+  /youtube\.com\/embed/,
+  'every embed goes through youtubeEmbedSrc, which routes Tauri via the relay',
+)
 
 const seasonPage = read('app/pages/tv/[id]/season/[season]/index.vue')
 assert.match(

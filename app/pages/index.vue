@@ -390,7 +390,7 @@ const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
       <v-card v-if="trailerKey" rounded="xl" class="overflow-hidden">
         <div class="relative aspect-video">
           <iframe
-            :src="`https://www.youtube.com/embed/${trailerKey}?autoplay=1&rel=0`"
+            :src="youtubeEmbedSrc(trailerKey)"
             class="absolute inset-0 h-full w-full"
             allow="autoplay; encrypted-media"
             allowfullscreen

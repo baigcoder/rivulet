@@ -20,6 +20,9 @@ const ERRORS_RS = `${ROOT}/src-tauri/src/premium/errors.rs`
 const ROUTES_RS = `${ROOT}/src-tauri/src/api/routes_premium.rs`
 const CRYPTO_RS = `${ROOT}/src-tauri/src/premium/crypto.rs`
 const AUTH_RS = `${ROOT}/src-tauri/src/api/auth.rs`
+const STORAGE_RS = `${ROOT}/src-tauri/src/premium/storage.rs`
+const API_RS = `${ROOT}/src-tauri/src/api/mod.rs`
+const IPTV_PROXY_RS = `${ROOT}/src-tauri/src/iptv/proxy.rs`
 
 interface CheckResult {
   name: string
@@ -51,6 +54,9 @@ const errors = readFileSync(ERRORS_RS, 'utf8')
 const routes = readFileSync(ROUTES_RS, 'utf8')
 const crypto = readFileSync(CRYPTO_RS, 'utf8')
 const auth = readFileSync(AUTH_RS, 'utf8')
+const storage = readFileSync(STORAGE_RS, 'utf8')
+const api = readFileSync(API_RS, 'utf8')
+const proxy = readFileSync(IPTV_PROXY_RS, 'utf8')
 
 // ── Credential isolation ──────────────────────────────────
 
@@ -195,6 +201,135 @@ check('all premium routes go through require_auth', () => {
       `missing handler for ${fn}`,
     )
   }
+})
+
+// ── Scale ─────────────────────────────────────────────────
+//
+// A big panel is not a rounding error on a small one. The account these
+// were written against answers `get_live_streams` with 53,782 channels
+// in 23 MB of JSON across 781 categories, and has 219,565 films in 363
+// categories and 17,156 series in 105. Each check below is a place where
+// that size turned something linear into something quadratic, or turned
+// one connection into thousands.
+
+check('the big Xtream downloads do not share the small calls timeout', () => {
+  assert.ok(
+    xtream.includes('CATALOG_READ_TIMEOUT'),
+    'the live lineup and the VOD lists need their own read timeout',
+  )
+  assert.ok(
+    xtream.includes('fn catalog_client('),
+    'expected a catalog_client() for the tens-of-megabytes responses',
+  )
+  assert.ok(
+    /fn get_channels\(&self\)[\s\S]{0,400}?self\.catalog_client\(\)/.test(xtream),
+    'get_channels must use the catalog client, not the 15s one',
+  )
+})
+
+check('Xtream clients are built once, not per request', () => {
+  // A `reqwest::Client` *is* the connection pool. Building one per call
+  // meant `merge_vod_movies` opened a fresh TLS connection for each of a
+  // panel's 363 movie categories.
+  assert.ok(
+    xtream.includes('static CLIENT: OnceLock<Client>')
+    && xtream.includes('static CATALOG_CLIENT: OnceLock<Client>'),
+    'both clients must be process-wide statics',
+  )
+  assert.ok(
+    !/fn client\(&self\) -> Result<Client, PremiumError> \{\s*Client::builder\(\)/.test(xtream),
+    'client() must not build a new Client on every call',
+  )
+})
+
+check('the channel table is indexed on what the reads filter by', () => {
+  // `query_channels` compares `category_name` (the rail sends back the
+  // label it drew) and `category_counts` groups by it. Indexed only on
+  // `category_id`, both were a full scan of every channel — twice per
+  // category click, because the page and its total are two queries.
+  assert.ok(
+    /CREATE INDEX IF NOT EXISTS iptv_premium_channels_catname[\s\S]{0,120}category_name/.test(storage),
+    'missing an index on (connection_id, category_name)',
+  )
+  assert.ok(
+    repository.includes('c.category_name = ?'),
+    'if the category filter stopped using category_name, the index above is the wrong one',
+  )
+})
+
+check('a 50k-row catalog import is not one fsync per row', () => {
+  for (const pragma of ['synchronous = NORMAL', 'temp_store = MEMORY', 'busy_timeout']) {
+    assert.ok(storage.includes(pragma), `missing PRAGMA ${pragma}`)
+  }
+  assert.ok(
+    storage.includes('journal_mode = WAL'),
+    'synchronous = NORMAL is only a safe trade under WAL',
+  )
+})
+
+// ── Channel logos ─────────────────────────────────────────
+
+check('a dead logo host fails fast and stays failed', () => {
+  // A provider points all 50,000 of its channels at one image host. When
+  // that host is down — one real provider answers 502 after six seconds,
+  // for every logo it has — a per-URL cache never helps, because every
+  // URL is a first offence. The host itself has to be given up on.
+  assert.ok(
+    api.includes('LOGO_HOST_STRIKES') && api.includes('LOGO_HOST_PENALTY'),
+    'expected a per-host failure breaker in the logo proxy',
+  )
+  assert.ok(
+    api.includes('LOGO_CONCURRENCY'),
+    'unbounded logo fetches saturate the blocking pool the whole process shares',
+  )
+  assert.ok(
+    api.includes('static LOGO_AGENT'),
+    'the logo agent must be pooled, not rebuilt per request',
+  )
+})
+
+check('a logo the proxy could not get is cacheable', () => {
+  // Without a Cache-Control on the failure the webview re-requests every
+  // dead logo on every scroll. 404 rather than a placeholder image,
+  // because the cards draw their own fallback on an <img> error.
+  assert.ok(
+    /fn logo_unavailable\(\)[\s\S]{0,400}CACHE_CONTROL/.test(api),
+    'the failure response needs a Cache-Control',
+  )
+  assert.ok(
+    /fn logo_unavailable\(\)[\s\S]{0,400}NOT_FOUND/.test(api),
+    'the failure response should be a 404 so the card falls back',
+  )
+})
+
+check('the logo proxy will not fetch from inside the network', () => {
+  // It takes a URL out of a provider's catalog and fetches it from the
+  // user's own machine, so it is exactly the shape of thing that must
+  // not be pointable at the user's router or a metadata endpoint.
+  assert.ok(
+    api.includes('fn logo_host_is_public('),
+    'expected an explicit public-address check',
+  )
+  for (const guard of ['is_private()', 'is_loopback()', 'is_link_local()', 'to_ipv4_mapped()']) {
+    assert.ok(api.includes(guard), `logo host check is missing ${guard}`)
+  }
+})
+
+// ── Playback ──────────────────────────────────────────────
+
+check('a cached CDN hop expires before the provider token does', () => {
+  // A panel's 302 commonly lands on a tokenised CDN path whose own
+  // expiry is minutes away. The probes the cache exists for arrive
+  // within seconds of a zap, so a long TTL buys nothing and risks
+  // handing the player a dead URL — on an account whose connection
+  // limit is often exactly one.
+  const ttl = /const REDIR_TTL: Duration = Duration::from_secs\((\d+)(?:\s*\*\s*(\d+))?\)/.exec(proxy)
+  assert.ok(ttl, 'REDIR_TTL not found in the IPTV proxy')
+  const secs = Number(ttl[1]) * (ttl[2] ? Number(ttl[2]) : 1)
+  assert.ok(
+    secs <= 120,
+    `REDIR_TTL is ${secs}s; a tokenised CDN hop is commonly dead inside four minutes`,
+  )
 })
 
 const passed = results.filter(r => r.passed).length

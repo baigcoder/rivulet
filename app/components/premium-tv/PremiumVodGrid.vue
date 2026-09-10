@@ -72,33 +72,52 @@ function rebuildRows(): void {
   triggerRef(rows)
 }
 
-let prevLen = 0
+/**
+ * Appending a page must not re-key the rows already on screen — that
+ * re-mounts every card and re-requests every poster. But whether a
+ * change *is* an append cannot be read off the length.
+ *
+ * `items` switches wholesale on a section hop (Movies ⇄ TV shows) and on
+ * a category hop, and both sections page in `PAGE_SIZE` chunks — so the
+ * two lists are very often exactly the same length, which the old length
+ * test read as "nothing changed" and left the previous list drawn. That
+ * is how the TV shows tab came to show movies. The test is identity
+ * instead: an append keeps the array the previous pass ended with as its
+ * own prefix.
+ */
+type VodItem = PremiumVodItem | PremiumSeriesItem
+let prevItems: VodItem[] = []
+function isAppend(next: readonly VodItem[]): boolean {
+  const n = prevItems.length
+  if (n === 0 || next.length <= n)
+    return false
+  return next[0] === prevItems[0] && next[n - 1] === prevItems[n - 1]
+}
 watch(items, next => {
   const c = cols.value
-  if (next.length < prevLen) {
-    prevLen = next.length
+  const prevLen = prevItems.length
+  if (!isAppend(next)) {
+    prevItems = next.slice()
     rebuildRows()
     return
   }
-  if (next.length > prevLen) {
-    const result = rows.value.slice()
-    const last = result[result.length - 1]
-    let i = prevLen
-    if (last && last.length < c) {
-      const tail = [...last]
-      while (i < next.length && tail.length < c) {
-        const item = next[i++]
-        if (item)
-          tail.push(item)
-      }
-      result[result.length - 1] = tail
+  const result = rows.value.slice()
+  const last = result[result.length - 1]
+  let i = prevLen
+  if (last && last.length < c) {
+    const tail = [...last]
+    while (i < next.length && tail.length < c) {
+      const item = next[i++]
+      if (item)
+        tail.push(item)
     }
-    for (; i < next.length; i += c)
-      result.push(next.slice(i, i + c))
-    prevLen = next.length
-    rows.value = result
-    triggerRef(rows)
+    result[result.length - 1] = tail
   }
+  for (; i < next.length; i += c)
+    result.push(next.slice(i, i + c))
+  prevItems = next.slice()
+  rows.value = result
+  triggerRef(rows)
 }, { immediate: true })
 
 const virtualizer = useVirtualizer(computed(() => ({

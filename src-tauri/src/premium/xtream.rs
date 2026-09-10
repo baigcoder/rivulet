@@ -17,12 +17,14 @@
 //! channel" — a movie or series record must never become a
 //! channel.
 //!
-//! All HTTP calls share one `reqwest::Client` (5s connect, 15s
-//! read, 3 retries with exponential backoff). Credentials are
-//! never logged.
+//! HTTP goes through two process-wide `reqwest::Client`s, both 5s
+//! connect with 3 retries and exponential backoff, split only by read
+//! timeout: 15s for the small `action=` calls, and 60s for the three
+//! downloads that are tens of megabytes on a large panel (the live
+//! lineup, the VOD list, the series list). Credentials are never logged.
 
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -41,11 +43,44 @@ use super::storage::{self, PremiumState};
 /// 5s connect, 15s read.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const READ_TIMEOUT: Duration = Duration::from_secs(15);
+/// Idle timeout for the catalog downloads — the live lineup and the VOD
+/// lists. Tens of megabytes, so the number that matters is the gap
+/// between two chunks, not the time to finish.
+const CATALOG_READ_TIMEOUT: Duration = Duration::from_secs(60);
 /// 3 retries with exponential backoff. The reqwest `Client` is the
 /// place to centralise this — the per-call layer just sees a
 /// single `Result`.
 const MAX_RETRIES: u32 = 3;
 const BACKOFF_BASE: Duration = Duration::from_millis(500);
+
+/// The two clients, built once each for the life of the process. A
+/// `reqwest::Client` *is* the connection pool, so one per process is the
+/// point of it; see `XtreamAdapter::client`.
+static CLIENT: OnceLock<Client> = OnceLock::new();
+static CATALOG_CLIENT: OnceLock<Client> = OnceLock::new();
+
+/// `get_or_init` cannot fail, so the build error has to be handled
+/// before it: a failure here is a broken TLS backend rather than
+/// anything about this provider, and it would fail the same way every
+/// time. Building into a local first keeps that error typed instead of
+/// panicking inside the initializer.
+fn shared_client(
+    cell: &'static OnceLock<Client>,
+    read_timeout: Duration,
+) -> Result<Client, PremiumError> {
+    if let Some(c) = cell.get() {
+        return Ok(c.clone());
+    }
+    let built = Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .read_timeout(read_timeout)
+        .user_agent("Rivulet/0.5 (Xtream)")
+        .build()
+        .map_err(|e| PremiumError::Network(e.to_string()))?;
+    // A race here means two clients were built and one is dropped —
+    // harmless, and cheaper than a lock on every request.
+    Ok(cell.get_or_init(|| built).clone())
+}
 
 pub struct XtreamAdapter {
     pub state: Arc<PremiumState>,
@@ -57,25 +92,32 @@ impl XtreamAdapter {
         Self { state, connection_id }
     }
 
-    /// Single shared `reqwest::Client`. Built lazily on first use.
+    /// The shared client for the small `action=` calls.
+    ///
+    /// Shared *properly*: this used to say "built lazily on first use"
+    /// while building a brand-new `Client` — and so a brand-new
+    /// connection pool and TLS session cache — on every single call.
+    /// `merge_vod_movies` walks a category at a time, and a panel here
+    /// has 363 movie categories, so browsing "All movies" on a big
+    /// account meant hundreds of fresh TLS handshakes to one host that
+    /// would each have been a pooled reuse.
     fn client(&self) -> Result<Client, PremiumError> {
-        Client::builder()
-            .connect_timeout(CONNECT_TIMEOUT)
-            .read_timeout(READ_TIMEOUT)
-            .user_agent("Rivulet/0.5 (Xtream)")
-            .build()
-            .map_err(|e| PremiumError::Network(e.to_string()))
+        shared_client(&CLIENT, READ_TIMEOUT)
     }
 
-    /// VOD catalogs are larger than live lists; 15s idle is enough to
-    /// abort a hung panel and not enough to finish a fat category.
-    fn vod_client(&self) -> Result<Client, PremiumError> {
-        Client::builder()
-            .connect_timeout(CONNECT_TIMEOUT)
-            .read_timeout(Duration::from_secs(60))
-            .user_agent("Rivulet/0.5 (Xtream)")
-            .build()
-            .map_err(|e| PremiumError::Network(e.to_string()))
+    /// The client for the requests that are genuinely big: the whole
+    /// live lineup, and the VOD and series lists.
+    ///
+    /// `client()`'s 15s read timeout is right for the small `action=`
+    /// calls and wrong for these. A large panel answers
+    /// `get_live_streams` with tens of megabytes — one measured at 23 MB
+    /// for 53,782 channels — and on a slow line the gap between two
+    /// chunks of that can pass 15s without the panel being in any
+    /// trouble. That turned one slow download into three timed-out
+    /// retries of the same tens of megabytes, which is the worst thing
+    /// to do to a connection that is already struggling.
+    fn catalog_client(&self) -> Result<Client, PremiumError> {
+        shared_client(&CATALOG_CLIENT, CATALOG_READ_TIMEOUT)
     }
 
     /// Read the encrypted config out of the vault.
@@ -528,11 +570,16 @@ impl IPTVProvider for XtreamAdapter {
 
     async fn get_channels(&self) -> Result<Vec<IPTVChannel>, PremiumError> {
         let creds = self.config().await?;
-        let client = self.client()?;
+        let client = self.catalog_client()?;
         let url = creds.api_url("get_live_streams");
         let bytes = get_with_retries(&client, &url).await?;
         let raw: Vec<XtreamStream> = serde_json::from_slice(&bytes)
             .map_err(|e| PremiumError::MalformedResponse(format!("channels: {e}")))?;
+        // The parsed rows and the JSON they came from are each tens of
+        // megabytes on a large panel, and the built channels are a third
+        // copy. Drop the bytes before building the third one — this runs
+        // on a TV box as well as a desktop.
+        drop(bytes);
         let mut out: Vec<(Option<i64>, IPTVChannel)> = raw
             .into_iter()
             // `stream_type` is the only thing separating a live channel
@@ -816,7 +863,7 @@ impl XtreamAdapter {
             return Ok(cats);
         }
         let creds = self.config().await?;
-        let bytes = get_with_retries(&self.vod_client()?, &creds.api_url("get_vod_categories")).await?;
+        let bytes = get_with_retries(&self.catalog_client()?, &creds.api_url("get_vod_categories")).await?;
         let raw: Vec<XtreamCategory> = serde_json::from_slice(&bytes)
             .map_err(|e| PremiumError::MalformedResponse(format!("vod categories: {e}")))?;
         let cats: Vec<super::models::VodCategory> = raw.into_iter().filter_map(|c| {
@@ -833,7 +880,7 @@ impl XtreamAdapter {
             return Ok(cats);
         }
         let creds = self.config().await?;
-        let bytes = get_with_retries(&self.vod_client()?, &creds.api_url("get_series_categories")).await?;
+        let bytes = get_with_retries(&self.catalog_client()?, &creds.api_url("get_series_categories")).await?;
         let raw: Vec<XtreamCategory> = serde_json::from_slice(&bytes)
             .map_err(|e| PremiumError::MalformedResponse(format!("series categories: {e}")))?;
         let cats: Vec<super::models::VodCategory> = raw.into_iter().filter_map(|c| {
@@ -854,7 +901,7 @@ impl XtreamAdapter {
         }
         let creds = self.config().await?;
         let url = self.vod_api_url(&creds, "get_vod_streams", category_id);
-        let bytes = get_with_retries(&self.vod_client()?, &url).await?;
+        let bytes = get_with_retries(&self.catalog_client()?, &url).await?;
         let raw: Vec<XtreamVodStream> = serde_json::from_slice(&bytes)
             .map_err(|e| PremiumError::MalformedResponse(format!("vod streams: {e}")))?;
         let all: Vec<super::models::PremiumVodItem> = raw.into_iter().filter_map(|s| {
@@ -885,7 +932,7 @@ impl XtreamAdapter {
         }
         let creds = self.config().await?;
         let url = self.vod_api_url(&creds, "get_series", category_id);
-        let bytes = get_with_retries(&self.vod_client()?, &url).await?;
+        let bytes = get_with_retries(&self.catalog_client()?, &url).await?;
         let raw: Vec<XtreamSeriesRow> = serde_json::from_slice(&bytes)
             .map_err(|e| PremiumError::MalformedResponse(format!("series: {e}")))?;
         let all: Vec<super::models::PremiumSeriesItem> = raw.into_iter().filter_map(|s| {

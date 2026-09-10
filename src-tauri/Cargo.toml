@@ -146,7 +146,11 @@ features = [ "rust-tls", "http-api", "http-api-client", "tracing-subscriber-util
 
 [dependencies.tokio]
 version = "1"
-features = [ "rt-multi-thread", "fs", "io-util", "process", "time" ]
+# `sync` for the async `Mutex`/`Semaphore` the IPTV proxy and the logo
+# proxy gate on. It has been arriving transitively through reqwest; name
+# it, so a dependency dropping it is a resolver error and not a build
+# that fails in two files.
+features = [ "rt-multi-thread", "fs", "io-util", "process", "sync", "time" ]
 
 [features]
 default = ["desktop"]
