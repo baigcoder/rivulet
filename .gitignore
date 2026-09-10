@@ -39,6 +39,7 @@ packaging/flatpak/generated
 
 # Vercel static output (built from public/ + landing.html)
 .vercel-static
+.vercel-out
 
 # Build artifacts
 *.apk
