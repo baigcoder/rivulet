@@ -2341,8 +2341,9 @@ async function poll() {
     paused.value = p.pause
   buffering.value = p['paused-for-cache'] === true
   if (isLive.value && started.value && videoWidth.value > 0 && buffering.value && !behindLive.value) {
-    if (!liveStallSince)
+    if (!liveStallSince) {
       liveStallSince = Date.now()
+    }
     else if (Date.now() - liveStallSince > 8_000 && Date.now() >= liveRecoverAfter) {
       liveRecoverAfter = Date.now() + 15_000
       liveStallSince = 0

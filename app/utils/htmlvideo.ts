@@ -287,7 +287,7 @@ export function videoEngine(video: HTMLVideoElement): PlayerEngine {
       const Hls = mod.default
       if (!Hls?.isSupported())
         return false
-      const live = /\/live\/|\.m3u8(\?|$)/i.test(url)
+      const live = /\/live\/|\.m3u8(?:\?|$)/i.test(url)
       // A live playlist wants a short back-buffer: the default keeps
       // everything played, which on a channel left on for an hour is hundreds
       // of megabytes of segments a TV does not have to spare.

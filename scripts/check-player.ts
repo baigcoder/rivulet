@@ -388,6 +388,13 @@ assert.match(mpvLinux, /--hwdec=auto-safe/, 'copy-back + gpu vo is the 10-bit pi
 assert.match(mpv, /rec\.dw === 'number'/, 'the resolution badge must use display size, not coded 1920 on a 4K stream')
 assert.match(mpv, /liveStallSince/, 'live buffering forever must reopen the URL, not wait on cache-pause')
 assert.match(mpvWin, /player_direct::live_cli/, 'Windows live uses the same probe/cache')
+// Live 4K is PQ/HLG into an SDR swapchain. The IPC pass covers it once mpv is
+// up; these cover the frames before that, and both desktop backends need them
+// or the two files have quietly drifted again.
+for (const [name, src] of [['Linux', mpvLinux], ['Windows', mpvWin]] as const) {
+  assert.match(src, /--target-trc=bt\.1886/, `${name} live opens SDR, not a washed-out PQ frame`)
+  assert.match(src, /--target-colorspace-hint=no/, `${name} live does not claim an HDR window it hasn't got`)
+}
 assert.match(mpvMac, /player_direct::live_kv/, 'macOS live uses the same probe/cache')
 assert.match(mpvDirect, /fn live_stream_lavf_o/, 'live must not inherit Direct\'s 90s rw_timeout')
 assert.match(mpvDirect, /reconnect_at_eof=1/, 'a silent live panel closes without FIN — reopen, do not sit on Buffering')

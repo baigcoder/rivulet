@@ -279,6 +279,19 @@ export const useDownloadsStore = defineStore('downloads', () => {
   )
 
   /**
+   * Bumped by every `focus` and every `release`, and checked by `focus` after
+   * each of its awaits.
+   *
+   * `focus` is four round trips long — release the last one, refresh, pause the
+   * others, start this one — and the player can be gone before the last of
+   * them. Leaving it called `release` while `focused` was still null, because
+   * the assignment sat *after* that first await: nothing was paused, and
+   * `focus` then reached its `start` and set the download going again with
+   * nobody watching. That is the download that kept running after Back.
+   */
+  let generation = 0
+
+  /**
    * Playback owns the downlink: every other *download* pauses so the whole pipe
    * goes to the stream, and is put back on `release`. Finished torrents keep
    * seeding — they cost no download bandwidth, and `uploadLimit` already holds
@@ -288,12 +301,26 @@ export const useDownloadsStore = defineStore('downloads', () => {
    * but the downlink is just as busy, so everything else still gets out of the way.
    */
   async function focus(id: number) {
-    await release()
+    const mine = ++generation
+    // Claimed before the first await, so a `release` landing mid-flight knows
+    // which torrent this call is on the hook for. Whatever was focused before
+    // is let go here rather than by calling `release`, which would take the
+    // claim straight back off again.
+    const previous = focused.value
+    const restore = paused
     focused.value = id
+    paused = []
+    if (previous != null && previous !== id)
+      await stopFocused(previous)
+    await restorePaused(restore)
+    if (mine !== generation)
+      return
 
     // Refresh first so the newly added torrent is in the local cache.
     // Without this, the find() below returns undefined and the torrent never gets started.
     await refresh()
+    if (mine !== generation)
+      return
 
     const playing = torrents.value.find(t => t.id === id)
     if (playing)
@@ -309,33 +336,27 @@ export const useDownloadsStore = defineStore('downloads', () => {
       .filter(t => t.id !== id && ['downloading', 'checking'].includes(torrentStatus(t)))
       .map(t => t.id)
     await Promise.all(paused.map(other => torrentAction(other, 'pause').catch(() => {})))
+    if (mine !== generation)
+      return
     // Always try to start the torrent - it may not be in local cache yet but exists in engine.
     // Calling start on already-started torrent is idempotent.
     await torrentAction(id, 'start').catch(() => {})
   }
 
   /**
-   * Leaving the player stops the download it started — an unwatched torrent has
-   * no reason to keep pulling. A finished one is left seeding: it costs no
-   * download bandwidth and the downloads page can't resume it (its pause button
-   * is disabled once complete).
-   *
-   * A background download you also watched ends up paused too. One
-   * click on the downloads page fixes it; if that gets annoying, `focus` takes a
-   * flag for "was already running".
+   * Pause the torrent playback was pulling. A finished one is left seeding: it
+   * costs no download bandwidth and the downloads page can't resume it (its
+   * pause button is disabled once complete). Nothing to pause when a link was
+   * playing — `id` is -1 and the engine has never heard of it.
    */
-  async function release() {
-    const id = focused.value
-    const restore = paused
-    focused.value = null
-    paused = []
-    if (id == null)
-      return
-
-    // Nothing to pause when a link was playing — only the restores below apply.
+  async function stopFocused(id: number) {
     const own = torrents.value.find(t => t.id === id)
     if (own && !own.stats?.finished)
       await torrentAction(id, 'pause').catch(() => {})
+  }
+
+  /** Hand the downlink back to the background downloads `focus` took it from. */
+  async function restorePaused(restore: number[]) {
     // On mobile data with Wi-Fi only asked for, what playback paused stays
     // paused — starting it here would spend the data the setting exists to save,
     // and `meter` would stop it again two seconds later anyway.
@@ -343,6 +364,30 @@ export const useDownloadsStore = defineStore('downloads', () => {
       held = [...new Set([...held, ...restore])]
     else
       await Promise.all(restore.map(other => torrentAction(other, 'start').catch(() => {})))
+  }
+
+  /**
+   * Leaving the player stops the download it started — an unwatched torrent has
+   * no reason to keep pulling.
+   *
+   * A background download you also watched ends up paused too. One
+   * click on the downloads page fixes it; if that gets annoying, `focus` takes a
+   * flag for "was already running".
+   *
+   * The `generation` bump is what makes this reliable: a `focus` still in
+   * flight for this same id would otherwise finish by starting it again.
+   */
+  async function release() {
+    generation++
+    const id = focused.value
+    const restore = paused
+    focused.value = null
+    paused = []
+    if (id == null)
+      return
+
+    await stopFocused(id)
+    await restorePaused(restore)
     await refresh()
   }
 

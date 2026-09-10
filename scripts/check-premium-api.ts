@@ -55,15 +55,23 @@ interface Route { method: string, path: string }
 /**
  * A path as written in the client, turned into the path a router matches.
  *
- * An interpolation is one of two things and a `?` tells them apart:
- * `${encodeURIComponent(id)}` is a path segment and becomes `:id`, while
- * `${force ? '?force=true' : ''}` is an optional query string and goes,
- * along with the rest of the query — a route matches on path alone.
+ * An interpolation is one of two things, and what comes *before* it tells
+ * them apart: a path segment always follows a `/`, as in
+ * `/channels/${encodeURIComponent(id)}`, and becomes `:id`; anything glued
+ * onto the end of a literal segment is a query string, as in
+ * `/play${params}` or `/movies${qs ? `?${qs}` : ''}`, and goes — a route
+ * matches on path alone.
+ *
+ * Position rather than a `?` in the expression, because the query is often
+ * built into a variable first (`const params = ext ? `?ext=…` : ''`) and
+ * there is then no `?` left in the interpolation to look for. That read as
+ * a second path segment and invented a route called `/play:id`.
  */
 function normalize(raw: string): string {
   let out = ''
   for (let i = 0; i < raw.length; i++) {
     if (raw[i] === '$' && raw[i + 1] === '{') {
+      const afterSlash = out.endsWith('/')
       let depth = 1
       let expr = ''
       for (i += 2; i < raw.length; i++) {
@@ -73,7 +81,7 @@ function normalize(raw: string): string {
           break
         expr += raw[i]
       }
-      out += expr.includes('?') ? '' : ':id'
+      out += afterSlash && !expr.includes('?') ? ':id' : ''
       continue
     }
     out += raw[i]
@@ -108,16 +116,53 @@ function clientRoutes(): Route[] {
     }
     out.push({ method: m[1]!, path: normalize(raw) })
   }
+  // Every other absolute URL the client builds on `API_BASE`, which is how
+  // the two routes that never go through `request` are reached: `health`
+  // answers before there is a token to attach, so it cannot use the helper
+  // that attaches one, and `proxyLogo` hands its URL to an `<img>` — the
+  // caller there is the element, not any code a scan for `fetch` would find.
+  // Both are GETs, which is all a URL handed out for loading can be.
+  //
+  // `request`'s own `fetch(`${API_BASE}${path}`)` is the indirection the loop
+  // above already read: it normalizes to nothing, so the `/api/` test drops
+  // it rather than inventing a route.
+  for (const m of CLIENT.matchAll(/`\$\{API_BASE\}([^`]*)`/g)) {
+    const path = normalize(m[1]!)
+    if (!path.startsWith('/api/'))
+      continue
+    out.push({ method: 'GET', path })
+  }
   return out
 }
 
 /** What the server registers. */
 function serverRoutes(): Route[] {
   const out: Route[] = []
-  // `.route("<path>", get(handler))` — the path and the method verb, over
-  // a router written across several lines by rustfmt.
-  for (const m of ROUTER.matchAll(/\.route\(\s*"([^"]+)",\s*(get|post|delete)\(/g))
-    out.push({ method: m[2]!.toUpperCase(), path: m[1]! })
+  // `.route("<path>", get(h).post(h).delete(h))` — *every* verb on the method
+  // router, not just the first. One path serving several methods is a single
+  // `.route` call in axum (a second call with the same path panics on the
+  // overlap), so reading only the leading verb reported the rest as
+  // unregistered — which is a 404 this script would have to invent.
+  for (const m of ROUTER.matchAll(/\.route\(\s*"([^"]+)",\s*/g)) {
+    const path = m[1]!
+    // The method-router expression, up to the paren closing `.route(`.
+    // Depth counting rather than a regex: a handler can be a closure with
+    // parens of its own.
+    let depth = 1
+    let expr = ''
+    for (let i = m.index! + m[0].length; i < ROUTER.length; i++) {
+      const c = ROUTER[i]!
+      if (c === '(') {
+        depth++
+      }
+      else if (c === ')' && --depth === 0) {
+        break
+      }
+      expr += c
+    }
+    for (const verb of expr.matchAll(/\b(get|post|delete)\s*\(/g))
+      out.push({ method: verb[1]!.toUpperCase(), path })
+  }
   return out
 }
 

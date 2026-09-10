@@ -9,6 +9,7 @@ import {
   mdiPowerPlugOutline,
   mdiReload,
 } from '@mdi/js'
+import { useTitleImages } from '~/utils/titleImages'
 import { findReleasesFast, NoServerStream, releaseKey, releaseLangs, releaseQuality, serverCandidates } from '~/utils/torrents'
 
 // The player owns the whole window: no app bar, no drawer, no page scroll.
@@ -44,6 +45,19 @@ const downloaded = computed(() => !!downloads.cachedFor(key.value))
 // TMDB is only asked for the IMDb id (what a source is keyed by) and a title
 // to show while the torrent warms up.
 const { data: media, error: mediaError } = useMediaDetail(type, id)
+
+// The pause overlay draws the title's logo treatment instead of its name in
+// text. `media.logo` only fills in when the detail request appended `images`,
+// and `DETAIL_CORE` deliberately never does — that payload is every still of
+// the title — so the logo is asked for on its own, exactly as the detail page
+// does. Without this the overlay had nothing to draw and fell back to plain
+// text on every pause.
+const { data: titleArt, execute: loadTitleArt } = useTitleImages(type, id)
+watch(id, value => {
+  if (value && !import.meta.server)
+    void loadTitleArt()
+}, { immediate: true })
+const titleLogo = computed(() => media.value?.logo || titleArt.value?.logo || null)
 
 // Offline, TMDB answers nothing — but anything played before left its poster and
 // title in the local library, and that is enough to draw this page and to keep
@@ -455,7 +469,7 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
         :imdb-id="media?.imdbId"
         :title="title?.title ?? String(route.query.title ?? '')"
         :year="title?.year"
-        :logo="media?.logo ?? null"
+        :logo="titleLogo"
         :season="season"
         :episode="episode"
         :quality="torrent?.quality"

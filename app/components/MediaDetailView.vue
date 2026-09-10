@@ -220,7 +220,56 @@ function onHeroReady() {
   lockHeroQuality()
 }
 
+/** Is the trailer dialog open. */
+const trailer = ref(false)
+const trailerFrame = ref<HTMLIFrameElement | null>(null)
+
+/**
+ * The trailer embed never got as far as playing.
+ *
+ * On Linux the embed is all there is, and WebKitGTK decodes it through the
+ * *host's* GStreamer — the AppImage deliberately carries none, because a
+ * bundled core finds no plugins at all (see
+ * `scripts/build/linux/appimage.ts`). A host missing `gst-plugins-good` or
+ * `gst-libav` therefore leaves YouTube's own "your browser can't play this
+ * video" sitting in the dialog, saying nothing about what to install and
+ * nothing about the Open on YouTube button two inches below it. The hero
+ * quietly hides itself in the same case (`nextTrailer`); the dialog is the one
+ * the user is looking at, so it says so instead.
+ */
+const trailerBroken = ref(false)
+let trailerWait = 0
+
+function onTrailerMessage(e: MessageEvent) {
+  if (youtubeError(e.data)) {
+    trailerBroken.value = true
+    return
+  }
+  if (!youtubePlaying(e.data))
+    return
+  clearTimeout(trailerWait)
+  trailerBroken.value = false
+}
+
+function onTrailerReady() {
+  trailerFrame.value?.contentWindow?.postMessage(JSON.stringify({ event: 'listening' }), '*')
+}
+
+// Only ever armed while the dialog is open, and generous: a slow line is not a
+// missing decoder, and calling one the other is the worse mistake of the two.
+watch(trailer, open => {
+  clearTimeout(trailerWait)
+  trailerBroken.value = false
+  if (!open || import.meta.server)
+    return
+  trailerWait = window.setTimeout(() => (trailerBroken.value = true), 9000)
+})
+
 function onHeroMessage(e: MessageEvent) {
+  if (e.source === trailerFrame.value?.contentWindow) {
+    onTrailerMessage(e)
+    return
+  }
   if (e.source !== heroFrame.value?.contentWindow)
     return
   if (youtubeError(e.data)) {
@@ -243,6 +292,7 @@ onMounted(() => window.addEventListener('message', onHeroMessage))
 onUnmounted(() => {
   cancelHeroIdle()
   clearTimeout(showHero)
+  clearTimeout(trailerWait)
   window.removeEventListener('message', onHeroMessage)
 })
 
@@ -325,7 +375,6 @@ const credits = computed(() => {
   ].filter(row => row.value)
 })
 
-const trailer = ref(false)
 const torrentPickerRef = ref<{ open: () => void } | null>(null)
 
 async function openTrailer() {
@@ -731,15 +780,25 @@ watch(() => props.id, () => {
         <v-card class="overflow-hidden">
           <iframe
             v-if="trailer"
+            ref="trailerFrame"
             :src="trailerSrc"
             class="aspect-video w-full border-0"
             style="zoom: var(--frame-zoom, 1)"
             allow="autoplay; encrypted-media; gyroscope; picture-in-picture; web-share"
             referrerpolicy="strict-origin-when-cross-origin"
             allowfullscreen
+            @load="onTrailerReady"
           />
+          <!-- The embed decodes through the host's GStreamer on Linux, so a
+               machine without the plugins gets YouTube's own "can't play this
+               video" and no idea what to do about it. Say which, and point at
+               the button that always works. -->
+          <div v-if="trailerBroken" class="flex items-start gap-3 px-4 pt-4 text-body-small opacity-80">
+            <v-icon :icon="mdiAlertCircleOutline" size="small" class="mt-0.5 shrink-0" />
+            <span>{{ $t('This trailer would not play in the app. On Linux the embedded player decodes with the system GStreamer — installing its codec plugins (gst-plugins-good and gst-libav) fixes it. Open on YouTube works either way.') }}</span>
+          </div>
           <v-card-actions>
-            <v-btn :prepend-icon="mdiOpenInNew" size="small" variant="text" @click="openTrailer">
+            <v-btn :prepend-icon="mdiOpenInNew" size="small" :variant="trailerBroken ? 'tonal' : 'text'" @click="openTrailer">
               {{ $t('Open on YouTube') }}
             </v-btn>
             <v-spacer />

@@ -143,6 +143,30 @@ assert.ok(
   !/<v-btn[^>]*>\s*\{\{\s*\$t\('Releases'\)\s*\}\}[\t\v\f\r \xA0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]*\n\s*<v-dialog/.test(picker),
   'the picker dialog is not nested inside the Releases button',
 )
+// Leaving the player must stop the download it started. `focus` is four round
+// trips long and the player can be gone before the last of them, so `release`
+// alone is not enough: it used to find `focused` still null (the assignment sat
+// past `focus`'s first await) and pause nothing, and `focus` then reached its
+// `start` and set the download going again with nobody watching.
+assert.ok(watchPage.includes('downloads.release()'), 'leaving the player releases the downlink')
+assert.ok(
+  /focused\.value = id\s+paused = \[\]/.test(store),
+  'focus claims `focused` before its first await, so a concurrent release knows what to pause',
+)
+assert.ok(
+  /async function release\(\) \{\s+generation\+\+/.test(store),
+  'and release cancels an in-flight focus rather than letting it start the torrent again',
+)
+assert.equal(
+  (store.match(/if \(mine !== generation\)/g) ?? []).length,
+  3,
+  'every await in focus is followed by the generation check',
+)
+assert.ok(
+  !/async function focus\([^)]*\) \{\s+await release\(\)/.test(store),
+  'focus no longer calls release, which would take its own claim straight back off',
+)
+
 assert.ok(watchPage.includes('takePendingRelease'), 'the player reads the release the picker stashed')
 assert.ok(watchPage.includes('magnet.value || settings.allowTorrents'), 'a picked magnet plays while Play is Direct-only')
 const downloadBtn = readFileSync(new URL('../app/components/DownloadButton.vue', import.meta.url), 'utf8')

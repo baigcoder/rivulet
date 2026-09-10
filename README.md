@@ -221,6 +221,23 @@ clicks included, while the video window itself never resizes.
 | `bun run dev` in a browser | `<video>` | Which is what makes the mobile player testable without a device |
 
 - **mpv plays everything**, and needs none of the rest of this section.
+- **A trailer is the exception on Linux.** It is the one thing that plays *in the webview* rather
+  than in mpv — a YouTube embed — so WebKitGTK decodes it through the **system's** GStreamer, and
+  `webkit2gtk-4.1` brings in that core with no codec able to decode H.264 or VP9. So a host
+  without `gst-plugins-good` and `gst-libav` plays every film perfectly and no trailers at all.
+  The `.deb`, `.rpm` and AUR packages declare the two, and the Flatpak's GNOME runtime already
+  carries them. The **AppImage cannot** — it deliberately un-bundles GStreamer so the host's own
+  core and plugins are used together (a bundled core finds no plugins at all; see
+  `scripts/build/linux/appimage.ts`), and an AppImage has no way to declare a dependency. There,
+  install the two by hand:
+
+  ```sh
+  sudo apt install gstreamer1.0-plugins-good gstreamer1.0-libav   # Debian/Ubuntu
+  sudo pacman -S gst-plugins-good gst-libav                       # Arch
+  ```
+
+  Until they are there the trailer dialog says so and offers *Open on YouTube*. Nothing else in
+  this section is affected.
 - **macOS gets there a different way.** The platform embeds no other process's window, and mpv's
   Cocoa output takes no `--wid` — the manual offers it for X11, win32 and Android only. So mpv is
   not a process there: the app links libmpv, asks for `vo=libmpv`, and draws the frames itself

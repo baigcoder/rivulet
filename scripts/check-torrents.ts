@@ -393,10 +393,22 @@ const ages = { h1: 300, h2: 100, h3: 200 } // h2 is the least recently played
 assert.equal(usedBytes(cache), 15 * GB)
 assert.deepEqual(planEviction(cache, 20 * GB, null, ages), [], 'under budget: keep everything')
 assert.deepEqual(planEviction(cache, 12 * GB, null, ages), [2], 'one is enough')
-assert.deepEqual(planEviction(cache, 4 * GB, null, ages), [2, 3, 1], 'oldest first')
-assert.deepEqual(planEviction(cache, 4 * GB, 2, ages), [3, 1], 'never what is playing')
+assert.deepEqual(planEviction(cache, 4 * GB, null, ages), [2, 3], 'oldest first')
+assert.deepEqual(planEviction(cache, 4 * GB, 2, ages), [3], 'never what is playing')
 assert.deepEqual(planEviction(cache, 4 * GB, 2, {}), [1, 3], 'no history: engine order')
 assert.deepEqual(planEviction(cache, Number.POSITIVE_INFINITY, null, ages), [])
+// h1 is the last thing that was played, and Back is what makes `keep` null.
+// A budget of 0 (a disk with less free space than the reserve) used to take
+// that with everything else, so leaving a film deleted the download that had
+// just started — the engine's whole point is that it stays, paused, and carries
+// on when the title is played again.
+assert.deepEqual(planEviction(cache, 0, null, ages), [2, 3], 'Back does not delete what was just played')
+assert.deepEqual(planEviction(cache, 0, 1, ages), [2, 3], 'and the same list while it plays')
+assert.deepEqual(
+  planEviction(cache, 0, null, { h1: 300 }),
+  [2, 3],
+  'a torrent nobody has played is still a cache entry',
+)
 
 // --- Only download on Wi-Fi ---------------------------------------------------
 // The rule is asymmetric on purpose: it stops anything running, but only ever

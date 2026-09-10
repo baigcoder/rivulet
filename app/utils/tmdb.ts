@@ -53,6 +53,14 @@ export interface Media {
    * it was kept has none — see `kindOf` for what stands in there.
    */
   lang?: string
+  /**
+   * IMDb id, when one is known. Optional for the same reason `lang` is: a card
+   * snapshot only ever has what TMDB's list endpoints answer with, and those
+   * carry none. `slim` keeps it on the library's own copy so Resume can ask a
+   * source without waiting on TMDB — which is what needs it declared here and
+   * not only on `MediaDetail`.
+   */
+  imdbId?: string | null
 }
 
 export function tmdb<T>(path: string, params?: Record<string, unknown>) {

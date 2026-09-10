@@ -578,6 +578,13 @@ pub fn player_start(
 		for flag in player_direct::live_cli() {
 			command.arg(*flag);
 		}
+		// Live 4K is usually PQ or HLG, and the D3D11 swapchain behind the
+		// embed is SDR. `applyToneMapping('sdr')` sets the same two over IPC,
+		// but only once mpv is up — these cover the frames before that, which
+		// otherwise open washed out or black. The same pair as X11 (see
+		// `player.rs`); `check:player` holds the two files together.
+		command.arg("--target-trc=bt.1886");
+		command.arg("--target-colorspace-hint=no");
 	}
 	command
 		.arg(format!(
@@ -759,25 +766,16 @@ pub fn player_status(state: tauri::State<'_, PlayerState>) -> PlayerStatus {
 		None => false,
 	};
 
+	// The shared reader, not a copy of it. `log_redact` is where it lives
+	// precisely so this target can call it — Win32 cannot compile the unix IPC
+	// module the other desktops reach it through. It picks mpv's own error
+	// lines out and redacts them, and a live stream URL carries the account's
+	// password in its path, so a second implementation here is one that can
+	// drift out of step with the redaction it exists to apply.
 	let log_tail = if running {
 		None
 	} else {
-		player.log.as_ref().and_then(|p| std::fs::read_to_string(p).ok()).map(|s| {
-			// mpv tags every line with its level — "[ 2.06][e][stream] Failed to
-			// open …". Match on that rather than on the word "error", which also
-			// occurs in the build flags mpv prints in its header (-Wno-error=…)
-			// and would push the real failure out of the excerpt.
-			let lines: Vec<&str> =
-				s.lines().filter(|l| l.contains("][e]") || l.contains("][fatal]")).collect();
-			let tail = if lines.is_empty() {
-				s.lines().rev().take(8).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>()
-			} else {
-				lines
-			};
-			// See player_socket::log_tail — a live stream URL has the account's
-			// password in its path and this string leaves the process.
-			crate::log_redact::redact(&tail.join("\n")).chars().take(1200).collect()
-		})
+		player.log.as_deref().and_then(crate::log_redact::log_tail)
 	};
 
 	PlayerStatus { running, log_tail }

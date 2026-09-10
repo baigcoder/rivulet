@@ -1533,6 +1533,15 @@ export function usedBytes(torrents: Cached[]) {
  * No pinning — everything here is treated as a cache. If someone
  * wants an offline library, that's a "keep" flag on the torrent and one more
  * `filter` below.
+ *
+ * The last thing played is kept as well, and not only while it is playing.
+ * `keep` is null the moment the player unmounts, and on a disk with less free
+ * space than the reserve the budget is 0 — so leaving a film deleted the part
+ * of it that had just been fetched, on the very next two-second poll. That read
+ * as "Back throws the download away", and it is the opposite of what the engine
+ * is for: a part-finished torrent should sit in Downloads paused and carry on
+ * from there when the title is played again. A budget nothing can satisfy now
+ * stops the cache growing (`start` caps every add by it) instead of emptying it.
  */
 export function planEviction(
   torrents: Cached[],
@@ -1544,12 +1553,20 @@ export function planEviction(
   if (used <= budget)
     return []
 
+  // Only a real play time pins anything: with no history at all every entry
+  // ties at 0, and "newest" would be whichever one the engine happens to list
+  // last rather than anything the user did.
+  const played = torrents.filter(t => (touched[t.info_hash] ?? 0) > 0)
+  const newest = played.length
+    ? played.reduce((a, b) => (touched[b.info_hash] ?? 0) > (touched[a.info_hash] ?? 0) ? b : a).id
+    : null
+
   const drop: number[] = []
   const oldest = [...torrents].sort((a, b) => (touched[a.info_hash] ?? 0) - (touched[b.info_hash] ?? 0))
   for (const t of oldest) {
     if (used <= budget)
       break
-    if (t.id === keep)
+    if (t.id === keep || t.id === newest)
       continue
     drop.push(t.id)
     used -= t.stats?.progress_bytes ?? 0

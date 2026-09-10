@@ -427,6 +427,11 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
     }
 
     remember_redirect(&target_url, resp.url().as_str());
+    // Where the bytes actually came from. A panel answers `/live/u/p/id.ts`
+    // with a 302 onto its HLS ladder, and both the manifest test below and the
+    // base each relative segment line is resolved against have to be *that*
+    // URL, not the one we asked for.
+    let final_url = resp.url().to_string();
     if !live_ts {
         drop(_resolve);
     }
@@ -441,12 +446,19 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
     // HLS manifests need their URLs rewritten so the webview fetches the
     // proxy, not the origin. The manifest itself is small (a few KB), so
     // buffering it is fine and lets us rewrite every line.
-    if content_type.contains("mpegurl") || target_url.ends_with(".m3u8") {
+    //
+    // `looks_like_hls`, not `ends_with(".m3u8")`: a panel's playlist URL
+    // usually carries a token in the query, and it is the redirect target
+    // rather than the `.ts` we asked for. Missing it here left the ladder
+    // unsorted and its relative segment lines pointing at this proxy's own
+    // origin — a 4K channel that played its bottom rung, or nothing at all.
+    if content_type.contains("mpegurl") || looks_like_hls(&target_url) || looks_like_hls(&final_url)
+    {
         match resp.text().await {
             Ok(body) => {
                 let rewritten = prefer_highest_hls_rung(&rewrite_m3u(
                     &body,
-                    &fetch_url,
+                    &final_url,
                     custom_ua.as_deref(),
                     custom_referer.as_deref(),
                 ));
@@ -959,7 +971,7 @@ async fn write_preflight(stream: &mut tokio::net::TcpStream) -> anyhow::Result<(
 mod tests {
     use super::{
         default_upstream_ua, hls_bandwidth, hls_height, is_hls_downgrade, is_live_mpegts,
-        is_xtream_media_url, prefer_highest_hls_rung, IPTV_PLAYER_UA,
+        is_xtream_media_url, looks_like_hls, prefer_highest_hls_rung, IPTV_PLAYER_UA,
     };
 
     #[test]
@@ -1018,6 +1030,22 @@ uhd.m3u8\n";
             "http://cdn/file.ts",
             "http://cdn/file.ts?token=1"
         ));
+    }
+
+    /// The manifest branch used to test `target_url.ends_with(".m3u8")`, which
+    /// is false for both shapes a panel actually answers with: a playlist whose
+    /// URL carries a token, and the `.m3u8` a `.ts` request was redirected to.
+    /// Either one skipped the rung sort and the segment rewrite, so a 4K
+    /// channel played its bottom rung — or, with relative segment lines,
+    /// nothing at all.
+    #[test]
+    fn a_playlist_is_recognised_by_its_path_not_by_the_url_we_asked_for() {
+        assert!(looks_like_hls("http://panel/hls/1/index.m3u8?token=abc"));
+        assert!(looks_like_hls("http://panel/live/u/p/1.m3u8"));
+        assert!(!"http://panel/hls/1/index.m3u8?token=abc".ends_with(".m3u8"));
+        // The `.ts` we ask for is not a playlist; the URL it lands on is.
+        assert!(!looks_like_hls("http://panel/live/u/p/1.ts"));
+        assert!(looks_like_hls("http://panel/hls/1/index.m3u8"));
     }
 
     #[test]

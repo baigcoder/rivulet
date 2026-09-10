@@ -22,7 +22,14 @@ license=('MIT')
 # the tray icon. mpv and ffmpeg are launched as processes, not linked — mpv is
 # the player itself (parented into the app window over X11), ffmpeg draws the
 # seek-bar previews and the waveform the subtitle sync uses.
-depends=('webkit2gtk-4.1' 'gtk3' 'libayatana-appindicator' 'mpv' 'ffmpeg' 'hicolor-icon-theme')
+#
+# gst-plugins-good and gst-libav are WebKit's decoders, not the player's. A
+# title's trailer is the one thing that plays *in* the webview rather than in
+# mpv, and webkit2gtk-4.1 pulls in GStreamer's core without any codec that can
+# decode H.264 or VP9 — so without these two a film plays perfectly and every
+# trailer says "your browser can't play this video".
+depends=('webkit2gtk-4.1' 'gtk3' 'libayatana-appindicator' 'mpv' 'ffmpeg' 'hicolor-icon-theme'
+         'gst-plugins-good' 'gst-libav')
 provides=('rivulet')
 conflicts=('rivulet')
 options=('!strip' '!debug')
