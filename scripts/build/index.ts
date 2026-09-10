@@ -191,15 +191,15 @@ async function buildDesktop(extra: string[]) {
   // fail on machines that build fine.
   if (!have('cargo')) {
     die(
-      'Rust is not installed, and the whole app behind the frontend is Rust.\n'
-      + '  Everything else here would download first and fail after it.\n'
-      + (process.platform === 'win32'
-        ? '    winget install --id Rustlang.Rustup -e\n'
+      `Rust is not installed, and the whole app behind the frontend is Rust.\n`
+      + `  Everything else here would download first and fail after it.\n${
+        process.platform === 'win32'
+          ? '    winget install --id Rustlang.Rustup -e\n'
           + '  A Windows build also needs the MSVC toolchain (cl.exe/link.exe):\n'
           + '    winget install --id Microsoft.VisualStudio.2022.BuildTools -e \\\n'
           + '      --override "--quiet --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"\n'
           + '  Budget ~20 GB free: 720 crates of release build land in src-tauri/target.'
-        : '    curl --proto \'=https\' --tlsv1.2 -sSf https://sh.rustup.rs | sh'),
+          : '    curl --proto \'=https\' --tlsv1.2 -sSf https://sh.rustup.rs | sh'}`,
     )
   }
 
