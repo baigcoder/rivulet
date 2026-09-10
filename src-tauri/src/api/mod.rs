@@ -252,20 +252,25 @@ pub const ADDR: &str = "127.0.0.1:3032";
 /// up to `LOGO_TIMEOUT` of a blocking thread.
 const LOGO_MISS_TTL: Duration = Duration::from_secs(10 * 60);
 
-/// How long a whole logo *host* is skipped after it has failed
-/// repeatedly.
-///
-/// This is the case that matters in practice. A provider does not serve
-/// its own artwork — it points every one of its 50,000 channels at one
-/// image host, so when that host is down (one real provider answers 502
-/// after six seconds, for every logo it has) the per-URL cache above
-/// never helps: each URL is a first offence. Failing the whole host fast
-/// is what keeps a dead logo CDN from turning into a dead grid.
-const LOGO_HOST_PENALTY: Duration = Duration::from_secs(2 * 60);
-
-/// Consecutive failures before a host is skipped. Three, so one
-/// genuinely missing logo among working ones does not blind the rest.
-const LOGO_HOST_STRIKES: u32 = 3;
+// There is deliberately no per-*host* breaker here, and that is a
+// correction rather than an omission.
+//
+// One shipped: three consecutive failures skipped a whole host for two
+// minutes, on the theory that a provider points all 50,000 of its logos
+// at one image host, so a dead host makes every per-URL miss a first
+// offence. The theory was wrong about how these hosts fail. A real
+// provider serves its channel logos and its film posters from the *same*
+// endpoint on the same host, and answers 502 for every channel logo and
+// 200 for every poster — deterministically, not intermittently. So the
+// channel grid struck the host out, and then the Movies and TV shows
+// tabs were refused artwork that would have loaded, each refusal cached
+// by the webview for ten minutes. It turned one broken image class into
+// no images at all.
+//
+// A host is not a useful unit of failure when one host serves both. The
+// per-URL cache below is the right grain, and what made a dead logo
+// expensive in the first place — an agent per request, an 8s timeout,
+// unbounded blocking tasks — is fixed directly.
 
 /// Total budget for one logo. Well under the old 8s: a logo the grid is
 /// still waiting for after this is one the viewer has scrolled past.
@@ -311,10 +316,8 @@ fn logo_gate() -> &'static Arc<tokio::sync::Semaphore> {
 #[derive(Default)]
 struct LogoHealth {
     /// URLs known to have failed, and when. Bounded — see `note_miss`.
+    /// Per URL, never per host: see the note above the constants.
     misses: HashMap<String, Instant>,
-    /// Per-host consecutive failure count and, once struck out, the
-    /// moment the host may be tried again.
-    hosts: HashMap<String, (u32, Option<Instant>)>,
 }
 
 static LOGO_HEALTH: OnceLock<Mutex<LogoHealth>> = OnceLock::new();
@@ -323,62 +326,42 @@ fn logo_health() -> &'static Mutex<LogoHealth> {
     LOGO_HEALTH.get_or_init(|| Mutex::new(LogoHealth::default()))
 }
 
-/// `true` if this URL, or the host it is on, is known bad right now.
-fn logo_is_known_bad(url: &str, host: &str) -> bool {
+/// `true` if this exact URL is known to have failed recently.
+///
+/// This exact URL, and nothing broader. A sibling image on the same host
+/// is a different question and gets its own request.
+fn logo_is_known_bad(url: &str) -> bool {
     let mut health = logo_health().lock().unwrap_or_else(|e| e.into_inner());
-
     let miss = health.misses.get(url).copied();
     match miss {
-        Some(at) if at.elapsed() < LOGO_MISS_TTL => return true,
+        Some(at) if at.elapsed() < LOGO_MISS_TTL => true,
         Some(_) => {
             health.misses.remove(url);
-        }
-        None => {}
-    }
-
-    let penalty = health.hosts.get(host).and_then(|&(_, until)| until);
-    match penalty {
-        Some(until) if Instant::now() < until => true,
-        Some(_) => {
-            // The penalty is up. Clear it but keep the strike count, so a
-            // host that is still down is struck out again by its next
-            // failure rather than getting a fresh three.
-            if let Some(entry) = health.hosts.get_mut(host) {
-                entry.1 = None;
-            }
             false
         }
         None => false,
     }
 }
 
-fn note_miss(url: &str, host: &str) {
+fn note_miss(url: &str) {
     let mut health = logo_health().lock().unwrap_or_else(|e| e.into_inner());
     // A catalog holds more distinct logo URLs than it is worth
-    // remembering failures for. Drop the expired ones first; if that is
-    // not enough, drop the lot — the host breaker below is the part that
-    // carries the load anyway.
-    if health.misses.len() >= 4096 {
+    // remembering failures for — one provider here has 52,298. Drop the
+    // expired entries first; if that is not enough, drop the lot. The
+    // cost of forgetting is one more request per logo, which is what the
+    // pooled agent and the concurrency gate are for.
+    if health.misses.len() >= 8192 {
         health.misses.retain(|_, at| at.elapsed() < LOGO_MISS_TTL);
-        if health.misses.len() >= 4096 {
+        if health.misses.len() >= 8192 {
             health.misses.clear();
         }
     }
     health.misses.insert(url.to_string(), Instant::now());
-    if health.hosts.len() > 256 {
-        health.hosts.clear();
-    }
-    let entry = health.hosts.entry(host.to_string()).or_insert((0, None));
-    entry.0 = entry.0.saturating_add(1);
-    if entry.0 >= LOGO_HOST_STRIKES {
-        entry.1 = Some(Instant::now() + LOGO_HOST_PENALTY);
-    }
 }
 
-fn note_hit(url: &str, host: &str) {
+fn note_hit(url: &str) {
     let mut health = logo_health().lock().unwrap_or_else(|e| e.into_inner());
     health.misses.remove(url);
-    health.hosts.remove(host);
 }
 
 /// A logo the proxy could not get, in a form the page will not ask for
@@ -498,9 +481,7 @@ async fn proxy_image(
     if !logo_host_is_public(&host) {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let host_key = host.to_string();
-
-    if logo_is_known_bad(&url, &host_key) {
+    if logo_is_known_bad(&url) {
         return Ok(logo_unavailable());
     }
 
@@ -542,13 +523,13 @@ async fn proxy_image(
 
     let (body, content_type) = match fetched {
         Ok(Ok(pair)) => {
-            note_hit(&url, &host_key);
+            note_hit(&url);
             pair
         }
         // A failed fetch and a panicked task are the same thing to the
         // page: no logo, and don't ask again for a while.
         Ok(Err(_)) | Err(_) => {
-            note_miss(&url, &host_key);
+            note_miss(&url);
             return Ok(logo_unavailable());
         }
     };

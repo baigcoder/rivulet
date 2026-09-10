@@ -269,14 +269,23 @@ check('a 50k-row catalog import is not one fsync per row', () => {
 
 // ── Channel logos ─────────────────────────────────────────
 
-check('a dead logo host fails fast and stays failed', () => {
-  // A provider points all 50,000 of its channels at one image host. When
-  // that host is down — one real provider answers 502 after six seconds,
-  // for every logo it has — a per-URL cache never helps, because every
-  // URL is a first offence. The host itself has to be given up on.
+check('a dead logo does not blind the ones that work beside it', () => {
+  // A shipped version struck out a whole *host* after three failures.
+  // Real providers break finer than that: one here serves its channel
+  // logos and its film posters from the same endpoint on the same host,
+  // and answers 502 for every channel logo and 200 for every poster. The
+  // channel grid struck the host out, and the Movies and TV shows tabs
+  // were then refused artwork that would have loaded — cached by the
+  // webview for ten minutes each. One broken image class became no
+  // images at all.
+  assert.doesNotMatch(
+    api,
+    /LOGO_HOST_STRIKES|LOGO_HOST_PENALTY/,
+    'a per-host breaker blinds the working images on a partly-broken host',
+  )
   assert.ok(
-    api.includes('LOGO_HOST_STRIKES') && api.includes('LOGO_HOST_PENALTY'),
-    'expected a per-host failure breaker in the logo proxy',
+    /fn logo_is_known_bad\(url: &str\)/.test(api),
+    'the negative cache must be keyed on the URL alone, never the host',
   )
   assert.ok(
     api.includes('LOGO_CONCURRENCY'),
@@ -284,7 +293,7 @@ check('a dead logo host fails fast and stays failed', () => {
   )
   assert.ok(
     api.includes('static LOGO_AGENT'),
-    'the logo agent must be pooled, not rebuilt per request',
+    'the logo agent must be pooled, not rebuilt per request — that is what makes a miss cheap',
   )
 })
 
