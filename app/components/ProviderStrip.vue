@@ -8,13 +8,13 @@
  * recommendation of anywhere to watch anything; what actually plays is decided
  * entirely by the sources the user added.
  */
+import type { WatchProvider } from '~/utils/streamingProviders'
 import { mdiTelevisionClassic } from '@mdi/js'
+import { useElementSize } from '@vueuse/core'
+import { computed, ref } from 'vue'
+import { fillRows, providerColumns, streamingProviders } from '~/utils/streamingProviders'
 
-interface Provider {
-  provider_id: number
-  provider_name: string
-  logo_path: string | null
-}
+type Provider = WatchProvider
 
 const settings = useSettingsStore()
 
@@ -56,50 +56,24 @@ const { data, error, pending } = useAsyncData(
   { watch: [region] },
 )
 
-/** The household names lead; everything else follows alphabetically. */
-const ORDER: string[][] = [
-  ['netflix'],
-  ['amazon prime video', 'prime video'],
-  ['apple tv plus', 'apple tv'],
-  ['hbo max', 'max'],
-  ['paramount plus', 'paramount', 'paramount+'],
-  ['hulu'],
-  ['amc plus', 'amc'],
-  ['disney plus', 'disney+'],
-  ['crunchyroll'],
-  ['peacock'],
-  ['lionsgate plus', 'lionsgate+'],
-]
+/** Every service in the region, once each, household names first — see `streamingProviders`. */
+const all = computed(() => streamingProviders(data.value ?? [], region.value))
 
 /**
- * "Paramount+" and "Disney+" normalize onto their spelled-out aliases, so one
- * comparison covers every spelling TMDB uses.
+ * Columns follow the strip's real width rather than breakpoints, so the count
+ * of cards can be chosen to fill whole rows — eleven services on a ten-column
+ * screen used to leave one card alone on a second line.
  */
-function normalize(name: string) {
-  return name.toLowerCase().replace(/\+/g, ' plus').replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim()
-}
+const grid = ref<HTMLElement>()
+const { width } = useElementSize(grid)
+const cols = computed(() => providerColumns(width.value))
+const gridStyle = computed(() => ({ gridTemplateColumns: `repeat(${cols.value}, minmax(0, 1fr))` }))
 
-function rank(p: Provider) {
-  const name = normalize(p.provider_name)
-  const at = ORDER.findIndex(aliases => aliases.some(a => name === a || name.startsWith(`${a} `)))
-  return at
-}
-
-const providers = computed(() => {
-  // Only the strip's own eight, each once: TMDB lists the same service under
-  // different ids across its movie and TV catalogues, so the name is what two
-  // copies of a service are recognised by.
-  const seen = new Map<number, Provider>()
-  for (const p of data.value ?? []) {
-    const at = rank(p)
-    if (at === -1)
-      continue
-    if (!seen.has(at) || rank(seen.get(at)!) > at)
-      seen.set(at, p)
-  }
-
-  return [...seen.values()].sort((a, b) => rank(a) - rank(b))
-})
+/** Two full rows on Home; the rest one press away rather than 150 cards up front. */
+const ROWS = 2
+const expanded = ref(false)
+const collapsedCount = computed(() => fillRows(all.value.length, cols.value, ROWS))
+const providers = computed(() => expanded.value ? all.value : all.value.slice(0, collapsedCount.value))
 
 function to(p: Provider) {
   // No locale prefix exists in the URL (no_prefix strategy), so a plain route
@@ -127,7 +101,7 @@ function to(p: Provider) {
       <div v-for="i in 10" :key="i" class="aspect-square animate-pulse rounded-2xl bg-surface-container-high" />
     </div>
 
-    <div v-else-if="!error" data-dpad-start class="grid grid-cols-5 gap-3 px-4 sm:grid-cols-7 md:gap-3.5 md:px-6 lg:grid-cols-10 xl:grid-cols-12">
+    <div v-else-if="!error" ref="grid" data-dpad-start class="grid gap-3.5 px-4 md:px-6" :style="gridStyle">
       <nuxt-link
         v-for="p in providers"
         :key="p.provider_id"
@@ -144,8 +118,19 @@ function to(p: Provider) {
         <span v-else class="absolute inset-0 grid place-items-center text-xl font-bold tracking-wide opacity-70 transition-opacity group-hover:opacity-100">{{ p.provider_name[0] }}</span>
 
         <!-- Subtle gradient gloss on hover -->
-        <div class="pointer-events-none absolute inset-0 rounded-2xl bg-gradient-to-t from-white/10 via-transparent to-transparent opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
+        <div class="pointer-events-none absolute inset-0 rounded-2xl bg-gradient-to-t from-white/10 via-transparent to-transparent opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100" />
       </nuxt-link>
+    </div>
+
+    <div v-if="!error && all.length > collapsedCount" class="mx-4 mt-3 md:mx-6">
+      <button
+        type="button"
+        class="rounded-full px-4 py-2 text-label-large font-medium text-primary transition-colors hover:bg-primary/10 focus-visible:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        :aria-expanded="expanded ? 'true' : 'false'"
+        @click="expanded = !expanded"
+      >
+        {{ expanded ? $t('Show fewer services') : $t('All {count} services', { count: all.length }) }}
+      </button>
     </div>
   </section>
 </template>

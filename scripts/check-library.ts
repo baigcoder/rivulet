@@ -2,10 +2,12 @@ import type { KeyStore } from '../app/utils/backup'
 // Self-check for the watch-state rules: `bun scripts/check-library.ts`.
 // These decide whether something is marked watched and which episode comes up
 // next — get them wrong and the app either forgets what you saw or skips it.
+import type { WatchProvider } from '../app/utils/streamingProviders'
 import type { Media } from '../app/utils/tmdb'
 import assert from 'node:assert'
 import { applyBackup, backupSummary, makeBackup, PREFIX, readBackup } from '../app/utils/backup'
 import { arrange, continuing, finished, fraction, kindOf, nextEpisode, parseKey, placeholder, playedTitles, progressKey, remainingText, resumable, showEntries, slim, UNKNOWN_TITLE, watchedInSeason } from '../app/utils/library'
+import { fillRows, providerColumns, streamingProviders } from '../app/utils/streamingProviders'
 import { mediaLink } from '../app/utils/tmdb'
 
 // `mediaLink` runs its path through Nuxt's auto-imported `localePath`, which
@@ -362,5 +364,73 @@ assert.deepEqual(arrange(mixed, { ...view, sort: 'year' }).map(m => m.id), [12, 
 assert.deepEqual(arrange(mixed, { ...view, sort: 'rating' }).map(m => m.id), [11, 12, 10], 'best first')
 // A title TMDB has no release date for sorts last rather than to the top.
 assert.deepEqual(arrange([...mixed, card(13, { year: '' })], { ...view, sort: 'year' }).map(m => m.id), [12, 11, 10, 13])
+
+// --- The Streaming strip -----------------------------------------------------
+// TMDB's regional provider list, as it really answers for the US: the resold
+// copy ranks above the service itself, and tiers and ad plans are separate
+// entries. One card per service, wearing that service's own name and logo.
+
+function tmdbUs(rows: [number, string, number][]): WatchProvider[] {
+  return rows.map(([id, name, prio]) => ({ provider_id: id, provider_name: name, logo_path: `/${id}.png`, display_priorities: { US: prio } }))
+}
+
+const usProviders = tmdbUs([
+  [8, 'Netflix', 0],
+  [9, 'Amazon Prime Video', 3],
+  [350, 'Apple TV', 4],
+  [337, 'Disney Plus', 5],
+  [15, 'Hulu', 6],
+  [10, 'Amazon Video', 8],
+  [2, 'Apple TV Store', 9],
+  [257, 'fuboTV', 10],
+  [1825, 'HBO Max Amazon Channel', 11],
+  [283, 'Crunchyroll', 12],
+  [2303, 'Paramount Plus Premium', 14],
+  [2616, 'Paramount Plus Essential', 15],
+  [386, 'Peacock Premium', 16],
+  [2383, 'Philo', 17],
+  [1854, 'AMC Plus Apple TV channel', 24],
+  [528, 'AMC+ Amazon Channel', 28],
+  [526, 'AMC+', 31],
+  [175, 'Netflix Kids', 59],
+  [1899, 'HBO Max', 152],
+  [2358, 'Lionsgate+ Amazon Channels', 163],
+  [387, 'Peacock Premium Plus', 214],
+])
+const strip = streamingProviders(usProviders, 'US')
+const names = strip.map(p => p.provider_name)
+
+assert.deepEqual(
+  names.slice(0, 10),
+  ['Netflix', 'Amazon Prime Video', 'Apple TV', 'HBO Max', 'Disney Plus', 'Hulu', 'Paramount Plus Premium', 'Peacock Premium', 'Crunchyroll', 'AMC+'],
+  'the household names lead, in order',
+)
+assert.equal(strip.find(p => p.provider_name === 'HBO Max')?.provider_id, 1899, 'HBO Max is HBO Max, not its Amazon channel ranked above it')
+assert.equal(strip.find(p => p.provider_name === 'AMC+')?.logo_path, '/526.png', 'and AMC+ wears its own logo')
+assert.ok(!names.some(n => /channel/i.test(n)), 'no resold copy of a service gets a card')
+assert.ok(!names.includes('Apple TV Store') && !names.includes('Amazon Video'), 'shops that rent titles are not services')
+assert.ok(!names.includes('Netflix Kids'), 'nor are cut-down plans of a service already shown')
+assert.equal(names.filter(n => /paramount/i.test(n)).length, 1, 'Premium and Essential are one Paramount+ card')
+assert.equal(names.filter(n => /peacock/i.test(n)).length, 1, 'and Peacock\'s two tiers are one card')
+// Whichever tier TMDB happens to list first, the plainest name labels the card.
+const reversed = streamingProviders([...usProviders].reverse(), 'US').map(p => p.provider_name)
+assert.ok(reversed.includes('Peacock Premium') && !reversed.includes('Peacock Premium Plus'), 'the plainest tier names the Peacock card, in any order')
+assert.deepEqual(reversed.slice(0, 10), names.slice(0, 10), 'and the order does not depend on the order TMDB answers in')
+// Past the pinned names, a service sits where its most prominent tier does —
+// even when TMDB lists a lesser tier of it first.
+assert.deepEqual(
+  streamingProviders(tmdbUs([[1, 'Philo', 17], [2, 'Sling Premium', 40], [3, 'Sling', 5]]), 'US').map(p => p.provider_name),
+  ['Sling', 'Philo'],
+  'a service ranks by its best tier, not by whichever tier came first',
+)
+assert.deepEqual(names.slice(10), ['fuboTV', 'Philo'], 'everything else follows TMDB\'s prominence for the region')
+
+// Whole rows only: eleven services on ten columns left one card alone.
+assert.equal(fillRows(11, 10, 2), 10, 'a short second row is dropped, not shown with one card')
+assert.equal(fillRows(40, 12, 2), 24, 'two full rows when there are plenty')
+assert.equal(fillRows(7, 10, 2), 7, 'a list shorter than one row shows every card')
+assert.equal(fillRows(0, 10, 2), 0)
+assert.ok(providerColumns(1800) <= 12 && providerColumns(1800) >= 10, 'a wide window fits ten to twelve cards')
+assert.equal(providerColumns(360), 4, 'a phone still gets four')
 
 console.log('check-library: ok')
