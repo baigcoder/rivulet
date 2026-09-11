@@ -36,6 +36,7 @@ const playerRef = ref<{
   goLive: () => void | Promise<void>
   behindLive?: boolean
   videoWidth: number
+  moving?: boolean
   ipc: (command: unknown[]) => Promise<unknown>
 } | null>(null)
 
@@ -86,7 +87,9 @@ function syncPlayerState() {
   if (!p)
     return
   const wasPlaying = playerPlaying.value
-  hasPicture.value = typeof p.videoWidth === 'number' && p.videoWidth > 0
+  // A size, or a clock that is moving — see `moving` in MpvPlayer. libVLC often
+  // reports no size at all for a live channel on Android.
+  hasPicture.value = (typeof p.videoWidth === 'number' && p.videoWidth > 0) || asBool(p.moving)
   playerPlaying.value = asBool(p.started) && !asBool(p.paused) && hasPicture.value
   playerBehindLive.value = asBool(p.behindLive)
   playerVolume.value = typeof p.volume === 'number' ? p.volume : 100

@@ -472,5 +472,18 @@ assert.match(autoBlock, /setWindowFullscreen\(true\)/, 'and then goes full scree
 // lock while starved — and libVLC's own decoder setup waits on that lock.
 assert.doesNotMatch(vlcKt, /THREAD_PRIORITY_BACKGROUND/, 'the decoder scan must not be starved while holding the codec lock')
 
+// --- Live on Android: a moving clock is a picture ------------------------------
+// libVLC often reports no size for a live channel, so videoWidth === 0 alone kept
+// the loader up over a playing picture, let the 12-second start watchdog declare a
+// playing channel dead, and never let a real start reset the reconnect counter.
+assert.match(mpv, /const moving = ref\(false\)/, 'the player tracks whether the clock is moving')
+assert.match(mpv, /videoWidth\.value > 0 \|\| moving\.value \|\| duration\.value/, 'the start watchdog must not kill a channel whose clock is moving')
+assert.match(mpv, /videoWidth\.value === 0 && !moving\.value\)[\t\v\f\r \xA0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]*\n\s*return 'loading'/, 'the loader clears once the clock moves, size or no size')
+assert.match(mpv, /defineExpose\(\{[\s\S]*?\bmoving,/, 'the watch pages can read it')
+const premiumWatch = readFileSync(new URL('../app/pages/live-tv/premium/watch.vue', import.meta.url), 'utf8')
+const freeWatch = readFileSync(new URL('../app/pages/live-tv/watch.vue', import.meta.url), 'utf8')
+assert.match(premiumWatch, /p\.videoWidth > 0\) \|\| asBool\(p\.moving\)/, 'Premium TV counts a moving clock as a picture, so a real start resets the reconnect counter')
+assert.match(freeWatch, /p\.videoWidth > 0\) \|\| asBool\(p\.moving\)/, 'Free TV counts it too')
+
 // eslint-disable-next-line no-console
 console.log('player: ok')

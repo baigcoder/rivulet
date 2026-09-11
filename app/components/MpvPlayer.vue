@@ -302,6 +302,23 @@ let engine: PlayerEngine | null = null
 let silentSaid = false
 
 const started = ref(false)
+/**
+ * The clock is moving: playback time went forward within the last two seconds.
+ *
+ * `videoWidth > 0` was what everything used to mean "there is a picture", and on
+ * Android it often never comes true for a live channel. libVLC only reports a
+ * size once its track carries one, and a live MPEG-TS track frequently doesn't —
+ * a film's container declares its size, a live stream does not. So a channel
+ * could play for minutes while the pages still thought it was opening: the
+ * "Opening the stream…" loader stayed up over the picture, and the reconnect
+ * counter was never reset by a successful start, so ordinary drops on a long
+ * stream added up to "attempt 4 of 4" and a playback error. Time moving is the
+ * one sign every backend gives whether or not it knows the size.
+ */
+const moving = ref(false)
+/** Where the clock last stood, and when it last went forward. */
+let lastClock = -1
+let lastClockAt = 0
 const busy = ref(false)
 const waiting = ref(false)
 const paused = ref(false)
@@ -1742,7 +1759,7 @@ function frame(now: number) {
     || (!!props.src && !started.value)
     || (started.value && (
       buffering.value
-      || (!fromEngine.value && videoWidth.value === 0)
+      || (!fromEngine.value && videoWidth.value === 0 && !moving.value)
     ))
   const needsGeometry = started.value || (native && overlay && hasCentre)
 
@@ -2069,6 +2086,9 @@ async function startPlayer() {
     subText.value = ''
     videoWidth.value = 0
     videoHeight.value = 0
+    moving.value = false
+    lastClock = -1
+    lastClockAt = 0
     subDelay.value = 0 // a fresh mpv starts at zero
     subSpeed.value = 1
     syncNote.value = ''
@@ -2076,7 +2096,10 @@ async function startPlayer() {
     lastKey = '' // force a geometry + shape push on the next frame
     if (!fromEngine.value) {
       window.setTimeout(() => {
-        if (!started.value || errorMsg.value || videoWidth.value > 0 || duration.value)
+        // A clock that is moving has started, whether or not libVLC ever says
+        // how big the picture is. On Android a live channel often never does,
+        // and this declared a channel that was playing dead twelve seconds in.
+        if (!started.value || errorMsg.value || videoWidth.value > 0 || moving.value || duration.value)
           return
         if (localLive.value) {
           streamDied('dead')
@@ -2256,6 +2279,7 @@ defineExpose({
   volume,
   muted,
   started,
+  moving,
   buffering,
   ui,
   videoWidth,
@@ -2302,6 +2326,7 @@ async function poll() {
     if (st && !st.running) {
       stopPoll()
       started.value = false
+      moving.value = false
       // Exiting after real playback is just end-of-file, not a failure.
       if (position.value > 0 && (duration.value === 0 || position.value >= duration.value - 2)) {
         ended.value = true
@@ -2430,6 +2455,17 @@ async function poll() {
   if (!scrubbing.value && typeof p['time-pos'] === 'number') {
     if (position.value < 0.5 || Math.abs(p['time-pos'] - position.value) > 0.4)
       position.value = p['time-pos']
+  }
+
+  // Is the clock moving? Read off the reported time, not the interpolated
+  // position, which the rAF loop advances between polls whether or not
+  // anything is playing.
+  if (typeof p['time-pos'] === 'number') {
+    const now = Date.now()
+    if (lastClock >= 0 && p['time-pos'] > lastClock + 0.05)
+      lastClockAt = now
+    lastClock = p['time-pos']
+    moving.value = started.value && lastClockAt > 0 && now - lastClockAt < 2000
   }
 
   // A start-up log line can land before the first frame; once time is
@@ -2985,7 +3021,7 @@ const centre = computed(() => {
   // frame. Live used to skip this so the watch page could draw its own
   // notice — that notice unmounts the moment the URL exists, so a live
   // channel sat on a black screen with a Pause button and no spinner.
-  if (!fromEngine.value && started.value && !ended.value && videoWidth.value === 0)
+  if (!fromEngine.value && started.value && !ended.value && videoWidth.value === 0 && !moving.value)
     return 'loading'
   if (started.value && (buffering.value || stalled.value))
     return 'stalled'

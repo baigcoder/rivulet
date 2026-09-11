@@ -77,6 +77,7 @@ const playerRef = ref<{
   position?: number
   duration?: number
   videoWidth: number
+  moving?: boolean
   videoHeight: number
   resolutionLabel: string
   ipc: (command: unknown[]) => Promise<unknown>
@@ -404,7 +405,11 @@ function syncPlayerState(): void {
   if (!p)
     return
   const wasPlaying = playerPlaying.value
-  const picture = typeof p.videoWidth === 'number' && p.videoWidth > 0
+  // A size, or a clock that is moving. libVLC often never reports a live
+  // channel's size on Android, and on that test alone a channel could play for
+  // minutes as "opening" while every ordinary drop counted towards the four
+  // reconnects — see `moving` in MpvPlayer.
+  const picture = (typeof p.videoWidth === 'number' && p.videoWidth > 0) || asBool(p.moving)
   playerPlaying.value = asBool(p.started) && !asBool(p.paused) && picture
   playerBehindLive.value = asBool(p.behindLive)
   playerVolume.value = typeof p.volume === 'number' ? p.volume : 100
@@ -650,7 +655,7 @@ onUnmounted(() => {
       :is-fullscreen="isFullscreen"
       :chrome-up="playerChrome"
       :error="overlayError"
-      :connecting="busy && !fatal && (playerRef?.videoWidth ?? 0) <= 0"
+      :connecting="busy && !fatal && (playerRef?.videoWidth ?? 0) <= 0 && !playerRef?.moving"
       :resolution-label="typeof playerRef?.resolutionLabel === 'string' ? playerRef.resolutionLabel : ''"
       :source-quality="playback.source.value?.quality ?? null"
       :quality-variants="qualityVariants"
