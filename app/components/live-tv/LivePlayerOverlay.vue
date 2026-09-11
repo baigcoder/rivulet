@@ -28,8 +28,8 @@
 import {
   mdiAlertCircleOutline,
   mdiArrowLeft,
+  mdiAspectRatio,
   mdiClose,
-  mdiCropFree,
   mdiEyeOffOutline,
   mdiFormatListBulleted,
   mdiFullscreen,
@@ -779,9 +779,10 @@ defineExpose({ show, hide, visible })
       @mouseenter="onBar = true"
       @mouseleave="onBar = false"
     >
-      <!-- Connecting: which step is running, where the eye already is —
-           not a spinner over the middle of the picture. Inside the bar, so it
-           is part of that bar's hole and never a second one. -->
+      <!-- Connecting: the one place it is said — which step, which attempt,
+           and the two ways out (Back is the header's). Not a spinner over the
+           middle of the picture: while this shows there is no picture yet, so
+           the taller bar covers nothing. -->
       <div
         v-if="connecting && !error"
         class="mb-4 max-w-md rounded-2xl bg-white/[0.06] p-4 ring-1 ring-white/10"
@@ -790,28 +791,42 @@ defineExpose({ show, hide, visible })
         <p class="truncate text-title-small font-semibold text-white">
           {{ channelName ? $t('Connecting to {channel}', { channel: channelName }) : $t('Connecting…') }}
         </p>
+        <!-- `border-solid` on every marker: this app sets no default border
+             style, so a bare `border-2` draws nothing at all. -->
         <ol class="mt-3 grid list-none gap-2 p-0 text-body-small">
           <li class="flex items-center gap-2.5 text-white/60">
             <span class="size-3.5 shrink-0 rounded-full bg-emerald-400" aria-hidden="true" />
             {{ $t('Channel found') }}
           </li>
           <li class="flex min-w-0 items-center gap-2.5 text-white">
-            <span class="size-3.5 shrink-0 animate-spin rounded-full border-2 border-primary border-t-transparent motion-reduce:animate-none" aria-hidden="true" />
+            <span class="size-3.5 shrink-0 animate-spin rounded-full border-2 border-solid border-primary border-t-transparent motion-reduce:animate-none" aria-hidden="true" />
             <span class="min-w-0 truncate">{{ connectDetail || $t('Opening the stream…') }}</span>
           </li>
           <li class="flex items-center gap-2.5 text-white/40">
-            <span class="size-3.5 shrink-0 rounded-full border-2 border-white/25" aria-hidden="true" />
+            <span class="size-3.5 shrink-0 rounded-full border-2 border-solid border-white/25" aria-hidden="true" />
             {{ $t('Filling the buffer') }}
           </li>
         </ol>
-        <button
-          v-if="nextEntry"
-          type="button"
-          class="mt-3 max-w-full truncate rounded-xl bg-white/10 px-3 py-2 text-label-medium font-semibold text-white transition-colors hover:bg-white/16 focus-visible:bg-white/16 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-          @click.stop="emit('next')"
-        >
-          {{ $t('Skip to {channel}', { channel: nextEntry.name }) }}
-        </button>
+        <div class="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            class="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-label-medium font-semibold text-on-primary transition-colors hover:brightness-110 focus-visible:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+            @click.stop="emit('retry')"
+          >
+            <v-icon :icon="mdiReload" size="16" />
+            {{ $t('Retry') }}
+          </button>
+          <!-- A channel that will not open is usually dead, not slow: the next
+               one is the likelier fix than waiting. -->
+          <button
+            v-if="nextEntry"
+            type="button"
+            class="max-w-full truncate rounded-xl bg-white/10 px-3 py-2 text-label-medium font-semibold text-white transition-colors hover:bg-white/16 focus-visible:bg-white/16 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+            @click.stop="emit('next')"
+          >
+            {{ $t('Skip to {channel}', { channel: nextEntry.name }) }}
+          </button>
+        </div>
       </div>
 
       <!-- What is on, and how far in: the one line a live bar can say that a
@@ -968,7 +983,8 @@ defineExpose({ show, hide, visible })
             :aria-label="aspectLabel"
             @click.stop="emit('cycleAspectRatio')"
           >
-            <v-icon :icon="mdiCropFree" size="20" />
+            <!-- Not the crop-corners icon: beside Fullscreen it read as a second one. -->
+            <v-icon :icon="mdiAspectRatio" size="20" />
           </button>
 
           <button

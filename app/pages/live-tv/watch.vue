@@ -144,7 +144,6 @@ const streamUrl = ref('')
 const proxiedStreamUrl = ref('')
 const userAgent = ref<string | null>(null)
 const referer = ref<string | null>(null)
-const channelTotal = computed(() => channelList.value.length)
 
 const channelName = computed(() => {
   const queryTitle = String(route.query.title ?? '').trim()
@@ -216,8 +215,8 @@ const overlayError = computed(() => {
 
 const autoSkips = ref(0)
 /**
- * Auto-skip is in progress. While true, a center-screen "trying the next
- * channel…" notice shows below the spinner so the viewer sees a reason for
+ * Auto-skip is in progress. While true, the HUD's connecting panel says
+ * "trying the next one" and which attempt, so the viewer sees a reason for
  * the black screen instead of staring at nothing.
  */
 const autoSkipping = computed<boolean>(() =>
@@ -225,6 +224,11 @@ const autoSkipping = computed<boolean>(() =>
   && autoSkips.value < MAX_AUTO_SKIPS
   && errorMsg.value === ''
   && resolveError.value === '')
+
+/** The step line in the HUD's connecting panel; empty means "Opening the stream…". */
+const connectDetail = computed(() => autoSkipping.value
+  ? `${$t('Channel unavailable — trying the next one…')} ${$t('Attempt {current} of {total}', { current: autoSkips.value + 1, total: MAX_AUTO_SKIPS })}`
+  : '')
 
 /** One notice. Passed as `resolving` so MpvPlayer does not draw a second spinner. */
 const waiting = computed(() =>
@@ -627,6 +631,7 @@ onUnmounted(() => {
       :is-fullscreen="isFullscreen"
       :error="overlayError"
       :connecting="waiting"
+      :connect-detail="connectDetail"
       :aspect-ratio="aspectRatio"
       @back="goBack"
       @prev="zap(-1)"
@@ -641,51 +646,5 @@ onUnmounted(() => {
       @toggle-fullscreen="toggleFullscreen"
       @cycle-aspect-ratio="cycleAspectRatio"
     />
-
-    <!-- Resolving spinner + auto-skip notice — sits above overlay so it
-         beats the HUD chrome to the eye and is visible even in live mode
-         (where <mpv-player> hides its own status bar). -->
-    <transition
-      enter-active-class="transition ease-out duration-150"
-      enter-from-class="opacity-0 scale-95"
-      enter-to-class="opacity-100 scale-100"
-      leave-active-class="transition ease-in duration-100"
-      leave-from-class="opacity-100 scale-100"
-      leave-to-class="opacity-0 scale-95"
-    >
-      <div
-        v-if="waiting"
-        data-cut
-        class="pointer-events-none absolute inset-0 !z-50 grid size-full place-items-center text-white"
-      >
-        <div class="flex flex-col items-center gap-3 max-w-md px-4 text-center">
-          <v-progress-circular indeterminate color="primary" size="40" width="3" />
-          <p class="text-body-medium font-medium opacity-90">
-            {{ autoSkipping
-              ? $t('Channel unavailable — trying the next one…')
-              : $t('Connecting to live stream…') }}
-          </p>
-          <p v-if="autoSkipping && channelTotal > 0" class="text-label-small opacity-60 tabular-nums">
-            {{ $t('Attempt {current} of {total}', { current: autoSkips + 1, total: MAX_AUTO_SKIPS }) }}
-          </p>
-          <div class="pointer-events-auto flex flex-wrap items-center justify-center gap-2 pt-1">
-            <button
-              type="button"
-              class="inline-flex items-center gap-1.5 rounded-xl bg-white/10 px-4 py-2.5 text-body-small font-semibold text-white transition-colors hover:bg-white/16 focus-visible:bg-white/16 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-              @click="goBack"
-            >
-              {{ $t('Back') }}
-            </button>
-            <button
-              type="button"
-              class="inline-flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2.5 text-body-small font-semibold text-on-primary transition-colors hover:brightness-110 focus-visible:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-              @click="() => void onRetry()"
-            >
-              {{ $t('Retry') }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </transition>
   </div>
 </template>

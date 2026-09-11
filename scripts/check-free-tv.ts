@@ -174,9 +174,9 @@ assert.match(
   'the free HUD must not call a black screen "playing"',
 )
 assert.match(
-  watchPage,
-  /data-cut/,
-  'the connecting spinner must punch through the native mpv window',
+  readFileSync(new URL('../app/components/live-tv/LivePlayerOverlay.vue', import.meta.url), 'utf8'),
+  /<footer[\s\S]{0,120}data-cut/,
+  'the bar that carries the connecting panel punches through the native mpv window',
 )
 assert.match(
   watchPage,
@@ -184,9 +184,9 @@ assert.match(
   'the live HUD must stay up until a frame exists so Back is hittable on Win32',
 )
 assert.match(
-  watchPage,
-  /pointer-events-auto[\s\S]*\$t\('Back'\)[\s\S]*\$t\('Retry'\)/,
-  'Connecting… must offer Back and Retry — a pointer-events-none spinner left the Windows build stuck',
+  readFileSync(new URL('../app/components/live-tv/LivePlayerOverlay.vue', import.meta.url), 'utf8'),
+  /v-if="connecting && !error"[\s\S]{0,2500}emit\('retry'\)/,
+  'Connecting… must offer Retry in the bar (Back is the header\'s) — a pointer-events-none spinner left the Windows build stuck',
 )
 assert.match(
   playerSrc,
@@ -354,7 +354,27 @@ assert.match(
 assert.match(freePage, /:layout="layout"/, 'Free TV follows the layout choice')
 
 const overlaySrc = readFileSync(new URL('../app/components/live-tv/LivePlayerOverlay.vue', import.meta.url), 'utf8')
+// One connecting message, and it is the bar's: which step, which attempt,
+// Retry and the next channel. A second spinner over the middle of the picture
+// said the same thing twice.
 assert.match(overlaySrc, /connectDetail \|\| \$t\('Opening the stream…'\)/, 'connecting says which step is running')
+assert.match(overlaySrc, /v-if="connecting && !error"[\s\S]{0,2500}nextEntry/, 'and offers the next channel')
+assert.doesNotMatch(
+  overlaySrc,
+  /class="[^"]*\bborder-2\b(?![^"]*\bborder-solid\b)[^"]*"/,
+  'every bordered marker says border-solid: this app sets no default border style, so a bare border-2 draws nothing',
+)
+assert.doesNotMatch(watchPage, /Connecting to live stream…/, 'Free TV draws no centre connecting layer')
+assert.match(watchPage, /:connect-detail="connectDetail"/, 'its auto-skip attempt is said in the bar instead')
+const premiumWatchSrc = readFileSync(new URL('../app/pages/live-tv/premium/watch.vue', import.meta.url), 'utf8')
+assert.doesNotMatch(premiumWatchSrc, /First connect, and every reconnect/, 'nor does Premium')
+assert.match(premiumWatchSrc, /:connect-detail="statusLine"/, 'Premium\'s reconnect attempt is said in the bar')
+assert.match(premiumWatchSrc, /:resolving="!isVod && hudConnecting"/, 'and mpv\'s own centre spinner stands down while the bar says it')
+assert.match(
+  readFileSync(new URL('../app/pages/live-tv/premium/watch.vue', import.meta.url), 'utf8'),
+  /:status="statusLine"/,
+  'Premium\'s reconnect attempts are said in the player\'s own loading line',
+)
 assert.match(overlaySrc, /isProviderConnectionLimit\(props\.error\)/, 'a taken connection slot is named as such')
 assert.doesNotMatch(overlaySrc, /red-600\/20|#E50914/, 'the lineup and slider use the theme primary, not a second red')
 assert.doesNotMatch(playerSrc, /Starting mpv/, 'nobody watching TV needs to know what mpv is')

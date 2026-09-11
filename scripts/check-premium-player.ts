@@ -215,14 +215,17 @@ check('one error modal, one player start', () => {
 
 check('connecting does not trap Back and Retry under mpv', () => {
   assert.ok(watchSrc.includes(':connecting='), 'the HUD stays up until a frame exists')
+  // Connecting is said once, in the HUD's bar — a `data-cut` surface, so it is
+  // hittable over mpv — with Back in its header and Retry in the panel. A
+  // second centre layer on this page said the same thing over the picture.
+  assert.ok(watchSrc.includes(':connect-detail="statusLine"'), 'the bar says which attempt this is')
+  assert.ok(!watchSrc.includes('First connect, and every reconnect'), 'no second connecting layer over the picture')
+  const overlay = readFileSync(`${ROOT}app/components/live-tv/LivePlayerOverlay.vue`, 'utf8')
   assert.ok(
-    /pointer-events-none[\s\S]*Connecting to live stream/.test(watchSrc),
-    'the connecting layer must not eat clicks meant for Back',
+    /v-if="connecting && !error"[\s\S]{0,2500}emit\('retry'\)/.test(overlay),
+    'Retry must stay hittable while the stream opens',
   )
-  assert.ok(
-    /pointer-events-auto[\s\S]*\$t\('Back'\)[\s\S]*\$t\('Retry'\)/.test(watchSrc),
-    'Back and Retry must stay hittable while the stream opens',
-  )
+  assert.ok(/<footer[\s\S]{0,120}data-cut/.test(overlay), 'the bar carrying it punches through mpv')
 })
 
 check('paused live can jump back to the edge', () => {

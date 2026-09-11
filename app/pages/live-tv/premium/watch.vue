@@ -186,6 +186,15 @@ const busy = computed(() =>
 
 const fatal = computed(() => premium.player === 'error')
 
+/**
+ * In flight with no frame yet. The HUD's bar says so — which attempt, Retry,
+ * the next channel — and it is the only thing that does: mpv's centre spinner
+ * stands down (`resolving`) rather than saying it a second time over the
+ * picture.
+ */
+const hudConnecting = computed(() =>
+  busy.value && !fatal.value && (playerRef.value?.videoWidth ?? 0) <= 0 && !playerRef.value?.moving)
+
 const overlayError = computed(() => {
   // One modal. A second card on this page painted "Playback Error"
   // under the same sentence. VOD keeps its own centre overlay while
@@ -619,7 +628,8 @@ onUnmounted(() => {
         v-if="playback.source.value && !fatal"
         ref="playerRef"
         :src="playback.source.value.url"
-        :status="isVod ? statusLine : ''"
+        :status="statusLine"
+        :resolving="!isVod && hudConnecting"
         :title="channelName"
         :mode="playerMode"
         :aspect="aspectRatio"
@@ -648,7 +658,6 @@ onUnmounted(() => {
       :now-playing="isVod ? '' : nowTitle"
       :now-start="isVod ? null : nowProgram?.start ?? null"
       :now-stop="isVod ? null : nowProgram?.stop ?? null"
-      :connect-detail="statusLine"
       :channel-logo="isVod ? '' : channelLogo"
       :channel-index="isVod ? 0 : (channelIndex >= 0 ? channelIndex : 0)"
       :channel-total="isVod ? 0 : zapList.length"
@@ -659,7 +668,8 @@ onUnmounted(() => {
       :is-fullscreen="isFullscreen"
       :chrome-up="playerChrome"
       :error="overlayError"
-      :connecting="busy && !fatal && (playerRef?.videoWidth ?? 0) <= 0 && !playerRef?.moving"
+      :connecting="hudConnecting"
+      :connect-detail="statusLine"
       :resolution-label="typeof playerRef?.resolutionLabel === 'string' ? playerRef.resolutionLabel : ''"
       :source-quality="playback.source.value?.quality ?? null"
       :quality-variants="qualityVariants"
@@ -689,38 +699,6 @@ onUnmounted(() => {
       :class="overlayRef?.visible ? 'opacity-100' : 'opacity-0'"
     >
       <premium-tv-premium-epg-panel :programs="guide" :loading="guideLoading" :up-next="3" />
-    </div>
-
-    <!-- First connect, and every reconnect: one spinner, one line saying
-         which of the two this is. Fatal is the overlay's modal, not a
-         second card on this page. -->
-    <div
-      v-if="busy && !playback.source.value && !fatal"
-      data-cut
-      class="pointer-events-none absolute inset-0 z-40 grid place-items-center text-white"
-    >
-      <div class="flex flex-col items-center gap-3">
-        <v-progress-circular indeterminate color="primary" size="40" width="3" />
-        <p class="text-body-medium font-medium opacity-70">
-          {{ statusLine || $t('Connecting to live stream…') }}
-        </p>
-        <div class="pointer-events-auto flex flex-wrap items-center justify-center gap-2 pt-1">
-          <button
-            type="button"
-            class="inline-flex items-center gap-1.5 rounded-xl bg-white/10 px-4 py-2.5 text-body-small font-semibold text-white transition-colors hover:bg-white/16 focus-visible:bg-white/16 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-            @click="goBack"
-          >
-            {{ $t('Back') }}
-          </button>
-          <button
-            type="button"
-            class="inline-flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2.5 text-body-small font-semibold text-on-primary transition-colors hover:brightness-110 focus-visible:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-            @click="() => void load({ fresh: true })"
-          >
-            {{ $t('Retry') }}
-          </button>
-        </div>
-      </div>
     </div>
 
     <!-- Quality picker. A compact card, not a full-height drawer: the
