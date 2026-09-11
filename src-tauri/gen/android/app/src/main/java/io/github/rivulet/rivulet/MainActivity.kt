@@ -119,20 +119,26 @@ class MainActivity : TauriActivity() {
    * A rotation is a configuration change this activity handles itself
    * (`configChanges` in the manifest), so it arrives here rather than as a
    * recreate — and it is neither a focus change nor a resume, so the two hooks
-   * above never see it. Player mode rotates the phone to landscape as part of
-   * hiding the bars, and many phones show the navigation bar again as they
-   * turn: a film started from portrait came up with both bars back over the
-   * picture. Re-apply now, and once more after the turn has settled, because
-   * some skins restore the bars at the end of the animation rather than at
-   * the configuration change itself.
+   * above never see it. Many phones show the navigation bar again as they turn,
+   * so a film started from portrait came up with both bars over the picture.
+   *
+   * Only a real turn re-applies player mode, never any configuration change.
+   * Hiding the bars changes the window's size, and on many phones that arrives
+   * here as a change too. Re-applying on that hid the bars again, which changed
+   * the size again: a relayout that never stopped, with the main thread spent on
+   * it while playback — which starts on that thread — waited behind. A size
+   * change keeps the orientation it had, so comparing orientation is what makes
+   * this one call per turn by construction.
    */
   override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
     super.onConfigurationChanged(newConfig)
-    if (!playerMode)
-      return
-    applyPlayerMode()
-    window.decorView.postDelayed({ if (playerMode) applyPlayerMode() }, 400)
+    val turned = newConfig.orientation != lastOrientation
+    lastOrientation = newConfig.orientation
+    if (playerMode && turned)
+      applyPlayerMode()
   }
+
+  private var lastOrientation = android.content.res.Configuration.ORIENTATION_UNDEFINED
 
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)

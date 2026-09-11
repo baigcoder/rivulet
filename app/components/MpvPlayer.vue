@@ -1577,6 +1577,32 @@ function toggleFullscreen() {
 }
 
 /**
+ * Android goes full screen once the picture is actually moving, and not a
+ * moment before.
+ *
+ * Not on mount: the watch page keys this component on `src`, so one start
+ * mounts it twice, and entering on mount (leaving on unmount) turned the phone
+ * landscape, portrait, landscape while libVLC was stopped and restarted under a
+ * surface each turn resized. Neither torrents nor direct links got through it.
+ * Not on `started` either, which only says `engine.start` returned — on Android
+ * that is before a byte has been read. Time past the start, not paused and not
+ * buffering is the signal every backend agrees means "playing", and turning the
+ * phone mid-playback is what the fullscreen button has always done safely.
+ *
+ * Once per mount, so leaving full screen by hand is not undone a tick later.
+ */
+let autoFullscreen = false
+watch(
+  () => position.value > 0.5 && !buffering.value && !paused.value,
+  playing => {
+    if (!playing || autoFullscreen || !isAndroid() || windowFullscreen.value)
+      return
+    autoFullscreen = true
+    void setWindowFullscreen(true)
+  },
+)
+
+/**
  * Picture-in-picture, which only the webview path can do at all: mpv's
  * surface is an OS window this process parents to a box on the page, and
  * the browser API detaches a `<video>` element. So the button exists
@@ -3322,13 +3348,15 @@ onMounted(() => {
   // surface. Starting both at once could open a small player, then visibly
   // stretch it to fullscreen a moment later.
   void (async () => {
-    // On Android a film is full screen from its first frame: the status bar,
-    // the navigation bar and the rotation all belong to the player. The live
-    // pages asked for this on mount already; the film page only ever did when
-    // the fullscreen button was pressed, so both bars sat over the picture.
-    // Through `setWindowFullscreen` rather than the bridge, so the button's
-    // state matches the screen and `onBeforeUnmount` is what undoes it.
-    if (props.fullscreen || isAndroid())
+    // Not on Android, not here. The watch page keys this component on `src`,
+    // so every play mounts it twice — once idle while the link resolves, once
+    // with the link — and entering full screen on mount (and leaving it on
+    // unmount) turned the phone landscape, portrait, landscape in the space of
+    // a start, with libVLC stopped and restarted under a surface being resized
+    // by each turn. Neither torrents nor direct links got past it. Android
+    // enters full screen once the picture is actually moving instead — see
+    // `autoFullscreen` below.
+    if (props.fullscreen)
       await setWindowFullscreen(true)
     startPlayer()
   })()

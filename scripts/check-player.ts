@@ -456,5 +456,21 @@ assert.doesNotMatch(vlcKt, /skipidct=4/, 'skipping IDCT is the same soft-UHD pat
 assert.match(vlcKt, /avcodec-skiploopfilter=0/, 'libVLC must keep the HEVC loop filter on 4K')
 assert.match(vlcKt, /live-caching=3000/, '4K IDR frames need more than 300ms or the decoder drops them')
 
+// --- Android full screen: after playback starts, never during it ---------------
+// The watch page keys the player on `src`, so one start mounts it twice. Entering
+// full screen on mount (and leaving on unmount) rotated the phone landscape,
+// portrait, landscape while libVLC stopped and restarted under it — and neither
+// torrents nor direct links played at all, where v0.6.14 without it did.
+const mountBlock = /\nonMounted\(\(\) => \{[\s\S]*?\n\}\)/.exec(mpv)?.[0] ?? ''
+assert.ok(mountBlock.length > 0, 'the player\'s onMounted is where it was')
+assert.doesNotMatch(mountBlock, /isAndroid\(\)/, 'Android must not enter full screen on mount: it rotates the phone twice per start')
+const autoBlock = /let autoFullscreen = false[\s\S]*?\n\)/.exec(mpv)?.[0] ?? ''
+assert.match(autoBlock, /position\.value > 0\.5/, 'Android full screen waits for playback time to move')
+assert.match(autoBlock, /!buffering\.value/, 'and for buffering to have stopped')
+assert.match(autoBlock, /setWindowFullscreen\(true\)/, 'and then goes full screen')
+// Running at background priority, the decoder scan held Android's codec-list
+// lock while starved — and libVLC's own decoder setup waits on that lock.
+assert.doesNotMatch(vlcKt, /THREAD_PRIORITY_BACKGROUND/, 'the decoder scan must not be starved while holding the codec lock')
+
 // eslint-disable-next-line no-console
 console.log('player: ok')

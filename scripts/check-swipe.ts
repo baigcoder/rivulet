@@ -102,6 +102,18 @@ assert.ok(
   'a rotation re-hides the system bars while a film is up',
 )
 
+// ...but only a rotation. Hiding the bars resizes the window, which on many
+// phones arrives as a configuration change of its own; re-applying on that
+// resized it again, for ever, on the thread playback starts on. A resize keeps
+// its orientation, so the comparison is the whole guard — and a delayed retry
+// would reopen the loop on a timer.
+const configBody = /override fun onConfigurationChanged\([^)]*\)\s*\{((?:(?!\n {2}\})[\s\S])*)/.exec(activity)?.[1] ?? ''
+assert.match(configBody, /newConfig\.orientation/, 'the handler compares orientation')
+// And the comparison has to be what guards the call — its mere presence in the
+// body would still pass with the guard deleted and the loop back.
+assert.match(configBody, /if \([^)\n]*turned[^)\n]*\)[\t\v\f\r \xA0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]*\n\s*applyPlayerMode\(\)/, 'player mode is re-applied on a real turn only, not on any configuration change')
+assert.doesNotMatch(configBody, /postDelayed/, 'no delayed re-apply: that is the relayout loop on a timer')
+
 const drawer = readFileSync(new URL('../app/plugins/drawerswipe.client.ts', import.meta.url), 'utf8')
 assert.ok(drawer.includes('rivulet-video'), 'the drawer must not steal the brightness swipe from the player')
 

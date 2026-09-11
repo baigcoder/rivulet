@@ -244,8 +244,12 @@ class RivuletPlayer(private val activity: MainActivity) {
   private var uhdCaps: String? = null
 
   init {
+    // Normal priority, on purpose. Android builds its decoder list once per
+    // process under one lock, and libVLC's own decoder setup takes that lock
+    // too. A background-priority thread holding it is starved for as long as
+    // the app is busy — which, at the moment a film starts, it always is — and
+    // everything waiting on the lock waits with it.
     Thread({
-      android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
       uhdCaps = runCatching { computeVideoCaps() }.getOrNull()
     }, "RivuletVideoCaps").apply {
       isDaemon = true
