@@ -68,7 +68,9 @@ pub fn free_playlists() -> Vec<(Option<&'static str>, &'static str)> {
 /// keeping them until someone finds the Refresh button. `r3` reads the M3U
 /// comma title — the only name iptv-org's per-country lists carry — and files
 /// a supplement's channels under their country.
-const IMPORT_REVISION: &str = "r3";
+/// `r4` drops channels whose URL is a web page (YouTube, Twitch — see
+/// `streaming_m3u::is_web_page`), which an install holding `r3` rows still lists.
+const IMPORT_REVISION: &str = "r4";
 
 /// Identifies the *set* of playlists on disk and how they were parsed, so that
 /// adding, removing or re-reading one re-imports once. Space-separated because

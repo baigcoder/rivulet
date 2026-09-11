@@ -458,6 +458,9 @@ where
                         {
                             skipped_non_live += 1;
                             pending = None;
+                        } else if is_web_page(&stream_url) {
+                            skipped_non_live += 1;
+                            pending = None;
                         } else if seen.insert(stream_url.clone()) {
                             let extinf = pending.take().unwrap_or_default();
                             let id = extinf
@@ -633,6 +636,8 @@ where
                     if source_id != super::sources::FREE_TV_SOURCE_ID
                         && !matches!(detected, Some("live"))
                     {
+                        skipped_non_live += 1;
+                    } else if is_web_page(&stream_url) {
                         skipped_non_live += 1;
                     } else if seen.insert(stream_url.clone()) {
                         let extinf = pending.take().unwrap_or_default();
@@ -838,6 +843,30 @@ pub(crate) fn detect_stream_type(url: &str) -> Option<&'static str> {
     }
 }
 
+/// A link to a web page rather than to a stream: a YouTube or Twitch channel
+/// page, an embed. The curated list carries 134 of them. The player runs
+/// with `--no-ytdl` and libVLC has no resolver, so each was a card that could
+/// only ever fail — and the auto-skip spent one of its five tries on it.
+pub(crate) fn is_web_page(url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    let host = parsed.host_str().unwrap_or("").to_ascii_lowercase();
+    let host = host.strip_prefix("www.").unwrap_or(&host);
+    let page_host = [
+        "youtube.com",
+        "m.youtube.com",
+        "youtu.be",
+        "twitch.tv",
+        "dailymotion.com",
+        "facebook.com",
+    ]
+    .iter()
+    .any(|h| host == *h || host.ends_with(&format!(".{h}")));
+    let path = parsed.path().to_ascii_lowercase();
+    page_host || path.ends_with(".html") || path.ends_with(".htm")
+}
+
 /// Open a SQLite connection at `path`, running the IPTV schema and the
 /// standard PRAGMAs. Used by the streaming importer to share the WAL
 /// with the state's connection.
@@ -1037,6 +1066,17 @@ mod tests {
 
     /// A stream must be positively identified as live. The
     /// "import only live" rule is what this helper enforces.
+    #[test]
+    fn a_channel_page_is_not_a_stream() {
+        assert!(super::is_web_page("https://www.youtube.com/@EuronewsAlbania/live"));
+        assert!(super::is_web_page("https://www.twitch.tv/abcnewsal"));
+        assert!(super::is_web_page("https://youtu.be/abcdefghijk"));
+        assert!(super::is_web_page("https://tv.example/player.html"));
+        assert!(!super::is_web_page("https://cdn.example/live/index.m3u8"));
+        // A host that merely ends in the same letters is not YouTube.
+        assert!(!super::is_web_page("https://notyoutube.com/live/index.m3u8"));
+    }
+
     #[test]
     fn only_live_is_accepted() {
         let cases = vec![

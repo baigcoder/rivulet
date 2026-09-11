@@ -152,6 +152,16 @@ pub async fn live_dashboard(
     db::build_dashboard(&conn, &source_id).map_err(map_err)
 }
 
+/// How many channels the health sweep is hiding from this source's lists.
+#[tauri::command]
+pub async fn live_offline_count(
+    state: State<'_, IptvState>,
+    source_id: String,
+) -> Result<i64, String> {
+    let conn = state.db.lock().map_err(map_err)?;
+    db::offline_count(&conn, &source_id).map_err(map_err)
+}
+
 // ── Channel queries (the only thing the browser ever asks for) ──────
 
 #[tauri::command]
@@ -470,6 +480,8 @@ pub async fn live_refresh_free_tv(
 
     match result {
         Ok(Ok(_)) => {
+            // The import replaced every row the last sweep judged.
+            super::health::spawn_sweep(app.clone(), true);
             let conn = state.db.lock().map_err(map_err)?;
             db::activate_source(&conn, &source_id).map_err(map_err)?;
             db::get_source(&conn, &source_id)

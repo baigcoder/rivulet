@@ -64,12 +64,35 @@ fn stream_http() -> &'static Client {
     })
 }
 
+/// The kind of an Xtream media URL, by the panel's own shape:
+/// `/live/<user>/<pass>/<id>` (and `movie`, `series`), or
+/// `/timeshift/<user>/<pass>/<duration>/<start>/<id>`.
+///
+/// The shape, not "the path contains /live/": 590 of the free channels sit on
+/// CDN paths like `/hls/live/2020766/ndr_int/index.m3u8`, and calling those
+/// Xtream sent them the VLC User-Agent — which some CDNs answer with 403 — and
+/// the no-Range, one-connection handling a panel's MPEG-TS needs.
+fn xtream_kind(url: &str) -> Option<&'static str> {
+    let parsed = url::Url::parse(url).ok()?;
+    let segments: Vec<&str> = parsed.path_segments()?.filter(|s| !s.is_empty()).collect();
+    let (first, rest) = segments.split_first()?;
+    let kind = match *first {
+        "live" => "live",
+        "movie" => "movie",
+        "series" => "series",
+        "timeshift" => "timeshift",
+        _ => return None,
+    };
+    let shaped = if kind == "timeshift" {
+        rest.len() >= 5
+    } else {
+        rest.len() == 3
+    };
+    shaped.then_some(kind)
+}
+
 fn is_xtream_media_url(url: &str) -> bool {
-    let path = url.split(['?', '#']).next().unwrap_or(url);
-    path.contains("/live/")
-        || path.contains("/timeshift/")
-        || path.contains("/movie/")
-        || path.contains("/series/")
+    xtream_kind(url).is_some()
 }
 
 fn url_path(url: &str) -> &str {
@@ -90,8 +113,7 @@ fn looks_like_hls(url: &str) -> bool {
 /// seekable, and often go silent without FIN — that is the "played,
 /// then Buffering forever" stall.
 fn is_live_mpegts(url: &str) -> bool {
-    let path = url_path(url);
-    (path.contains("/live/") || path.contains("/timeshift/")) && !looks_like_hls(url)
+    matches!(xtream_kind(url), Some("live" | "timeshift")) && !looks_like_hls(url)
 }
 
 /// Xtream/CDN often stop sending bytes without closing TCP. reqwest
@@ -463,8 +485,13 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
     // origin — a 4K channel that played its bottom rung, or nothing at all.
     if content_type.contains("mpegurl") || looks_like_hls(&target_url) || looks_like_hls(&final_url)
     {
-        match resp.text().await {
-            Ok(body) => {
+        // Bytes, not `text()`: a server that gzips its playlist unasked (this
+        // client sends no Accept-Encoding, so nothing decodes it) became a
+        // manifest of binary garbage rewritten line by line, and a channel
+        // that plays direct failed here with "parse_playlist error".
+        match resp.bytes().await {
+            Ok(raw) => {
+                let body = manifest_text(&raw);
                 let rewritten = prefer_highest_hls_rung(&rewrite_m3u(
                     &body,
                     &final_url,
@@ -632,55 +659,115 @@ fn rewrite_m3u(
     referer: Option<&str>,
 ) -> String {
     let mut out = String::with_capacity(body.len());
-    // Split the base into scheme+host and path so query strings on `base`
-    // (rare on manifests, but possible) are preserved on relative resolves.
-    let base_no_query = base.split('?').next().unwrap_or(base);
     for line in body.lines() {
         let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
+        if trimmed.is_empty() {
             out.push_str(line);
             out.push('\n');
             continue;
         }
-        let resolved = if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-            // Some CDNs sign segments with per-request tokens; a manifest
-            // already has them baked in, so pass through unchanged.
-            trimmed.to_string()
-        } else if trimmed.starts_with('/') {
-            // Absolute path — keep the base's scheme+host, drop its path.
-            if let Ok(parsed) = url::Url::parse(base) {
-                format!(
-                    "{}://{}{}",
-                    parsed.scheme(),
-                    parsed.host_str().unwrap_or(""),
-                    trimmed
-                )
-            } else {
-                trimmed.to_string()
-            }
-        } else {
-            // Resolve relative to the manifest's directory.
-            let base_dir = base_no_query.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
-            format!("{base_dir}/{trimmed}")
-        };
-        // An `#EXTVLCOPT:http-user-agent` or `http-referrer` on the
-        // playlist applies to every request in the HLS chain, not only the
-        // initial .m3u8. Without propagating it here, the manifest loads but
-        // the CDN rejects each segment with 403 and the player can only say
-        // "Playback failed". Keep the headers in the proxy URL so nested
-        // manifests inherit them too.
-        out.push_str(&format!("/stream?url={}", urlencoding::encode(&resolved)));
-        if let Some(ua) = user_agent {
-            out.push_str("&X-Rivulet-Ua=");
-            out.push_str(&urlencoding::encode(ua));
+        if trimmed.starts_with('#') {
+            // A tag can point at a file too: the audio and subtitle renditions
+            // (`#EXT-X-MEDIA`), an fMP4 init segment (`#EXT-X-MAP`), a key, the
+            // I-frame ladder. Left alone, a relative one resolved against this
+            // proxy's own origin and got a 400 — a channel with separate audio
+            // played silent or not at all.
+            out.push_str(&rewrite_uri_attrs(line, base, user_agent, referer));
+            out.push('\n');
+            continue;
         }
-        if let Some(rf) = referer {
-            out.push_str("&X-Rivulet-Referer=");
-            out.push_str(&urlencoding::encode(rf));
-        }
+        out.push_str(&proxied_path(
+            &resolve_against(base, trimmed),
+            user_agent,
+            referer,
+        ));
         out.push('\n');
     }
     out
+}
+
+/// A reference in a manifest, as the upstream meant it. An absolute URL is
+/// passed through untouched — CDNs sign segments with per-request tokens, and
+/// re-encoding one breaks it. Anything else resolves the way a browser would:
+/// `../` walks up, and an absolute path keeps the base's port, which the old
+/// hand-rolled join dropped.
+fn resolve_against(base: &str, reference: &str) -> String {
+    if reference.starts_with("http://") || reference.starts_with("https://") {
+        return reference.to_string();
+    }
+    url::Url::parse(base)
+        .and_then(|b| b.join(reference))
+        .map(|u| u.to_string())
+        .unwrap_or_else(|_| reference.to_string())
+}
+
+/// The proxy path for an upstream URL.
+///
+/// An `#EXTVLCOPT:http-user-agent` or `http-referrer` on the playlist applies
+/// to every request in the HLS chain, not only the initial .m3u8. Without
+/// propagating it here, the manifest loads but the CDN rejects each segment
+/// with 403 and the player can only say "Playback failed". Keep the headers in
+/// the proxy URL so nested manifests inherit them too.
+fn proxied_path(resolved: &str, user_agent: Option<&str>, referer: Option<&str>) -> String {
+    let mut out = format!("/stream?url={}", urlencoding::encode(resolved));
+    if let Some(ua) = user_agent {
+        out.push_str("&X-Rivulet-Ua=");
+        out.push_str(&urlencoding::encode(ua));
+    }
+    if let Some(rf) = referer {
+        out.push_str("&X-Rivulet-Referer=");
+        out.push_str(&urlencoding::encode(rf));
+    }
+    out
+}
+
+/// Every `URI="…"` in a tag line, pointed back at the proxy.
+fn rewrite_uri_attrs(
+    line: &str,
+    base: &str,
+    user_agent: Option<&str>,
+    referer: Option<&str>,
+) -> String {
+    const KEY: &str = "URI=\"";
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(at) = rest.find(KEY) {
+        let value_start = at + KEY.len();
+        out.push_str(&rest[..value_start]);
+        let tail = &rest[value_start..];
+        let Some(end) = tail.find('"') else {
+            out.push_str(tail);
+            return out;
+        };
+        let value = &tail[..end];
+        // `data:` carries its bytes inline and `skd:` is a DRM key id — neither
+        // is somewhere to fetch from.
+        if value.is_empty() || value.starts_with("data:") || value.starts_with("skd:") {
+            out.push_str(value);
+        } else {
+            out.push_str(&proxied_path(
+                &resolve_against(base, value),
+                user_agent,
+                referer,
+            ));
+        }
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// A manifest body as text, gunzipped first when the upstream compressed it
+/// without being asked (the gzip magic is the only reliable sign: such servers
+/// often send no `Content-Encoding` at all).
+fn manifest_text(raw: &[u8]) -> String {
+    if raw.starts_with(&[0x1f, 0x8b]) {
+        let mut out = Vec::new();
+        if std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(raw), &mut out).is_ok() {
+            return String::from_utf8_lossy(&out).into_owned();
+        }
+    }
+    String::from_utf8_lossy(raw).into_owned()
 }
 
 /// Master playlists often list the 720p rung first (the "default" a phone
@@ -1009,8 +1096,63 @@ async fn write_preflight(stream: &mut tokio::net::TcpStream) -> anyhow::Result<(
 mod tests {
     use super::{
         default_upstream_ua, hls_bandwidth, hls_height, is_hls_downgrade, is_live_mpegts,
-        is_xtream_media_url, looks_like_hls, prefer_highest_hls_rung, IPTV_PLAYER_UA,
+        is_xtream_media_url, looks_like_hls, manifest_text, prefer_highest_hls_rung, rewrite_m3u,
+        IPTV_PLAYER_UA,
     };
+
+    #[test]
+    fn tag_uris_are_proxied_like_entry_lines() {
+        let base = "https://cdn.example/live/master.m3u8?token=1";
+        let body = "#EXTM3U\n\
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",URI=\"audio/eng.m3u8\"\n\
+#EXT-X-STREAM-INF:BANDWIDTH=1,AUDIO=\"a\"\n\
+../video/720.m3u8\n";
+        let out = rewrite_m3u(body, base, None, None);
+        assert!(
+            out.contains("URI=\"/stream?url=https%3A%2F%2Fcdn.example%2Flive%2Faudio%2Feng.m3u8\""),
+            "the audio rendition goes through the proxy\n{out}"
+        );
+        assert!(
+            out.contains("/stream?url=https%3A%2F%2Fcdn.example%2Fvideo%2F720.m3u8\n"),
+            "`../` walks up a directory\n{out}"
+        );
+        // Inline data is not somewhere to fetch.
+        let key = rewrite_m3u("#EXT-X-KEY:METHOD=AES-128,URI=\"data:text/plain;base64,AA\"\n", base, None, None);
+        assert!(key.contains("URI=\"data:text/plain;base64,AA\""), "{key}");
+    }
+
+    #[test]
+    fn an_absolute_path_keeps_the_port() {
+        let out = rewrite_m3u("#EXTM3U\n/seg/1.ts\n", "http://host:8080/a/b.m3u8", None, None);
+        assert!(out.contains("/stream?url=http%3A%2F%2Fhost%3A8080%2Fseg%2F1.ts"), "{out}");
+    }
+
+    #[test]
+    fn a_gzipped_playlist_is_read_as_text() {
+        use std::io::Write;
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gz.write_all(b"#EXTM3U\nseg.ts\n").unwrap();
+        let raw = gz.finish().unwrap();
+        assert_eq!(manifest_text(&raw), "#EXTM3U\nseg.ts\n");
+        assert_eq!(manifest_text(b"#EXTM3U\n"), "#EXTM3U\n");
+    }
+
+    #[test]
+    fn a_cdn_path_with_live_in_it_is_not_an_xtream_panel() {
+        for url in [
+            "https://ndrint.akamaized.net/hls/live/2020766/ndr_int/index.m3u8",
+            "https://cdn4.skygo.mn/live/disk1/MNB2/HLSv3-FTA/MNB2.m3u8",
+            "https://stream.syritv.al/live/syritv/playlist.m3u8",
+        ] {
+            assert!(!is_xtream_media_url(url), "{url}");
+            assert!(!is_live_mpegts(url), "{url}");
+            assert_eq!(default_upstream_ua(url, None), None, "{url} gets the browser UA");
+        }
+        assert!(is_xtream_media_url(
+            "http://panel:8080/timeshift/u/p/120/2024-01-01:10-00/55.ts"
+        ));
+        assert!(is_xtream_media_url("http://panel:8080/movie/u/p/99.mkv"));
+    }
 
     #[test]
     fn master_playlist_puts_the_highest_rung_first() {

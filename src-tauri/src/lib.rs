@@ -1110,6 +1110,7 @@ pub fn run() {
             iptv::commands::live_set_active,
             iptv::commands::live_remove_source,
             iptv::commands::live_dashboard,
+            iptv::commands::live_offline_count,
             iptv::commands::live_query_channels,
             iptv::commands::live_search_channels,
             iptv::commands::live_country_channels,
@@ -1435,11 +1436,17 @@ pub fn run() {
                                     let _ = iptv::sources::stamp_free_playlist(&conn, &stamped_url);
                                 }
                             }
+                            // Every row is new and unchecked: ask them all now.
+                            iptv::health::spawn_sweep(app_handle4.clone(), true);
                         }
                         Ok(Err(e)) => eprintln!("[iptv] startup free-tv import failed: {e}"),
                         Err(e) => eprintln!("[iptv] startup free-tv import task panicked: {e}"),
                     }
                 });
+            } else {
+                // The list on disk is current; its verdicts may not be. A
+                // sweep within `STALE_AFTER_SECS` is reused and costs nothing.
+                iptv::health::spawn_sweep(app.handle().clone(), false);
             }
 
             Ok(())

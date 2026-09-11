@@ -152,6 +152,17 @@ pub fn open(path: &Path) -> Result<Arc<Mutex<Connection>>, IptvError> {
 fn run_schema(conn: &Connection) -> Result<(), IptvError> {
     conn.execute_batch(SCHEMA)
         .map_err(|e| IptvError::Database(e.to_string()))?;
+    // `CREATE TABLE IF NOT EXISTS` never adds a column to a table an older
+    // build already made. NULL = not checked yet, 1 = answered, 0 = failed
+    // twice in the last sweep (see `health.rs`).
+    let has_health = conn
+        .prepare("SELECT 1 FROM pragma_table_info('iptv_channels') WHERE name = 'health'")
+        .and_then(|mut s| s.exists([]))
+        .map_err(|e| IptvError::Database(e.to_string()))?;
+    if !has_health {
+        conn.execute_batch("ALTER TABLE iptv_channels ADD COLUMN health INTEGER;")
+            .map_err(|e| IptvError::Database(e.to_string()))?;
+    }
     Ok(())
 }
 
@@ -252,6 +263,11 @@ CREATE TABLE IF NOT EXISTS iptv_epg_programs (
   PRIMARY KEY (source_id, epg_id, channel_id, start_ts)
 );
 CREATE INDEX IF NOT EXISTS idx_epg_src_ch_time ON iptv_epg_programs (source_id, channel_id, start_ts);
+
+CREATE TABLE IF NOT EXISTS iptv_meta (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 "#;
 
 /// A thin wrapper around `std::sync::Mutex<Connection>` so the rest of the
@@ -763,7 +779,11 @@ fn build_query_filter(
     search: Option<&str>,
     favorites_only: bool,
 ) -> (String, Vec<Box<dyn rusqlite::ToSql>>) {
-    let mut clauses: Vec<String> = Vec::new();
+    // A channel the last health sweep could not reach twice is left out of
+    // every list, rather than shown to be clicked and skipped past. Unchecked
+    // (NULL) counts as alive: a fresh import lists everything until it's asked.
+    // A filter, not a sort, because the keyset cursor below pages by name.
+    let mut clauses: Vec<String> = vec!["COALESCE(health, 1) != 0".into()];
     let mut binds: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
     if let Some(c) = country.filter(|s| !s.is_empty()) {
         clauses.push("country = ?".into());
@@ -1066,6 +1086,90 @@ pub fn channel_by_id(
         ));
     }
     Ok(None)
+}
+
+// ── Channel health (see `health.rs`) ────────────────────────────────
+
+/// One channel the health sweep asks, with the headers its playlist named.
+pub struct HealthTarget {
+    pub id: String,
+    pub url: String,
+    pub user_agent: Option<String>,
+    pub referer: Option<String>,
+}
+
+/// Every channel of a source, dead ones included — a sweep re-asks those.
+pub fn health_targets(conn: &Connection, source_id: &str) -> Result<Vec<HealthTarget>, IptvError> {
+    let mut stmt = conn
+        .prepare("SELECT id, stream_url, user_agent, referer FROM iptv_channels WHERE source_id = ?1")
+        .map_err(|e| IptvError::Database(e.to_string()))?;
+    let rows = stmt
+        .query_map(params![source_id], |row| {
+            Ok(HealthTarget {
+                id: row.get(0)?,
+                url: row.get(1)?,
+                user_agent: row.get(2)?,
+                referer: row.get(3)?,
+            })
+        })
+        .map_err(|e| IptvError::Database(e.to_string()))?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r.map_err(|e| IptvError::Database(e.to_string()))?);
+    }
+    Ok(out)
+}
+
+/// Record verdicts in one transaction: `(channel id, answered)`.
+pub fn set_health_batch(
+    conn: &Connection,
+    source_id: &str,
+    results: &[(String, bool)],
+) -> Result<(), IptvError> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| IptvError::Database(e.to_string()))?;
+    {
+        let mut statement = tx
+            .prepare_cached("UPDATE iptv_channels SET health = ?3 WHERE source_id = ?1 AND id = ?2")
+            .map_err(|e| IptvError::Database(e.to_string()))?;
+        for (id, ok) in results {
+            statement
+                .execute(params![source_id, id, i64::from(*ok)])
+                .map_err(|e| IptvError::Database(e.to_string()))?;
+        }
+    }
+    tx.commit().map_err(|e| IptvError::Database(e.to_string()))
+}
+
+/// Channels the last sweep hid — what the list says it is leaving out.
+pub fn offline_count(conn: &Connection, source_id: &str) -> Result<i64, IptvError> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM iptv_channels WHERE source_id = ?1 AND health = 0",
+        params![source_id],
+        |row| row.get(0),
+    )
+    .map_err(|e| IptvError::Database(e.to_string()))
+}
+
+/// When the last sweep of this source finished, unix seconds.
+pub fn health_swept_at(conn: &Connection, source_id: &str) -> Option<i64> {
+    conn.query_row(
+        "SELECT value FROM iptv_meta WHERE key = ?1",
+        params![format!("health_swept:{source_id}")],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+    .and_then(|v| v.parse().ok())
+}
+
+pub fn stamp_health_sweep(conn: &Connection, source_id: &str, at: i64) -> Result<(), IptvError> {
+    conn.execute(
+        "INSERT OR REPLACE INTO iptv_meta (key, value) VALUES (?1, ?2)",
+        params![format!("health_swept:{source_id}"), at.to_string()],
+    )
+    .map_err(|e| IptvError::Database(e.to_string()))?;
+    Ok(())
 }
 
 // ── Favorites / recent ───────────────────────────────────────────────
