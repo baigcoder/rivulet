@@ -135,6 +135,18 @@ const watchPage = readFileSync(new URL('../app/pages/watch.vue', import.meta.url
 assert.ok(picker.includes('downloads.fileLimit'), 'and the picker dims what will not fit')
 assert.ok(picker.includes('!!t.magnet'), 'Download is the torrent engine, not an HTTP save')
 assert.ok(picker.includes('@click.stop="play(t)"'), 'Play is a click, not a nested router-link')
+// Playing a hand-picked release follows How Play works, as the Play button does.
+// It used to open the link of any row that had one — which is most debrid rows,
+// since they carry an infoHash too — so Torrent engine mode never reached the
+// engine from the picker at all.
+assert.ok(
+  /const viaEngine = !!t\.magnet[\t\v\f\r \xA0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]*\n\s*&& \(settings\.allowTorrents \|\| !t\.url\)/.test(picker),
+  'a picked release streams its magnet in engine mode and opens its link in direct mode',
+)
+assert.ok(
+  !picker.includes('savePendingRelease(t.url ? { url: t.url } : { magnet: t.magnet })'),
+  'the picker no longer plays every row with a link as Direct, whatever the mode',
+)
 assert.ok(!picker.includes('download_url'), 'Releases Download never saves a Direct URL over HTTP')
 assert.ok(picker.includes('downloads.start'), 'a magnet row is filed in the torrent engine')
 assert.ok(picker.includes('started.id < 0'), 'the tick waits until the engine has accepted the magnet')

@@ -128,9 +128,16 @@ const list = computed(() => {
 async function play(t: Release) {
   if (tooBig(t) || !(t.url || t.magnet))
     return
-  // Direct rows play the URL even when a hash is attached — the engine is
-  // Download's job. Stash the payload; debrid links blow past `?url=`.
-  savePendingRelease(t.url ? { url: t.url } : { magnet: t.magnet })
+  // Follows How Play works, as the Play button does. With the engine on, a row
+  // that carries a magnet streams through the torrent engine — downloading as it
+  // plays — even when it has a direct link too; with it off, that link opens and
+  // nothing touches the engine. A row with only one of the two plays that one
+  // either way, and a torrent too big for the drive falls back to its link where
+  // there is one. Stash the payload; debrid links blow past `?url=`.
+  const viaEngine = !!t.magnet
+    && (settings.allowTorrents || !t.url)
+    && !(t.url && t.bytes > downloads.fileLimit)
+  savePendingRelease(viaEngine ? { magnet: t.magnet } : { url: t.url })
   open.value = false
   await navigateTo(watchLink(
     props.type,
