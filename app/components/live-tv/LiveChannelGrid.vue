@@ -3,10 +3,13 @@ import type { LiveChannel } from '~/utils/iptv'
 import { useVirtualizer } from '@tanstack/vue-virtual'
 import { useDebounceFn, useElementSize } from '@vueuse/core'
 import { computed, nextTick, ref, shallowRef, triggerRef, watch } from 'vue'
+import { categoryLabel } from '~/utils/categoryLabel'
 import { liveGridColumnCount, liveGridRowEstimate } from '~/utils/liveGridColumns'
 
 const props = defineProps<{
   channels: LiveChannel[]
+  /** Guide rows or logo tiles — see `useLiveLayout`. */
+  layout?: 'grid' | 'list'
   getEpg: (id: string) => Array<{ title: string, description?: string | null, start: string, stop?: string | null }>
   isFavorite: (ch: LiveChannel) => boolean
   /** Passed straight to the card; see its own prop for why it is advisory. */
@@ -28,15 +31,44 @@ const emit = defineEmits<{
 const scrollRef = ref<HTMLElement>()
 const { width: gridWidth } = useElementSize(scrollRef)
 
-const cols = computed(() => liveGridColumnCount(gridWidth.value, props.density ?? 'comfortable'))
+const cols = computed(() => props.layout === 'list' ? 1 : liveGridColumnCount(gridWidth.value, props.density ?? 'comfortable'))
 
 const rowStyle = computed(() => ({
   gridTemplateColumns: `repeat(${cols.value}, minmax(0, 1fr))`,
 }))
 
-const rowEstimate = computed(() =>
-  liveGridRowEstimate(gridWidth.value, cols.value, props.density ?? 'comfortable', true),
+/**
+ * A guide row: the strip's fixed 72px and the 4px under it. This grid places
+ * rows from the estimate and never measures them, so it has to be exact.
+ */
+const STRIP_ROW = 76
+
+const rowEstimate = computed(() => props.layout === 'list'
+  ? STRIP_ROW
+  : liveGridRowEstimate(gridWidth.value, cols.value, props.density ?? 'comfortable', true),
 )
+
+function playable(ch: LiveChannel): boolean {
+  const s = ch.streamUrl
+  return !!s && s !== 'undefined' && s !== 'null'
+}
+
+/** What is on now, if the guide has it, in the strip's milliseconds. */
+function nowOf(ch: LiveChannel) {
+  const now = Date.now()
+  for (const p of props.getEpg(ch.id)) {
+    const start = Date.parse(p.start)
+    const stop = p.stop ? Date.parse(p.stop) : start + 3_600_000
+    if (start <= now && now < stop)
+      return { title: p.title, start, stop }
+  }
+  return null
+}
+
+function subtitleOf(ch: LiveChannel): string {
+  const where = ch.country || (ch.categoryName ? categoryLabel(ch.categoryName) : '')
+  return [ch.countryFlag, where].filter(Boolean).join(' ')
+}
 
 // Slice the channels into rows of `cols` width.
 // `channels` change rather than on every scroll — the array is read by the
@@ -119,6 +151,10 @@ watch(cols, () => {
   nextTick(() => virtualizer.value?.measure())
 })
 
+// Switching layout changes every row's height even when the column count
+// happens to come out the same.
+watch(() => props.layout, () => nextTick(() => virtualizer.value?.measure()))
+
 // Batch EPG: debounce so a fast scroll doesn't fire a fetch per frame,
 // cap at 20 channels per call so a giant grid doesn't issue 200 EPG
 // requests at once.
@@ -200,7 +236,25 @@ watch(
           transform: `translateY(${virtualRow.start}px)`,
         }"
       >
+        <div v-if="layout === 'list'" class="pb-1">
+          <live-tv-channel-strip
+            v-for="(ch, i) in rows[virtualRow.index]"
+            :id="ch.id"
+            :key="ch.id"
+            :number="virtualRow.index * cols + i + 1"
+            :name="ch.name"
+            :logo-url="ch.logoUrl"
+            :subtitle="subtitleOf(ch)"
+            :now="nowOf(ch)"
+            :offline="isOffline?.(ch) === true"
+            :favorite="isFavorite(ch)"
+            :disabled="!playable(ch)"
+            @play="emit('play', ch)"
+            @toggle-favorite="emit('toggleFavorite', ch)"
+          />
+        </div>
         <div
+          v-else
           class="grid gap-3"
           :style="rowStyle"
         >

@@ -3684,7 +3684,7 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
             {{ $t('Waiting for the torrent stream…') }}
           </template>
           <template v-else>
-            {{ step || (native ? $t('Starting mpv…') : $t('Opening the stream…')) }}
+            {{ step || $t('Opening the stream…') }}
           </template>
         </div>
         <!-- The first source is selected by the release ranker (1080p first

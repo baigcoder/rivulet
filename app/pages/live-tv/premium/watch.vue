@@ -141,11 +141,12 @@ const hasNext = computed(() => channelIndex.value >= 0 && channelIndex.value < z
 
 const guide = computed<EpgProgram[]>(() => premium.guide(channelId.value))
 
-/** The one guide line worth the top bar: what is on right now. */
-const nowTitle = computed(() => {
+/** What is on right now, when the guide knows — its title, and its times for the timeline. */
+const nowProgram = computed(() => {
   const now = Math.floor(Date.now() / 1000)
-  return guide.value.find(p => p.start <= now && (p.stop == null || p.stop > now))?.title ?? ''
+  return guide.value.find(p => p.start <= now && (p.stop == null || p.stop > now)) ?? null
 })
+const nowTitle = computed(() => nowProgram.value?.title ?? '')
 
 /**
  * The player's own status line. It sits under the title inside mpv's
@@ -618,7 +619,7 @@ onUnmounted(() => {
         v-if="playback.source.value && !fatal"
         ref="playerRef"
         :src="playback.source.value.url"
-        :status="statusLine"
+        :status="isVod ? statusLine : ''"
         :title="channelName"
         :mode="playerMode"
         :aspect="aspectRatio"
@@ -645,6 +646,9 @@ onUnmounted(() => {
       :busy="busy"
       :channel-name="channelName"
       :now-playing="isVod ? '' : nowTitle"
+      :now-start="isVod ? null : nowProgram?.start ?? null"
+      :now-stop="isVod ? null : nowProgram?.stop ?? null"
+      :connect-detail="statusLine"
       :channel-logo="isVod ? '' : channelLogo"
       :channel-index="isVod ? 0 : (channelIndex >= 0 ? channelIndex : 0)"
       :channel-total="isVod ? 0 : zapList.length"

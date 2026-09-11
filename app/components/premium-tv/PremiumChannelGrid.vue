@@ -20,10 +20,13 @@ import type { EpgProgram, IPTVChannel } from '~/types/premium'
 import { useVirtualizer } from '@tanstack/vue-virtual'
 import { useDebounceFn, useElementSize } from '@vueuse/core'
 import { computed, nextTick, ref, shallowRef, triggerRef, watch } from 'vue'
+import { categoryLabel } from '~/utils/categoryLabel'
 import { liveGridColumnCount, liveGridRowEstimate } from '~/utils/liveGridColumns'
 
 const props = defineProps<{
   channels: IPTVChannel[]
+  /** Guide rows or logo tiles — see `useLiveLayout`. */
+  layout?: 'grid' | 'list'
   nowNext: (id: string) => { now: EpgProgram | null, next: EpgProgram | null }
   favorite: (id: string) => boolean
   density?: 'compact' | 'comfortable'
@@ -52,15 +55,27 @@ const { width: gridWidth } = useElementSize(scrollRef)
  * Column count from the scroll width — keeps the virtualizer aligned with
  * `gridTemplateColumns` once a sidebar is taking horizontal space.
  */
-const cols = computed(() => liveGridColumnCount(gridWidth.value, props.density ?? 'comfortable'))
+const cols = computed(() => props.layout === 'list' ? 1 : liveGridColumnCount(gridWidth.value, props.density ?? 'comfortable'))
 
 const rowStyle = computed(() => ({
   gridTemplateColumns: `repeat(${cols.value}, minmax(0, 1fr))`,
 }))
 
-const rowEstimate = computed(() =>
-  liveGridRowEstimate(gridWidth.value, cols.value, props.density ?? 'comfortable', true),
+/** A guide row is the strip's fixed 72px and its 4px gap; rows are still measured. */
+const rowEstimate = computed(() => props.layout === 'list'
+  ? 76
+  : liveGridRowEstimate(gridWidth.value, cols.value, props.density ?? 'comfortable', true),
 )
+
+/** What is on now, in the strip's milliseconds — the guide speaks seconds. */
+function nowOf(ch: IPTVChannel) {
+  const now = props.nowNext(ch.id).now
+  return now ? { title: now.title, start: now.start * 1000, stop: now.stop ? now.stop * 1000 : null } : null
+}
+
+function subtitleOf(ch: IPTVChannel): string {
+  return ch.country || (ch.categoryName ? categoryLabel(ch.categoryName) : '')
+}
 
 const rows = shallowRef<IPTVChannel[][]>([])
 
@@ -139,6 +154,8 @@ watch(cols, () => {
   rebuildRows()
   void nextTick(() => virtualizer.value?.measure())
 })
+
+watch(() => props.layout, () => void nextTick(() => virtualizer.value?.measure()))
 
 /** Vue hands a function ref the element (or a component instance). */
 function measure(el: Element | ComponentPublicInstance | null): void {
@@ -225,7 +242,23 @@ defineExpose({
           transform: `translateY(${virtualRow.start}px)`,
         }"
       >
+        <div v-if="layout === 'list'" class="pb-1">
+          <live-tv-channel-strip
+            v-for="(ch, i) in rows[virtualRow.index]"
+            :id="ch.id"
+            :key="ch.id"
+            :number="virtualRow.index * cols + i + 1"
+            :name="ch.name"
+            :logo-url="ch.logoUrl"
+            :subtitle="subtitleOf(ch)"
+            :now="nowOf(ch)"
+            :favorite="favorite(ch.id)"
+            @play="emit('play', ch)"
+            @toggle-favorite="emit('toggleFavorite', ch)"
+          />
+        </div>
         <div
+          v-else
           class="grid gap-3 pb-3"
           :style="rowStyle"
         >

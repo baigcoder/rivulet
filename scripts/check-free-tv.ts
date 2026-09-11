@@ -306,4 +306,57 @@ assert.match(connectionLimitMessage(2, 2), /2.*2/, 'active and max slots are nam
 assert.equal(fmtHudTime(125), '2:05', 'HUD clock formats minutes')
 assert.equal(fmtHudTime(3661), '1:01:01', 'HUD clock formats hours')
 
+// --- Channels that answer, and a proxy that doesn't break them --------------
+// Measured from a home connection: a third to a half of the free list does not
+// answer at all, and of the channels that did, the proxy broke some that play
+// direct. The Rust halves have unit tests; these hold the wiring in place.
+
+const rust = (rel: string) => readFileSync(new URL(`../src-tauri/src/${rel}`, import.meta.url), 'utf8')
+const proxyRs = rust('iptv/proxy.rs')
+assert.match(proxyRs, /match resp\.bytes\(\)\.await \{\s+Ok\(raw\) => \{\s+let body = manifest_text\(&raw\);/, 'a gzipped playlist is decoded before it is rewritten')
+assert.match(proxyRs, /fn manifest_text[\s\S]*?GzDecoder/, 'by its gzip magic')
+assert.match(proxyRs, /starts_with\('#'\) \{[\s\S]{0,400}?rewrite_uri_attrs\(line, base, user_agent, referer\)/, 'URI="…" inside a tag goes through the proxy too')
+assert.match(proxyRs, /fn is_xtream_media_url\(url: &str\) -> bool \{\s+xtream_kind\(url\)\.is_some\(\)/, 'Xtream is the panel shape, not "/live/ somewhere in the path"')
+assert.doesNotMatch(proxyRs, /path\.contains\("\/live\/"\)/, 'no substring test for /live/ is left')
+
+const healthRs = rust('iptv/health.rs')
+assert.match(healthRs, /buffer_unordered\(CONCURRENCY\)/, 'the sweep is bounded')
+assert.match(healthRs, /ask the failures once\s+\/\/ more before hiding/, 'and a channel must fail twice to be hidden')
+const dbRs = rust('iptv/db.rs')
+assert.match(dbRs, /vec!\["COALESCE\(health, 1\) != 0"\.into\(\)\]/, 'every list leaves out what the sweep found dead, and keeps what it has not asked')
+assert.match(dbRs, /ALTER TABLE iptv_channels ADD COLUMN health INTEGER/, 'an existing database gains the column')
+const importer = rust('iptv/streaming_m3u.rs')
+assert.equal(importer.match(/\} else if is_web_page\(&stream_url\) \{/g)?.length, 2, 'a YouTube/Twitch page is skipped on both import paths')
+assert.match(m3u, /const IMPORT_REVISION: &str = "r4"/, 'and installs holding them re-import once')
+const libRs = rust('lib.rs')
+assert.equal(libRs.match(/iptv::health::spawn_sweep\(/g)?.length, 2, 'a sweep follows the boot import, or runs at boot when there is none')
+assert.match(rust('iptv/commands.rs'), /spawn_sweep\(app\.clone\(\), true\)/, 'and follows Refresh')
+assert.match(freePage, /listen<\{ done: boolean \}>\('live_health'/, 'the page re-reads the list when a sweep lands')
+assert.match(freePage, /liveOfflineCount\(/, 'and says how many channels it is hiding')
+
+// --- A guide, not a logo wall ------------------------------------------------
+// Rows carry what a viewer chooses by — number, name, what is on and how far
+// in — and twice as many fit a TV screen as logo tiles did.
+
+const strip = readFileSync(new URL('../app/components/live-tv/ChannelStrip.vue', import.meta.url), 'utf8')
+assert.match(strip, /h-\[72px\]/, 'a guide row is a fixed height: Free TV places rows from an estimate')
+assert.match(strip, /role="button"\s+tabindex="-1"/, 'the row\'s favourite star stays out of the remote\'s path')
+for (const rel of ['app/components/live-tv/LiveChannelGrid.vue', 'app/components/premium-tv/PremiumChannelGrid.vue']) {
+  const s = readFileSync(new URL(`../${rel}`, import.meta.url), 'utf8')
+  assert.match(s, /props\.layout === 'list' \? 1 :/, `${rel}: a guide list is one column`)
+  assert.match(s, /<live-tv-channel-strip/, `${rel}: and draws guide rows`)
+}
+assert.match(
+  readFileSync(new URL('../app/components/live-tv/LiveChannelGrid.vue', import.meta.url), 'utf8'),
+  /const STRIP_ROW = 76/,
+  'the Free TV estimate is the strip\'s real height, or rows overlap',
+)
+assert.match(freePage, /:layout="layout"/, 'Free TV follows the layout choice')
+
+const overlaySrc = readFileSync(new URL('../app/components/live-tv/LivePlayerOverlay.vue', import.meta.url), 'utf8')
+assert.match(overlaySrc, /connectDetail \|\| \$t\('Opening the stream…'\)/, 'connecting says which step is running')
+assert.match(overlaySrc, /isProviderConnectionLimit\(props\.error\)/, 'a taken connection slot is named as such')
+assert.doesNotMatch(overlaySrc, /red-600\/20|#E50914/, 'the lineup and slider use the theme primary, not a second red')
+assert.doesNotMatch(playerSrc, /Starting mpv/, 'nobody watching TV needs to know what mpv is')
+
 console.info('free tv health: ok')

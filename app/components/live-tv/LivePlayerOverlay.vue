@@ -49,9 +49,10 @@ import {
   mdiVolumeOff,
 } from '@mdi/js'
 import { invoke } from '@tauri-apps/api/core'
+import { useNow } from '@vueuse/core'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { isAndroid, isTv } from '~/utils/platform'
-import { fmtHudTime, friendlyPlaybackError } from '~/utils/playbackError'
+import { fmtHudTime, friendlyPlaybackError, isProviderConnectionLimit } from '~/utils/playbackError'
 import { proxyLogo } from '~/utils/premiumTv'
 
 export interface ChannelEntry {
@@ -78,6 +79,11 @@ const props = withDefaults(
     channelName?: string
     /** What's on right now, when the page has a guide for this channel. */
     nowPlaying?: string
+    /** When that programme started and ends, epoch seconds — draws its timeline. */
+    nowStart?: number | null
+    nowStop?: number | null
+    /** Which step of connecting is running, in the page's words ("Reconnecting… attempt 2 of 4"). */
+    connectDetail?: string
     channelLogo?: string
     channelIndex?: number
     channelTotal?: number
@@ -114,6 +120,9 @@ const props = withDefaults(
     connecting: false,
     channelName: '',
     nowPlaying: '',
+    nowStart: null,
+    nowStop: null,
+    connectDetail: '',
     channelLogo: '',
     channelIndex: 0,
     channelTotal: 0,
@@ -174,6 +183,35 @@ const timeLine = computed(() => {
   return `${fmtHudTime(props.position)} / ${fmtHudTime(props.duration)}`
 })
 const IDLE_MS = computed(() => touch.value ? 1500 : 2800)
+
+// ── Tuning: where you are in the lineup, and what is on ──────────────
+/** Channel numbers read like a set's: three digits, from 1. */
+const channelNumber = computed(() => String(props.channelIndex + 1).padStart(3, '0'))
+/** The neighbours by name, so a zap is a choice and not a guess. */
+const prevEntry = computed(() => props.hasPrev ? props.channelList[props.channelIndex - 1] ?? null : null)
+const nextEntry = computed(() => props.hasNext ? props.channelList[props.channelIndex + 1] ?? null : null)
+
+const clock = useNow({ interval: 30_000 })
+const nowTimeline = computed(() => {
+  if (!props.nowStart)
+    return null
+  const start = props.nowStart * 1000
+  const end = (props.nowStop ?? props.nowStart + 3600) * 1000
+  const fmt = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const pct = end > start
+    ? Math.max(0, Math.min(100, ((clock.value.getTime() - start) / (end - start)) * 100))
+    : 0
+  return { start: fmt(start), end: fmt(end), pct }
+})
+
+/**
+ * A taken connection slot is the one failure the viewer fixes somewhere else
+ * — on their other device — so it gets its own name instead of "Playback
+ * Error". `error` is already the friendly sentence, which still says so.
+ */
+const errorTitle = computed(() => isProviderConnectionLimit(props.error)
+  ? $t('Your provider\'s connection is in use')
+  : $t('Playback Error'))
 
 /** Left-edge vertical drag = brightness, right-edge = volume. Touch only. */
 const {
@@ -516,11 +554,17 @@ defineExpose({ show, hide, visible })
         <v-icon :icon="mdiArrowLeft" size="20" class="transition-transform group-hover:-translate-x-0.5 group-focus-visible:-translate-x-0.5" />
       </button>
 
+      <span
+        v-if="isLiveVariant && channelTotal > 0"
+        class="hidden shrink-0 font-mono text-headline-small tabular-nums tracking-tight text-white/85 sm:block"
+        aria-hidden="true"
+      >{{ channelNumber }}</span>
+
       <div
         v-if="channelLogo"
-        class="grid size-10 shrink-0 place-items-center overflow-hidden rounded-lg bg-white/10"
+        class="grid size-11 shrink-0 place-items-center overflow-hidden rounded-lg bg-zinc-950 ring-1 ring-white/10"
       >
-        <img :src="proxyLogo(channelLogo)" alt="" class="size-full object-contain">
+        <img :src="proxyLogo(channelLogo)" alt="" class="size-full object-contain p-1">
       </div>
 
       <div class="min-w-0 flex-1">
@@ -548,9 +592,13 @@ defineExpose({ show, hide, visible })
               <span class="size-1.5 rounded-full bg-red-500" aria-hidden="true" />
               {{ $t('LIVE') }}
             </span>
-            <span v-if="qualityBadge" class="shrink-0 tabular-nums text-white/45">{{ qualityBadge }}</span>
-            <span v-if="channelTotal > 0" class="shrink-0 tabular-nums text-white/45">{{ channelIndex + 1 }}/{{ channelTotal }}</span>
-            <span v-if="nowPlaying" class="min-w-0 truncate text-white/55">{{ nowPlaying }}</span>
+            <span
+              v-if="qualityBadge"
+              class="shrink-0 rounded bg-amber-300/12 px-1.5 text-[10px] font-bold uppercase leading-4 tracking-wider text-amber-200 ring-1 ring-amber-300/30"
+            >{{ qualityBadge }}</span>
+            <span v-if="channelTotal > 0" class="shrink-0 tabular-nums text-white/50">
+              {{ $t('{n} of {total}', { n: channelIndex + 1, total: channelTotal }) }}
+            </span>
           </template>
           <span v-else-if="timeLine" class="shrink-0 font-mono tabular-nums text-white/70">{{ timeLine }}</span>
         </p>
@@ -619,7 +667,7 @@ defineExpose({ show, hide, visible })
 
           <div class="space-y-1">
             <h2 class="text-title-small font-semibold text-white">
-              {{ $t('Playback Error') }}
+              {{ errorTitle }}
             </h2>
             <p class="text-body-small leading-relaxed text-white/70">
               {{ friendlyErrorText }}
@@ -655,19 +703,20 @@ defineExpose({ show, hide, visible })
       </div>
     </transition>
 
-    <!-- QUICKZAP SIDE DRAWER (SLIDE-IN FROM LEFT) -->
+    <!-- The lineup, beside the picture on the right: the left is where the
+         programme and the connecting readout already sit. -->
     <transition
       enter-active-class="transition transform duration-300 ease-out"
-      enter-from-class="-translate-x-full"
+      enter-from-class="translate-x-full"
       enter-to-class="translate-x-0"
       leave-active-class="transition transform duration-250 ease-in"
       leave-from-class="translate-x-0"
-      leave-to-class="-translate-x-full"
+      leave-to-class="translate-x-full"
     >
       <div
         v-if="showQuickZap"
         data-cut
-        class="pointer-events-auto absolute inset-y-0 left-0 z-40 w-80 max-w-[85vw] flex flex-col border-r border-white/10 shadow-2xl p-4"
+        class="pointer-events-auto absolute inset-y-0 right-0 z-40 w-80 max-w-[85vw] flex flex-col border-l border-white/10 shadow-2xl p-4"
         :class="overlay ? 'bg-[#0F1117]' : 'bg-[#0F1117]/92 backdrop-blur-2xl'"
       >
         <!-- Header -->
@@ -687,7 +736,7 @@ defineExpose({ show, hide, visible })
             v-model="drawerSearch"
             type="text"
             :placeholder="$t('Search channels')"
-            class="w-full pl-9 pr-3 py-1.5 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-red-500 transition-colors"
+            class="w-full pl-9 pr-3 py-1.5 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-primary transition-colors"
           >
         </div>
 
@@ -699,12 +748,12 @@ defineExpose({ show, hide, visible })
             type="button"
             class="w-full flex items-center gap-3 p-2.5 rounded-xl border text-left transition-colors group hover:bg-white/10 focus-visible:bg-white/10"
             :class="ch.originalIndex === channelIndex
-              ? 'bg-red-600/20 border-red-500/50 text-white border-l-4 border-l-red-500'
+              ? 'bg-primary/15 border-primary/40 text-white'
               : 'bg-white/5 border-white/5 text-gray-300 hover:text-white focus-visible:text-white'"
             @click="handleZapSelect(ch.originalIndex)"
           >
-            <span class="w-6 text-[11px] font-bold text-gray-400 text-center">
-              {{ ch.originalIndex + 1 }}
+            <span class="w-9 shrink-0 text-center font-mono text-[12px] tabular-nums text-white/45">
+              {{ String(ch.originalIndex + 1).padStart(3, '0') }}
             </span>
             <div v-if="ch.logoUrl" class="size-8 shrink-0 rounded-lg bg-black/40 border border-white/10 p-0.5 overflow-hidden grid place-items-center">
               <img :src="proxyLogo(ch.logoUrl)" :alt="ch.name" class="size-full object-contain">
@@ -730,17 +779,81 @@ defineExpose({ show, hide, visible })
       @mouseenter="onBar = true"
       @mouseleave="onBar = false"
     >
+      <!-- Connecting: which step is running, where the eye already is —
+           not a spinner over the middle of the picture. Inside the bar, so it
+           is part of that bar's hole and never a second one. -->
+      <div
+        v-if="connecting && !error"
+        class="mb-4 max-w-md rounded-2xl bg-white/[0.06] p-4 ring-1 ring-white/10"
+        role="status"
+      >
+        <p class="truncate text-title-small font-semibold text-white">
+          {{ channelName ? $t('Connecting to {channel}', { channel: channelName }) : $t('Connecting…') }}
+        </p>
+        <ol class="mt-3 grid list-none gap-2 p-0 text-body-small">
+          <li class="flex items-center gap-2.5 text-white/60">
+            <span class="size-3.5 shrink-0 rounded-full bg-emerald-400" aria-hidden="true" />
+            {{ $t('Channel found') }}
+          </li>
+          <li class="flex min-w-0 items-center gap-2.5 text-white">
+            <span class="size-3.5 shrink-0 animate-spin rounded-full border-2 border-primary border-t-transparent motion-reduce:animate-none" aria-hidden="true" />
+            <span class="min-w-0 truncate">{{ connectDetail || $t('Opening the stream…') }}</span>
+          </li>
+          <li class="flex items-center gap-2.5 text-white/40">
+            <span class="size-3.5 shrink-0 rounded-full border-2 border-white/25" aria-hidden="true" />
+            {{ $t('Filling the buffer') }}
+          </li>
+        </ol>
+        <button
+          v-if="nextEntry"
+          type="button"
+          class="mt-3 max-w-full truncate rounded-xl bg-white/10 px-3 py-2 text-label-medium font-semibold text-white transition-colors hover:bg-white/16 focus-visible:bg-white/16 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+          @click.stop="emit('next')"
+        >
+          {{ $t('Skip to {channel}', { channel: nextEntry.name }) }}
+        </button>
+      </div>
+
+      <!-- What is on, and how far in: the one line a live bar can say that a
+           film's cannot. -->
+      <div v-else-if="nowPlaying" class="mb-3 grid max-w-3xl gap-1.5">
+        <p class="truncate text-title-medium font-semibold text-white">
+          {{ nowPlaying }}
+        </p>
+        <div
+          v-if="nowTimeline"
+          class="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 font-mono text-label-small tabular-nums text-white/60"
+        >
+          <span>{{ nowTimeline.start }}</span>
+          <span class="relative h-1 rounded-full bg-white/15">
+            <span class="absolute inset-y-0 start-0 rounded-full bg-white/85" :style="{ width: `${nowTimeline.pct}%` }" />
+            <span
+              class="absolute top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-red-500 ring-4 ring-red-500/25"
+              :style="{ left: `${nowTimeline.pct}%` }"
+              aria-hidden="true"
+            />
+          </span>
+          <span>{{ nowTimeline.end }}</span>
+        </div>
+      </div>
+
       <div class="flex items-center justify-between gap-4">
-        <div class="flex items-center gap-2" data-dpad-start>
+        <div class="flex min-w-0 items-center gap-2" data-dpad-start>
           <button
             type="button"
-            class="glass-icon-btn"
+            :class="!touch && prevEntry ? 'zap-chip' : 'glass-icon-btn'"
             :disabled="!hasPrev"
             :title="$t('Previous channel')"
-            :aria-label="$t('Previous channel')"
+            :aria-label="prevEntry ? `${$t('Previous channel')}: ${prevEntry.name}` : $t('Previous channel')"
             @click.stop="emit('prev')"
           >
             <v-icon :icon="mdiSkipPrevious" size="22" />
+            <span v-if="!touch && prevEntry" class="hidden min-w-0 flex-col text-start lg:flex">
+              <span class="text-[11px] leading-4 text-white/50">
+                {{ $t('Previous') }} · <span class="font-mono tabular-nums">{{ String(channelIndex).padStart(3, '0') }}</span>
+              </span>
+              <span class="max-w-44 truncate text-label-medium font-semibold leading-5">{{ prevEntry.name }}</span>
+            </span>
           </button>
 
           <button
@@ -755,12 +868,18 @@ defineExpose({ show, hide, visible })
 
           <button
             type="button"
-            class="glass-icon-btn"
+            :class="!touch && nextEntry ? 'zap-chip' : 'glass-icon-btn'"
             :disabled="!hasNext"
             :title="$t('Next channel')"
-            :aria-label="$t('Next channel')"
+            :aria-label="nextEntry ? `${$t('Next channel')}: ${nextEntry.name}` : $t('Next channel')"
             @click.stop="emit('next')"
           >
+            <span v-if="!touch && nextEntry" class="hidden min-w-0 flex-col text-start lg:flex">
+              <span class="text-[11px] leading-4 text-white/50">
+                {{ $t('Next') }} · <span class="font-mono tabular-nums">{{ String(channelIndex + 2).padStart(3, '0') }}</span>
+              </span>
+              <span class="max-w-44 truncate text-label-medium font-semibold leading-5">{{ nextEntry.name }}</span>
+            </span>
             <v-icon :icon="mdiSkipNext" size="22" />
           </button>
 
@@ -928,6 +1047,40 @@ defineExpose({ show, hide, visible })
   pointer-events: none;
 }
 
+/* Previous / next with the neighbour's name. Same surface as the icon buttons,
+   so a remote walking the bar sees one kind of control. */
+.zap-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 42px;
+  height: 48px;
+  padding: 0 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #f3f4f6;
+  cursor: pointer;
+  transition: background-color 180ms ease;
+}
+
+.zap-chip:hover,
+.zap-chip:focus-visible {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.22);
+  color: #ffffff;
+}
+
+.zap-chip:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+}
+
+.zap-chip:disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
 .live-jump {
   background: #dc2626;
   color: #fff;
@@ -960,7 +1113,7 @@ input[type="range"].custom-slider::-webkit-slider-thumb {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: #E50914;
+  background: rgb(var(--v-theme-primary));
   cursor: pointer;
   transition: transform 150ms ease;
 }

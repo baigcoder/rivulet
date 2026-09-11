@@ -276,6 +276,11 @@ export function liveGroupStats(sourceId: string, limit = 200): Promise<GroupCoun
 
 // ── Player-side (Free TV) ──────────────────────────────────────────
 
+/** Channels the background health check is leaving out of the lists. */
+export function liveOfflineCount(sourceId: string): Promise<number> {
+  return invoke<number>('live_offline_count', { sourceId })
+}
+
 export function liveResolveStream(
   sourceId: string,
   channelId: string,

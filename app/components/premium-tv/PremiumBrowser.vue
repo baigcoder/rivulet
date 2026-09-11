@@ -19,7 +19,7 @@
  */
 import type { PremiumView } from '~/stores/premiumTv'
 import type { IPTVChannel, PremiumSeriesItem, PremiumVodItem } from '~/types/premium'
-import { mdiAccountCircle, mdiClose, mdiDeleteSweepOutline, mdiTelevisionOff } from '@mdi/js'
+import { mdiAccountCircle, mdiClose, mdiDeleteSweepOutline, mdiTelevisionOff, mdiViewGridOutline, mdiViewList } from '@mdi/js'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { vodDisplayName } from '~/utils/providerTitle'
 
@@ -43,6 +43,7 @@ const accountOpen = ref(false)
 const busy = ref(false)
 
 const density = computed<'compact' | 'comfortable'>(() => mdAndUp.value ? 'comfortable' : 'compact')
+const layout = useLiveLayout()
 
 onMounted(async () => {
   window.addEventListener('keydown', onKey)
@@ -142,7 +143,7 @@ const status = computed(() => {
   if (!premium.connected)
     return { tone: 'bg-outline', label: $t('Not connected') }
   if (premium.atConnectionLimit === true)
-    return { tone: 'bg-tertiary', label: $t('All connections in use') }
+    return { tone: 'bg-tertiary', label: $t('Connection in use on another device') }
   return { tone: 'bg-primary', label: $t('Connected') }
 })
 
@@ -308,6 +309,16 @@ async function disconnect(): Promise<void> {
       @refresh="refresh"
       @tune="sheetOpen = true"
     >
+      <button
+        v-if="isLive"
+        type="button"
+        class="grid size-11 shrink-0 place-items-center rounded-lg text-on-surface/70 transition-colors hover:bg-surface-container-highest hover:text-on-surface focus-visible:bg-surface-container-highest focus-visible:text-on-surface"
+        :aria-label="layout === 'list' ? $t('Show as grid') : $t('Show as guide list')"
+        :title="layout === 'list' ? $t('Show as grid') : $t('Show as guide list')"
+        @click="layout = layout === 'list' ? 'grid' : 'list'"
+      >
+        <v-icon :icon="layout === 'list' ? mdiViewGridOutline : mdiViewList" size="22" />
+      </button>
       <button
         v-if="premium.account"
         type="button"
@@ -478,6 +489,7 @@ async function disconnect(): Promise<void> {
             :now-next="premium.nowNext"
             :favorite="premium.isFavorite"
             :density="density"
+            :layout="layout"
             :load-epg="premium.loadNowNext"
             :has-more="premium.hasMore"
             :loading="premium.listLoading"

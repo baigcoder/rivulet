@@ -24,9 +24,10 @@
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import type { LiveView } from '~/stores/liveTv'
 import type { LiveChannel } from '~/utils/iptv'
-import { mdiClose, mdiDeleteSweepOutline, mdiTelevisionOff } from '@mdi/js'
+import { mdiClose, mdiDeleteSweepOutline, mdiTelevisionOff, mdiViewGridOutline, mdiViewList } from '@mdi/js'
 import { listen } from '@tauri-apps/api/event'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { liveOfflineCount } from '~/utils/iptv'
 
 definePageMeta({ layout: 'default' })
 
@@ -55,6 +56,27 @@ const isNestedRoute = computed(() => /\/live-tv\/free\/(?:country|guide)/.test(r
 const railPinned = computed(() => lgAndUp.value)
 const sheetOpen = ref(false)
 const density = computed<'compact' | 'comfortable'>(() => mdAndUp.value ? 'comfortable' : 'compact')
+const layout = useLiveLayout()
+
+/**
+ * Channels the background health check is leaving out. Said out loud, so a
+ * country that lists 50 of its 103 channels reads as "the rest did not
+ * answer" rather than as a short list.
+ */
+const hiddenOffline = ref(0)
+
+async function readHiddenOffline(): Promise<void> {
+  try {
+    hiddenOffline.value = await liveOfflineCount(liveTv.activeSourceId || 'free:iptv-org')
+  }
+  catch { /* browser dev server: no Tauri, nothing hidden */ }
+}
+
+const statusMeta = computed(() => {
+  if (hiddenOffline.value)
+    return $t('{count} offline hidden', { count: hiddenOffline.value.toLocaleString() })
+  return liveTv.offlineIds.size ? $t('{count} offline', { count: liveTv.offlineIds.size }) : undefined
+})
 
 /**
  * `recent` is the one view with no server query behind it — the dashboard
@@ -175,6 +197,7 @@ function playChannel(ch: LiveChannel): void {
  * first batch and wrong about a slow connection.
  */
 let unlisten: UnlistenFn | undefined
+let unlistenHealth: UnlistenFn | undefined
 
 onMounted(async () => {
   try {
@@ -198,9 +221,30 @@ onMounted(async () => {
   }
   catch { /* browser dev server: no Tauri, so no importer to hear from */ }
 
+  // The background health sweep (Rust, `health.rs`) leaves dead channels out
+  // of every list once it finishes. Re-read then — unless the viewer has
+  // scrolled into the grid, where a reset would yank the page back to the
+  // top; the next page they open is filtered anyway.
+  try {
+    unlistenHealth = await listen<{ done: boolean }>('live_health', async ({ payload }) => {
+      if (!payload.done)
+        return
+      void readHiddenOffline()
+      // Past the first page the viewer is reading down the list; a reset
+      // would throw them back to the top. The next list they open is
+      // filtered anyway.
+      if (channels.value.length > 60)
+        return
+      await liveTv.loadDashboard()
+      await liveTv.loadVisible({ reset: true })
+    })
+  }
+  catch { /* browser dev server: no Tauri, no sweep */ }
+
   // Free TV must never inherit the premium source: the two entry points
   // are separate libraries, not two views of one list.
   await liveTv.useFreeSource()
+  void readHiddenOffline()
   const category = liveCategory.value
   if (category)
     liveTv.setCategory(category)
@@ -225,6 +269,7 @@ function onKey(e: KeyboardEvent) {
 
 onUnmounted(() => {
   unlisten?.()
+  unlistenHealth?.()
   window.removeEventListener('keydown', onKey)
 })
 
@@ -246,7 +291,7 @@ watch(liveCategory, name => {
       :status-tone="status.tone"
       :status-label="status.label"
       :status-text="$t('Free TV')"
-      :status-meta="liveTv.offlineIds.size ? $t('{count} offline', { count: liveTv.offlineIds.size }) : undefined"
+      :status-meta="statusMeta"
       :show-clear="liveTv.view === 'category' || !!liveTv.searchQuery"
       :refreshing="liveTv.refreshing"
       :show-tune="!railPinned"
@@ -255,6 +300,15 @@ watch(liveCategory, name => {
       @refresh="liveTv.refreshFreeTv()"
       @tune="sheetOpen = true"
     >
+      <button
+        type="button"
+        class="grid size-11 shrink-0 place-items-center rounded-lg text-on-surface/70 transition-colors hover:bg-surface-container-highest hover:text-on-surface focus-visible:bg-surface-container-highest focus-visible:text-on-surface"
+        :aria-label="layout === 'list' ? $t('Show as grid') : $t('Show as guide list')"
+        :title="layout === 'list' ? $t('Show as grid') : $t('Show as guide list')"
+        @click="layout = layout === 'list' ? 'grid' : 'list'"
+      >
+        <v-icon :icon="layout === 'list' ? mdiViewGridOutline : mdiViewList" size="22" />
+      </button>
       <button
         v-if="liveTv.view === 'recent' && liveTv.recentChannels.length"
         type="button"
@@ -372,6 +426,7 @@ watch(liveCategory, name => {
             :is-favorite="liveTv.isFavorite"
             :is-offline="liveTv.isOffline"
             :density="density"
+            :layout="layout"
             :has-more="hasMore"
             :loading="liveTv.visibleLoading"
             @load-more="liveTv.loadMore()"
