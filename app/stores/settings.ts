@@ -168,6 +168,18 @@ export const useSettingsStore = defineStore('settings', () => {
   const allowTorrents = useLocalStorage(key('allowTorrents'), true)
 
   /**
+   * What happens to the torrent a film was streaming once the player closes.
+   *
+   * Off, the default: it downloads only while it is being watched. Leaving
+   * pauses it, and playing it again resumes from the pieces already on disk —
+   * an unwatched download spends the connection and the storage on something
+   * nobody asked to keep. On: it keeps downloading after you leave, until it
+   * finishes or is paused from Downloads. Only means anything with the engine
+   * on; a Direct link has nothing to keep.
+   */
+  const keepDownloading = useLocalStorage(key('keepDownloading'), false)
+
+  /**
    * The TMDB watch region the Streaming pages browse — provider catalogs are
    * per-country. '' means "take it from the app language" at the point of use.
    */
@@ -234,5 +246,5 @@ export const useSettingsStore = defineStore('settings', () => {
     && subscriptionExpiresAt.value > Date.now(),
   )
 
-  return { locale, theme, source, themeFromArt, colourFromPicture, customCss, uiScale, reduceEffects, motion, effectiveMotion, sources, allowTorrents, watchRegion, tmdbKey, downLimit, upLimit, wifiOnly, downloadDir, subs, resetSubs, notifyComplete, notifyError, notifyUpdates, parentalEnabled, parentalMaxRating, parentalPin, hideAdultChannels, subscriptionTier, subscriptionExpiresAt, isPremium }
+  return { locale, theme, source, themeFromArt, colourFromPicture, customCss, uiScale, reduceEffects, motion, effectiveMotion, sources, allowTorrents, keepDownloading, watchRegion, tmdbKey, downLimit, upLimit, wifiOnly, downloadDir, subs, resetSubs, notifyComplete, notifyError, notifyUpdates, parentalEnabled, parentalMaxRating, parentalPin, hideAdultChannels, subscriptionTier, subscriptionExpiresAt, isPremium }
 })

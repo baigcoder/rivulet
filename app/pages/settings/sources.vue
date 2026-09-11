@@ -140,6 +140,21 @@ async function toggleStremio(on: boolean | null) {
           <li>{{ $t('Needs a source that answers with Direct links. Paste one below.') }}</li>
         </ul>
       </div>
+      <!-- Only with the engine on: a Direct link downloads nothing to keep going. -->
+      <template v-if="settings.allowTorrents">
+        <v-switch
+          v-model="settings.keepDownloading"
+          color="primary"
+          density="comfortable"
+          hide-details
+          :label="$t('Keep downloading after leaving the player')"
+        />
+        <p class="text-body-medium opacity-70">
+          {{ settings.keepDownloading
+            ? $t('On: a film keeps downloading after you leave the player, until it finishes or you pause it in Downloads.')
+            : $t('Off: a film downloads only while you watch. Leaving the player pauses it, and playing it again resumes where it stopped.') }}
+        </p>
+      </template>
       <p class="text-body-medium opacity-70">
         {{ $t('Download still files a magnet through the engine, or saves a Direct link to disk. Releases still lets you play or save one specific row.') }}
       </p>

@@ -408,7 +408,12 @@ export const useDownloadsStore = defineStore('downloads', () => {
     if (id == null)
       return
 
-    await stopFocused(id)
+    // Keep downloading (Settings → Sources, engine mode) leaves it pulling after
+    // the player closes — as a background download from here on, so Wi-Fi only
+    // still holds it on mobile data. Off, it waits for the next Play, which
+    // resumes it from the pieces already on disk.
+    if (!settings.keepDownloading)
+      await stopFocused(id)
     await restorePaused(restore)
     await refresh()
   }

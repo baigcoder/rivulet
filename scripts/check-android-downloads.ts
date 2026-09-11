@@ -161,6 +161,22 @@ assert.ok(
 // past `focus`'s first await) and pause nothing, and `focus` then reached its
 // `start` and set the download going again with nobody watching.
 assert.ok(watchPage.includes('downloads.release()'), 'leaving the player releases the downlink')
+// ...and pauses what it was streaming only when Keep downloading is off — the
+// switch under Torrent engine in Settings → Sources. Off is the default: a film
+// downloads while it is watched, and the next Play resumes it.
+assert.ok(
+  /if \(!settings\.keepDownloading\)[\t\v\f\r \xA0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]*\n\s*await stopFocused\(id\)/.test(store),
+  'release pauses the torrent only when Keep downloading is off',
+)
+const settingsStore = readFileSync(new URL('../app/stores/settings.ts', import.meta.url), 'utf8')
+assert.match(settingsStore, /keepDownloading = useLocalStorage\(key\('keepDownloading'\), false\)/, 'Keep downloading starts off')
+assert.match(settingsStore, /return \{[^}]*\bkeepDownloading\b/, 'and the store exposes it')
+const sourcesPage = readFileSync(new URL('../app/pages/settings/sources.vue', import.meta.url), 'utf8')
+assert.match(
+  sourcesPage,
+  /<template v-if="settings\.allowTorrents">\s*<v-switch\s*v-model="settings\.keepDownloading"/,
+  'the switch is offered only with the torrent engine on',
+)
 assert.ok(
   /focused\.value = id\s+paused = \[\]/.test(store),
   'focus claims `focused` before its first await, so a concurrent release knows what to pause',
