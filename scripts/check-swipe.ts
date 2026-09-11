@@ -92,6 +92,16 @@ assert.ok(activity.includes('fun brightness()'), 'and brightness()')
 assert.ok(activity.includes('fun setBrightness'), 'and setBrightness()')
 assert.ok(activity.includes('STREAM_MUSIC'), 'volume is the music stream the rocker uses')
 
+// Player mode rotates the phone, and a rotation is neither a focus change nor a
+// resume — yet many phones bring the navigation bar back as they turn. Without
+// this a film started from portrait came up in landscape with both bars over it.
+// The exact override, and the call inside its own body: up to the method's
+// closing brace at class indentation, not anywhere later in the file.
+assert.ok(
+  /override fun onConfigurationChanged\([^)]*\)\s*\{(?:(?!\n {2}\})[\s\S])*applyPlayerMode\(\)/.test(activity),
+  'a rotation re-hides the system bars while a film is up',
+)
+
 const drawer = readFileSync(new URL('../app/plugins/drawerswipe.client.ts', import.meta.url), 'utf8')
 assert.ok(drawer.includes('rivulet-video'), 'the drawer must not steal the brightness swipe from the player')
 

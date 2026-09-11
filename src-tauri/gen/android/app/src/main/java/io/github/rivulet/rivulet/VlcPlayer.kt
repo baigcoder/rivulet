@@ -227,9 +227,33 @@ class RivuletPlayer(private val activity: MainActivity) {
    *
    * `{ "video/hevc": { "uhd": true, "uhd10": true }, … }`, with a type absent
    * when no hardware decoder takes it at 4K.
+   *
+   * Answered from a cache a background thread fills when this player is
+   * created, and never worked out on the call. Every `@JavascriptInterface` on
+   * a WebView runs on one shared JavaBridge thread, and the page blocks until
+   * the call returns. Walking `MediaCodecList` and asking each decoder for its
+   * capabilities — seconds, on some phones — in here held up the player's own
+   * `start`, queued behind it on that thread, and a direct link that used to
+   * open at once sat on Buffering. "" until the walk is done, or if it failed,
+   * which the page reads as "unknown" and asks again.
    */
   @JavascriptInterface
-  fun videoCaps(): String {
+  fun videoCaps(): String = uhdCaps ?: ""
+
+  @Volatile
+  private var uhdCaps: String? = null
+
+  init {
+    Thread({
+      android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+      uhdCaps = runCatching { computeVideoCaps() }.getOrNull()
+    }, "RivuletVideoCaps").apply {
+      isDaemon = true
+      start()
+    }
+  }
+
+  private fun computeVideoCaps(): String {
     val out = JSONObject()
     for (info in MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos) {
       if (info.isEncoder || !isHardwareDecoder(info)) continue

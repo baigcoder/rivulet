@@ -245,6 +245,11 @@ const bridge = {
 // picture over audio that keeps going. `videoCaps()` answers the question that
 // actually matters: a *hardware* decoder that takes 3840×2160, and 10-bit.
 assert.equal(uhdPlayable('Film.2019.2160p.x265'), null, 'an APK from before videoCaps() is "unknown", never "unplayable"')
+// The decoder walk runs on a background thread, because a bridge call blocks the
+// page and every bridge call queued behind it — the player's own start included.
+// Until it finishes the answer is "", which is still "unknown", and not cached.
+;(bridge as { videoCaps?: () => string }).videoCaps = () => ''
+assert.equal(uhdPlayable('Film.2019.2160p.x265'), null, 'a device still working it out is "unknown" too')
 ;(bridge as { videoCaps?: () => string }).videoCaps = () => JSON.stringify({ 'video/hevc': { uhd: true, uhd10: false } })
 assert.equal(uhdPlayable('Film.2019.1080p.x265'), true, 'under 4K is not this question')
 assert.equal(uhdPlayable('Film.2019.2160p.x265'), true, 'a hardware HEVC decoder at 4K plays 8-bit')

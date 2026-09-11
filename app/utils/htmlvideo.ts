@@ -137,7 +137,11 @@ let uhdCache: UhdCaps | null = null
  * question: a hardware decoder that takes the size.
  *
  * An APK from before `videoCaps` has no such method and answers null, not
- * "nothing is playable". It is called on the bridge object itself, never as a
+ * "nothing is playable". So does one still working it out: the decoder walk
+ * runs on a background thread (a bridge call blocks the page, and every other
+ * bridge call behind it — the player's own start included), and until it is
+ * done `videoCaps` answers "". That is null here too: unknown, not cached,
+ * asked again next time. It is called on the bridge object itself, never as a
  * detached reference: Android refuses to invoke an injected Java method
  * without the object it was injected as.
  */

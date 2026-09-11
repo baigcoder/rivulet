@@ -115,6 +115,25 @@ class MainActivity : TauriActivity() {
       applyPlayerMode()
   }
 
+  /**
+   * A rotation is a configuration change this activity handles itself
+   * (`configChanges` in the manifest), so it arrives here rather than as a
+   * recreate — and it is neither a focus change nor a resume, so the two hooks
+   * above never see it. Player mode rotates the phone to landscape as part of
+   * hiding the bars, and many phones show the navigation bar again as they
+   * turn: a film started from portrait came up with both bars back over the
+   * picture. Re-apply now, and once more after the turn has settled, because
+   * some skins restore the bars at the end of the animation rather than at
+   * the configuration change itself.
+   */
+  override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+    super.onConfigurationChanged(newConfig)
+    if (!playerMode)
+      return
+    applyPlayerMode()
+    window.decorView.postDelayed({ if (playerMode) applyPlayerMode() }, 400)
+  }
+
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     setIntent(intent)
