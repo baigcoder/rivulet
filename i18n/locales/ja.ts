@@ -298,7 +298,7 @@ export default {
   "Intro saved. A \"Skip Intro\" button will appear during this section.": "TODO_TRANSLATION: Intro saved. A \"Skip Intro\" button will appear during this section.",
   "Intro start marked. Seek to the end of the intro and press \"Mark end\".": "TODO_TRANSLATION: Intro start marked. Seek to the end of the intro and press \"Mark end\".",
   "Invalid username or password. Please check your credentials.": "TODO_TRANSLATION: Invalid username or password. Please check your credentials.",
-  "It tells most while moving around with a remote, which is where the fades stack up: on the television this was measured on, that went from 3 frames a second to 23. It starts on a phone or a television, and off on a computer.": "TODO_TRANSLATION: It tells most while moving around with a remote, which is where the fades stack up: on the television this was measured on, that went from 3 frames a second to 23. It starts on a phone or a television, and off on a computer.",
+  "It tells most while moving around with a remote, which is where the fades stack up: on the television this was measured on, that went from 3 frames a second to 23. It starts on for a television, and off on a phone or a computer.": "TODO_TRANSLATION: It tells most while moving around with a remote, which is where the fades stack up: on the television this was measured on, that went from 3 frames a second to 23. It starts on for a television, and off on a phone or a computer.",
   "It was the fall that killed him.\nNot the drop — the sudden stop.": "彼を殺したのは落下だった。\n落ちたことではない — 急に止まったことだ。",
   "Keep files": "ファイルを残す",
   "LIVE": "TODO_TRANSLATION: LIVE",

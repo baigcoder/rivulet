@@ -559,7 +559,12 @@ assert.match(
 // The key is built by `key()` from app/brand now rather than spelled out, so the
 // prefix moves with the product name and this asserts the shape, not the string.
 assert.match(settings, /reduceEffects = useLocalStorage\(key\('reduceEffects'\)/, 'the setting is stored')
-assert.match(settings, /isTv\(\) === true \|\| isAndroid\(\)/, 'a television or a phone gets it on by default')
+// A television starts with it on; a phone no longer does. Android drops
+// backdrop-filter — the one real cost on a phone — through `html.android`
+// whatever the switch says (asserted below), so all the switch took away there
+// was the fades.
+assert.match(settings, /reduceEffects = useLocalStorage\(key\('reduceEffects'\), isTv\(\) === true\)/, 'a television gets it on by default')
+assert.doesNotMatch(settings, /key\('reduceEffects'\),[^\n]*isAndroid\(\)/, 'a phone does not: backdrop-filter is already off on Android')
 assert.match(settings, /return \{[^}]*reduceEffects/, 'the store must expose it')
 assert.match(
   app,

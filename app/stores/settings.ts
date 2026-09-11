@@ -111,13 +111,20 @@ export const useSettingsStore = defineStore('settings', () => {
   const uiScale = useLocalStorage(key('uiScale'), 1)
   /**
    * Drop the effects that cost the most frames — see `.reduce-effects` in
-   * assets/css/layers.css for exactly which. Defaults on for a television
-   * and for a phone: both paint into a WebView whose GPU is doing the page
-   * and* the picture. A computer has headroom, so it stays off there.
-   * `isTv()` reads a bridge Android installs before the page loads;
-   * `isAndroid()` is the OS itself.
+   * assets/css/layers.css for exactly which. Defaults on for a television,
+   * whose GPU is the whole budget, and off everywhere else.
+   *
+   * A phone used to start with it on as well, and no longer does. The most
+   * expensive effect of all — `backdrop-filter`, a frame-buffer readback in a
+   * WebView — is gone on Android whatever this switch says, because
+   * `html.android` drops it in layers.css. What was left for the switch to take
+   * away on a phone was the fades and slides, and a phone has headroom for
+   * those. `isTv()` reads a bridge Android installs before the page loads.
+   *
+   * An install that already saved a value keeps it: this decides only where a
+   * fresh one starts.
    */
-  const reduceEffects = useLocalStorage(key('reduceEffects'), isTv() === true || isAndroid())
+  const reduceEffects = useLocalStorage(key('reduceEffects'), isTv() === true)
 
   /**
    * How much moves, and what decides it when the user hasn't said.
