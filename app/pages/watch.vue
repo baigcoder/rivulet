@@ -191,6 +191,9 @@ async function start() {
     // the whole connection. Nothing to pause for a finished torrent — see `focus`.
     // Non-blocking: the player starts immediately while focus catches up.
     void downloads.focus(started.id)
+    // The tail starts downloading alongside the head — see `primeTail`.
+    if (!started.url && started.id >= 0)
+      void primeTail(started.id, started.index)
 
     resolving.value = false
     step.value = $t('Buffering…')

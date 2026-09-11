@@ -1015,6 +1015,36 @@ export function streamUrl(id: number, index: number) {
   return `${ENGINE}/torrents/${id}/stream/${index}`
 }
 
+/**
+ * Download the end of a file while the player is still reading its start.
+ *
+ * An MP4 muxed for download keeps its index (`moov`) after the video and an MKV
+ * its seek table, so mpv reads byte 0, jumps to the tail, and only then shows a
+ * frame — two pieces fetched one after the other at the swarm's pace. librqbit
+ * queues pieces ahead of every open reader, so a reader parked on the tail puts
+ * that piece in the queue beside the head's. It reads to the end on purpose: a
+ * cancelled reader stops being queued for.
+ */
+export async function primeTail(id: number, index: number, bytes = 4 * 1024 ** 2) {
+  const file = (await torrentDetails(id))?.files?.[index]
+  if (!file || file.length <= bytes * 2)
+    return
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 120_000)
+  try {
+    const res = await fetch(streamUrl(id, index), {
+      signal: ctrl.signal,
+      cache: 'no-store',
+      headers: { Range: `bytes=${file.length - bytes}-${file.length - 1}` },
+    })
+    await res.arrayBuffer()
+  }
+  catch {} // best effort: without it the tail still arrives, only later
+  finally {
+    clearTimeout(timer)
+  }
+}
+
 /** The `{id}/stream/{index}` a stream URL names, or null for a debrid `url`. */
 export function streamParts(url: string) {
   const m = /\/torrents\/(\d+)\/stream\/(\d+)/.exec(url)
@@ -1128,9 +1158,12 @@ export async function setLimits(uploadBps: number | null, downloadBps: number | 
  * capping it. Hence `probing`: seeding runs unlimited for a few minutes after
  * launch (never during playback), and what that reaches becomes the estimate.
  *
- * Half of it in the background, a quarter while watching: a saturated uplink
- * delays the ACKs of the stream you're downloading, so it's the one thing that
- * can make buffering worse while looking idle.
+ * Half of it in the background, 40% while watching: a saturated uplink delays
+ * the ACKs of the stream you're downloading, so it's the one thing that can make
+ * buffering worse while looking idle. But the swarm is tit-for-tat — peers send
+ * fastest to whoever sends back — and the old 32 KiB/s floor got a stream choked
+ * by the very peers it needed. 256 KiB/s is nothing to an uplink and enough to
+ * stay unchoked.
  */
 export function uploadLimit(peakBps: number, watching: boolean, probing: boolean, override = 0) {
   // A number typed into the settings page is a decision, not an estimate: it
@@ -1141,7 +1174,7 @@ export function uploadLimit(peakBps: number, watching: boolean, probing: boolean
     return null
   // Floors, so a line we've never measured still gives something back.
   return watching
-    ? Math.max(32 * 1024, Math.round(peakBps * 0.25))
+    ? Math.max(256 * 1024, Math.round(peakBps * 0.4))
     : Math.max(64 * 1024, Math.round(peakBps * 0.5))
 }
 

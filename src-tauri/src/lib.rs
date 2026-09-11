@@ -10,8 +10,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use librqbit::{
-    api::Api, dht::DhtPersistenceConfig, http_api::HttpApi, DhtSessionConfig, Session,
-    SessionOptions, SessionPersistenceConfig,
+    api::Api, dht::DhtPersistenceConfig, http_api::HttpApi, DhtSessionConfig, ListenerMode,
+    ListenerOptions, Session, SessionOptions, SessionPersistenceConfig,
 };
 use librqbit_dualstack_sockets::TcpListener;
 use tokio_util::sync::CancellationToken;
@@ -945,7 +945,19 @@ async fn run_torrent_server(
     // Remember torrents across restarts, so a background download resumes where
     // it left off and the downloads page isn't empty on every launch. The folder
     // is ours: the defaults are shared with any real rqbit install on the machine.
-    let opts = |with_dht: bool| SessionOptions {
+    let opts = |with_dht: bool, with_listen: bool| SessionOptions {
+        // Without a listener nobody can dial us: only the peers we reach first
+        // ever connect, and every one behind a NAT that could have reached us is
+        // lost — half a swarm, and the half a stream starts slowest on. Port 0
+        // for the same reserved-range reason as the DHT below; librqbit
+        // announces whatever port the OS handed out, and UPnP opens it on the
+        // router. uTP is what most clients behind a home NAT actually speak.
+        listen: with_listen.then(|| ListenerOptions {
+            mode: ListenerMode::TcpAndUtp,
+            listen_addr: (std::net::Ipv6Addr::UNSPECIFIED, 0).into(),
+            enable_upnp_port_forwarding: true,
+            ..Default::default()
+        }),
         persistence: Some(SessionPersistenceConfig::Json {
             folder: Some(session_dir.clone()),
         }),
@@ -974,15 +986,24 @@ async fn run_torrent_server(
         ..Default::default()
     };
 
-    let session = match Session::new_with_opts(download_dir.clone(), opts(true)).await {
+    let session = match Session::new_with_opts(download_dir.clone(), opts(true, true)).await {
         Ok(session) => session,
+        // A listener that can't bind (a firewall, a sandbox) costs the incoming
+        // half of the swarm, not the engine: outgoing peers still stream.
         Err(e) => {
-            // A DHT that won't start must not take the rest of the engine with
-            // it. The HTTP API below is what serves playback and the downloads
-            // UI, and trackers alone still find peers for most torrents, so come
-            // up degraded rather than leaving the app with no engine at all.
-            eprintln!("[rivulet] torrent session failed to start ({e:#}) — retrying without DHT");
-            Session::new_with_opts(download_dir, opts(false)).await?
+            eprintln!("[rivulet] torrent session failed to start ({e:#}) — retrying without incoming peers");
+            match Session::new_with_opts(download_dir.clone(), opts(true, false)).await {
+                Ok(session) => session,
+                Err(e) => {
+                    // A DHT that won't start must not take the rest of the engine
+                    // with it. The HTTP API below is what serves playback and the
+                    // downloads UI, and trackers alone still find peers for most
+                    // torrents, so come up degraded rather than leaving the app
+                    // with no engine at all.
+                    eprintln!("[rivulet] torrent session failed to start ({e:#}) — retrying without DHT");
+                    Session::new_with_opts(download_dir, opts(false, false)).await?
+                }
+            }
         }
     };
     let api = Api::new(session, None, None);

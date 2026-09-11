@@ -480,13 +480,24 @@ const MBPS = 1024 ** 2
 // Idle with nothing measured yet: probe unlimited, and never below the floor.
 assert.equal(uploadLimit(0, false, true), null)
 assert.equal(uploadLimit(0, false, false), 64 * 1024)
-// A line that managed 4 MiB/s seeds at half that, a quarter of it while watching.
+// A line that managed 4 MiB/s seeds at half that, 40% of it while watching.
 assert.equal(uploadLimit(4 * MBPS, false, false), 2 * MBPS)
-assert.equal(uploadLimit(4 * MBPS, true, false), 1 * MBPS)
+assert.equal(uploadLimit(4 * MBPS, true, false), Math.round(1.6 * MBPS))
 // Playback is never the probe: the stream is exactly what an open uplink hurts.
-assert.equal(uploadLimit(4 * MBPS, true, true), 1 * MBPS)
+assert.equal(uploadLimit(4 * MBPS, true, true), Math.round(1.6 * MBPS))
 // A slow line still seeds at the floor rather than at 12 KiB/s.
 assert.equal(uploadLimit(100 * 1024, false, false), 64 * 1024)
+// Watching never drops below what keeps peers unchoking us: 32 KiB/s got the
+// stream choked by the swarm it was pulling from.
+assert.equal(uploadLimit(0, true, false), 256 * 1024)
+assert.equal(uploadLimit(100 * 1024, true, false), 256 * 1024)
+
+// The engine accepts incoming peers, and a stream fetches its tail with its head.
+const libRs = await Bun.file(new URL('../src-tauri/src/lib.rs', import.meta.url)).text()
+assert.match(libRs, /listen: with_listen\.then\(\|\| ListenerOptions \{[^}]*enable_upnp_port_forwarding: true/, 'the engine listens for incoming peers')
+assert.match(libRs, /new_with_opts\(download_dir\.clone\(\), opts\(true, true\)\)/, 'listening is the first try')
+const watchVue = await Bun.file(new URL('../app/pages/watch.vue', import.meta.url)).text()
+assert.match(watchVue, /void downloads\.focus\(started\.id\)\s+\/\/[^\n]*\n\s+if \(!started\.url && started\.id >= 0\)\s+void primeTail\(started\.id, started\.index\)/, 'the tail is primed as the stream starts')
 // A limit set in settings wins over all of it — that is what "override" means.
 assert.equal(uploadLimit(4 * MBPS, false, false, MBPS), MBPS)
 assert.equal(uploadLimit(4 * MBPS, true, false, 8 * MBPS), 8 * MBPS, 'even where the app would back off')
