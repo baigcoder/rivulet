@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { hasVlcPlayer, SOFT_DECODE_MAX_HEIGHT } from '~/utils/htmlvideo'
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -381,6 +382,10 @@ export function wrapFreeStreamUrl(
     qs += `&X-Rivulet-Ua=${encodeURIComponent(ua)}`
   if (referer)
     qs += `&X-Rivulet-Referer=${encodeURIComponent(referer)}`
+  // This — not `playUrl` — is the builder Free TV plays through, so the
+  // Android ceiling has to be here too. See `SOFT_DECODE_MAX_HEIGHT`.
+  if (hasVlcPlayer())
+    qs += `&max_height=${SOFT_DECODE_MAX_HEIGHT}`
   return `http://127.0.0.1:3031/stream?${qs}`
 }
 

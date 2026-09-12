@@ -301,6 +301,15 @@ function looksLikeHls(url: string): boolean {
 const STREAM_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 const IPTV_PLAYER_UA = 'VLC/3.0.18 LibVLC/3.0.18'
 
+/**
+ * The tallest HLS rung Android starts in reasonable time. libVLC runs there
+ * with MediaCodec direct rendering off — every frame copied through a
+ * SurfaceTexture — so a 4K rung never produced a first frame and the HUD
+ * said "Connecting" indefinitely. Mirrors `SOFT_DECODE_MAX_HEIGHT` in
+ * `src-tauri/src/iptv/proxy.rs`; the proxy is what acts on it.
+ */
+export const SOFT_DECODE_MAX_HEIGHT = 1080
+
 function isLoopback(url: string) {
   return /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])[:/]/i.test(url)
 }
@@ -320,6 +329,13 @@ function playUrl(url: string): string {
     return url
   const ua = /\/(?:live|timeshift|movie|series)\//i.test(url) ? IPTV_PLAYER_UA : STREAM_UA
   let qs = `url=${encodeURIComponent(url)}&X-Rivulet-Ua=${encodeURIComponent(ua)}`
+  // Cap the HLS ladder where libVLC has to copy every frame through a
+  // SurfaceTexture (MediaCodec direct rendering is off — it is the 4K
+  // black-frame workaround). Uncapped, the proxy puts the 4K rung first and
+  // the phone never produced a first frame: "Connecting" forever on Free and
+  // Premium both, while the desktop played the same channel on the GPU.
+  if (hasVlcPlayer())
+    qs += `&max_height=${SOFT_DECODE_MAX_HEIGHT}`
   try {
     qs += `&X-Rivulet-Referer=${encodeURIComponent(`${new URL(url).origin}/`)}`
   }

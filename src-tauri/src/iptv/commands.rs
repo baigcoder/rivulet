@@ -100,6 +100,21 @@ pub fn proxy_free_stream_url(
         qs.push_str("&X-Rivulet-Referer=");
         qs.push_str(&urlencoding::encode(&rf));
     }
+    // Android plays through libVLC with MediaCodec direct rendering off, so
+    // every frame is copied through a SurfaceTexture (the 4K black-frame
+    // workaround in `VlcPlayer.kt`) with the loop filter and IDCT fully on.
+    // Uncapped, the proxy leads an HLS ladder with its 4K rung and the phone
+    // never produced a first frame — "Connecting" forever on Premium and Free
+    // TV both, while the same channel played on a desktop GPU. This is the one
+    // place Premium can be capped: its URL is minted here, server-side, and on
+    // Android the API and the player are the same process. `cfg`, not a
+    // parameter, so every desktop caller (mpv via `player_direct`) is
+    // untouched at compile time.
+    #[cfg(target_os = "android")]
+    {
+        qs.push_str("&max_height=");
+        qs.push_str(&super::proxy::SOFT_DECODE_MAX_HEIGHT.to_string());
+    }
     format!("http://127.0.0.1:{PROXY_PORT}/stream?{qs}")
 }
 

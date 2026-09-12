@@ -385,4 +385,48 @@ assert.match(overlaySrc, /isProviderConnectionLimit\(props\.error\)/, 'a taken c
 assert.doesNotMatch(overlaySrc, /red-600\/20|#E50914/, 'the lineup and slider use the theme primary, not a second red')
 assert.doesNotMatch(playerSrc, /Starting mpv/, 'nobody watching TV needs to know what mpv is')
 
+// --- The Android rung ceiling -------------------------------------------------
+// A phone plays through libVLC with MediaCodec direct rendering off, so every
+// frame is copied through a SurfaceTexture. Handed a 4K rung it never produced
+// a first frame, and both Free TV and Premium sat on "Connecting" while the
+// desktop played the same channel on its GPU. Three separate builders make the
+// proxy URL and the cap has to be in all three, or one path silently goes back
+// to 4K on the phone.
+const htmlVideoSrc = readFileSync(new URL('../app/utils/htmlvideo.ts', import.meta.url), 'utf8')
+const iptvSrc = readFileSync(new URL('../app/utils/iptv.ts', import.meta.url), 'utf8')
+const commandsRs = rust('iptv/commands.rs')
+
+assert.match(htmlVideoSrc, /export const SOFT_DECODE_MAX_HEIGHT = 1080/, 'the ceiling is one named constant')
+assert.match(proxyRs, /pub const SOFT_DECODE_MAX_HEIGHT: u64 = 1080/, 'and Rust agrees on the number')
+// One line each, not a guard-and-body pair: `\s*\n\s*` between them is two
+// quantifiers that can trade the same newlines, which backtracks badly.
+for (const [src, where] of [
+  [htmlVideoSrc, 'playUrl caps the ladder on Android'],
+  [iptvSrc, 'wrapFreeStreamUrl too — it is the builder Free TV actually plays through'],
+] as const) {
+  assert.match(src, /^\s*if \(hasVlcPlayer\(\)\)$/m, `${where} (the Android guard)`)
+  assert.match(src, /^\s*qs \+= `&max_height=\$\{SOFT_DECODE_MAX_HEIGHT\}`$/m, where)
+}
+// Premium's URL is minted in Rust (`/premium-stream/:token` redirects to it),
+// so the JS caps above can never reach it.
+assert.match(commandsRs, /^\s*#\[cfg\(target_os = "android"\)\]$/m, 'the Rust cap is Android-only')
+assert.match(
+  commandsRs,
+  /#\[cfg\(target_os = "android"\)\][^;]*qs\.push_str\("&max_height="\);/,
+  'proxy_free_stream_url caps Premium, and only on Android',
+)
+// A parameter would have let a desktop caller pass one by accident; `cfg` makes
+// mpv's uncapped 4K a compile-time certainty.
+assert.doesNotMatch(
+  readFileSync(new URL('../src-tauri/src/player_direct.rs', import.meta.url), 'utf8'),
+  /max_height/,
+  'the desktop mpv path never asks for a ceiling',
+)
+assert.match(
+  proxyRs,
+  /fn prefer_highest_hls_rung\(body: &str, max_height: Option<u64>\) -> String/,
+  'the sorter takes the ceiling',
+)
+assert.match(proxyRs, /"max_height" => max_height = decoded\.parse\(\)\.ok\(\)\.filter\(\|h\| \*h > 0\)/, 'and the proxy parses it, treating garbage as no cap')
+
 console.info('free tv health: ok')

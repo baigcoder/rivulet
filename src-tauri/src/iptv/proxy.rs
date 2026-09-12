@@ -320,7 +320,7 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
 
     // Parse the request line and the URL parameter. Bad input gets a 400
     // rather than a 500 — the page will then fall back to the raw URL.
-    let (target_url, custom_ua, custom_referer) = match parse_target(&request) {
+    let (target_url, custom_ua, custom_referer, max_height) = match parse_target(&request) {
         Some(parsed) => parsed,
         None => {
             write_response(
@@ -492,12 +492,15 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
         match resp.bytes().await {
             Ok(raw) => {
                 let body = manifest_text(&raw);
-                let rewritten = prefer_highest_hls_rung(&rewrite_m3u(
-                    &body,
-                    &final_url,
-                    custom_ua.as_deref(),
-                    custom_referer.as_deref(),
-                ));
+                let rewritten = prefer_highest_hls_rung(
+                    &rewrite_m3u(
+                        &body,
+                        &final_url,
+                        custom_ua.as_deref(),
+                        custom_referer.as_deref(),
+                    ),
+                    max_height,
+                );
                 write_response(
                     stream,
                     status.as_u16(),
@@ -773,7 +776,17 @@ fn manifest_text(raw: &[u8]) -> String {
 /// Master playlists often list the 720p rung first (the "default" a phone
 /// can play). mpv then stays on that variant even when a 4K one exists.
 /// Put the tallest / fattest rung first so `--hls-bitrate=max` has a real max.
-fn prefer_highest_hls_rung(body: &str) -> String {
+///
+/// `max_height` is the caller's ceiling, and it exists because "tallest
+/// wins" is only right for a GPU. Android runs libVLC with MediaCodec
+/// direct rendering off — every frame is copied through a SurfaceTexture
+/// (see `VlcPlayer.kt`; it is the 4K black-frame workaround) — with the
+/// loop filter and IDCT fully on and three seconds of caching in front.
+/// Handing that a 4K rung is why a phone sat on "Connecting" for both Free
+/// and Premium while the same channel played on the desktop: nothing
+/// failed, the first frame simply never arrived in any reasonable time.
+/// `None` keeps the old behaviour, which is what desktop still wants.
+fn prefer_highest_hls_rung(body: &str, max_height: Option<u64>) -> String {
     if !body.contains("#EXT-X-STREAM-INF") {
         return body.to_string();
     }
@@ -818,10 +831,23 @@ fn prefer_highest_hls_rung(body: &str) -> String {
         return body.to_string();
     }
     let mut order: Vec<usize> = (0..vars.len()).collect();
+    // Under the ceiling, tallest first; everything above it goes to the back,
+    // shortest first. A ladder whose every rung is too tall is not dropped —
+    // its smallest rung leads, because an over-tall picture is still a
+    // picture and refusing to play is never the better answer. A rung with
+    // no RESOLUTION at all reads as height 0, so it counts as under any cap
+    // and keeps ranking on bandwidth exactly as it did before.
+    let over = |i: usize| max_height.is_some_and(|cap| vars[i].height > cap);
     order.sort_by(|a, b| {
-        vars[*b]
-            .height
-            .cmp(&vars[*a].height)
+        over(*a)
+            .cmp(&over(*b))
+            .then_with(|| {
+                if over(*a) {
+                    vars[*a].height.cmp(&vars[*b].height)
+                } else {
+                    vars[*b].height.cmp(&vars[*a].height)
+                }
+            })
             .then(vars[*b].bandwidth.cmp(&vars[*a].bandwidth))
     });
     if order.iter().copied().eq(0..vars.len()) {
@@ -844,6 +870,10 @@ fn prefer_highest_hls_rung(body: &str) -> String {
     }
     out
 }
+
+/// The tallest rung a frame-copying software path starts in reasonable time.
+/// Android's ceiling; see `prefer_highest_hls_rung` and `VlcPlayer.kt`.
+pub const SOFT_DECODE_MAX_HEIGHT: u64 = 1080;
 
 fn hls_stream_inf(tag: &str) -> &str {
     tag.strip_prefix("#EXT-X-STREAM-INF:")
@@ -1013,13 +1043,16 @@ async fn serve_youtube_embed(
     write_response(stream, 200, "OK", "text/html; charset=utf-8", html.as_bytes()).await
 }
 
-fn parse_target(request: &str) -> Option<(String, Option<String>, Option<String>)> {
+type Target = (String, Option<String>, Option<String>, Option<u64>);
+
+fn parse_target(request: &str) -> Option<Target> {
     let first_line = request.lines().next()?;
     let path = first_line.split_whitespace().nth(1)?;
     let query = path.split_once('?')?.1;
     let mut url: Option<String> = None;
     let mut ua: Option<String> = None;
     let mut referer: Option<String> = None;
+    let mut max_height: Option<u64> = None;
     for pair in query.split('&') {
         let (k, v) = pair.split_once('=')?;
         let decoded = urlencoding::decode(v).ok()?.into_owned();
@@ -1027,10 +1060,13 @@ fn parse_target(request: &str) -> Option<(String, Option<String>, Option<String>
             "url" => url = Some(decoded),
             "X-Rivulet-Ua" => ua = Some(decoded),
             "X-Rivulet-Referer" => referer = Some(decoded),
+            // Garbage is no ceiling rather than a zero one: a cap of 0 would
+            // rank every rung as too tall and hand back the smallest.
+            "max_height" => max_height = decoded.parse().ok().filter(|h| *h > 0),
             _ => {}
         }
     }
-    url.map(|u| (u, ua, referer))
+    url.map(|u| (u, ua, referer, max_height))
 }
 
 fn extract_header(request: &str, name: &str) -> Option<String> {
@@ -1161,7 +1197,7 @@ mod tests {
 low.m3u8\n\
 #EXT-X-STREAM-INF:BANDWIDTH=8000000,RESOLUTION=3840x2160\n\
 uhd.m3u8\n";
-        let out = prefer_highest_hls_rung(LADDER);
+        let out = prefer_highest_hls_rung(LADDER, None);
         let uhd = out.find("uhd.m3u8").expect("4K rung stays");
         let low = out.find("low.m3u8").expect("low rung stays");
         assert!(uhd < low, "mpv plays the first variant — 4K must lead\n{out}");
@@ -1182,10 +1218,59 @@ uhd.m3u8\n";
 hd.m3u8\n\
 #EXT-X-STREAM-INF:RESOLUTION=3840x2160\n\
 uhd.m3u8\n";
-        let out = prefer_highest_hls_rung(LADDER);
+        let out = prefer_highest_hls_rung(LADDER, None);
         let uhd = out.find("uhd.m3u8").expect("4K rung stays");
         let hd = out.find("hd.m3u8").expect("hd rung stays");
         assert!(uhd < hd, "height must rank the ladder when BANDWIDTH is absent\n{out}");
+    }
+
+    /// Android's ceiling. Uncapped, the phone is handed 4K to copy frame by
+    /// frame through a SurfaceTexture and never shows a first frame.
+    #[test]
+    fn a_capped_ladder_leads_with_the_tallest_rung_under_the_cap() {
+        const LADDER: &str = "#EXTM3U\n\
+#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360\n\
+low.m3u8\n\
+#EXT-X-STREAM-INF:BANDWIDTH=4000000,RESOLUTION=1920x1080\n\
+fhd.m3u8\n\
+#EXT-X-STREAM-INF:BANDWIDTH=8000000,RESOLUTION=3840x2160\n\
+uhd.m3u8\n";
+        let out = prefer_highest_hls_rung(LADDER, Some(1080));
+        let fhd = out.find("fhd.m3u8").expect("1080p rung stays");
+        let low = out.find("low.m3u8").expect("low rung stays");
+        let uhd = out.find("uhd.m3u8").expect("4K rung is kept, just not first");
+        assert!(fhd < low && fhd < uhd, "1080p must lead under a 1080 cap\n{out}");
+        assert!(low < uhd, "the over-tall rung goes last, not second\n{out}");
+    }
+
+    /// Every rung above the cap: play the smallest rather than nothing. An
+    /// over-tall picture beats refusing to open the channel.
+    #[test]
+    fn a_ladder_entirely_above_the_cap_leads_with_its_smallest_rung() {
+        const LADDER: &str = "#EXTM3U\n\
+#EXT-X-STREAM-INF:BANDWIDTH=8000000,RESOLUTION=3840x2160\n\
+uhd.m3u8\n\
+#EXT-X-STREAM-INF:BANDWIDTH=12000000,RESOLUTION=7680x4320\n\
+eight_k.m3u8\n";
+        let out = prefer_highest_hls_rung(LADDER, Some(1080));
+        let uhd = out.find("uhd.m3u8").expect("4K rung stays");
+        let eight = out.find("eight_k.m3u8").expect("8K rung stays");
+        assert!(uhd < eight, "the least-bad rung leads when all exceed the cap\n{out}");
+    }
+
+    /// A rung with no RESOLUTION reads as height 0, so a cap must not push it
+    /// behind the ladder — it ranks on bandwidth exactly as it always did.
+    #[test]
+    fn a_cap_leaves_resolutionless_rungs_ranking_on_bandwidth() {
+        const LADDER: &str = "#EXTM3U\n\
+#EXT-X-STREAM-INF:BANDWIDTH=1000000\n\
+thin.m3u8\n\
+#EXT-X-STREAM-INF:BANDWIDTH=5000000\n\
+fat.m3u8\n";
+        let out = prefer_highest_hls_rung(LADDER, Some(1080));
+        let fat = out.find("fat.m3u8").expect("fat rung stays");
+        let thin = out.find("thin.m3u8").expect("thin rung stays");
+        assert!(fat < thin, "bandwidth still ranks an unlabelled ladder\n{out}");
     }
 
     #[test]
