@@ -66,10 +66,28 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
     @Volatile
     private var muted = false
 
+    /**
+     * Whether a frame has actually been drawn.
+     *
+     * Media3 says this outright: `onRenderedFirstFrame` is the moment a picture
+     * exists, which is a stronger signal than libVLC's video-output count and
+     * is exactly what the page keys "is it playing" on. Reported as
+     * `vo-configured`, the same name mpv uses, so the page needs to know
+     * nothing about which engine answered.
+     */
+    @Volatile
+    private var firstFrame = false
+
+    /** Media3's own starved-for-data state, for `paused-for-cache`. */
+    @Volatile
+    private var buffering = false
+
     private val tick = object : Runnable {
         override fun run() {
             refresh()
-            main.postDelayed(this, 100)
+            // The page polls at 200ms; rebuilding faster than it is read is
+            // work taken out of the frame budget for nothing. See VlcPlayer.kt.
+            main.postDelayed(this, 200)
         }
     }
 
@@ -79,6 +97,8 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
     fun start(url: String) {
         failure = null
         running = true
+        firstFrame = false
+        buffering = false
         onMain {
             val p = ensure()
             activity.setVlcVideoMode(true)
@@ -103,6 +123,8 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
     @JavascriptInterface
     fun stop() {
         running = false
+        firstFrame = false
+        buffering = false
         onMain {
             main.removeCallbacks(tick)
             player?.stop()
@@ -133,6 +155,12 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
             if (from.has(key)) out.put(key, from.get(key))
         }
         return out.toString()
+    }
+
+    /** A line from the page into logcat. See `androidLog` and VlcPlayer.kt. */
+    @JavascriptInterface
+    fun log(line: String) {
+        android.util.Log.d("RivuletPremiumPlayer", "js $line")
     }
 
     @JavascriptInterface
@@ -180,10 +208,18 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
         })
         p.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
+                buffering = state == Player.STATE_BUFFERING
                 when (state) {
                     Player.STATE_ENDED -> running = false
                     Player.STATE_READY, Player.STATE_BUFFERING -> Unit
                 }
+            }
+
+            /** The picture exists. See `firstFrame`. */
+            override fun onRenderedFirstFrame() {
+                firstFrame = true
+                buffering = false
+                android.util.Log.d("RivuletPremiumPlayer", "trace first frame")
             }
         })
 
@@ -239,20 +275,26 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
         val duration = if (p.duration <= 0) 0.0 else p.duration / 1000.0
         val pos = if (p.currentPosition < 0) 0.0 else p.currentPosition / 1000.0
         val format = p.videoFormat
-        var vw = format?.width ?: 0
-        var vh = format?.height ?: 0
-        if (vw <= 0 && p.isPlaying) {
-            vw = 1280
-            vh = 720
-        }
+        // No invented size. It used to report 1280x720 whenever a stream was
+        // playing without a format yet, which is a resolution the page then
+        // showed the viewer. `vo-configured` is how "there is a picture" is
+        // answered now, so the size can simply be absent until it is known.
+        val vw = format?.width ?: 0
+        val vh = format?.height ?: 0
         snap = JSONObject()
             .put("pause", !p.isPlaying)
-            .put("paused-for-cache", !p.isPlaying && pos < duration)
+            // Media3 says outright whether it is starved. The old test was
+            // `pos < duration`, and live reports no duration — so it was always
+            // false and the page could never learn it was waiting on data.
+            .put("paused-for-cache", buffering)
+            .put("cache-buffering-state", if (buffering) 0 else 100)
             .put("duration", duration)
             .put("time-pos", pos)
+            .put("demuxer-cache-time", pos)
             .put("volume", vol)
             .put("mute", muted)
             .put("speed", p.playbackParameters.speed.toDouble())
+            .put("vo-configured", firstFrame)
         if (vw > 0 && vh > 0) {
             snap.put(
                 "video-params",

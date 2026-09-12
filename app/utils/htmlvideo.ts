@@ -110,7 +110,9 @@ interface VlcBridge {
  */
 export function androidLog(line: string): void {
   try {
-    vlcBridge()?.log?.(line)
+    // Whichever engine is installed; both answer it, and only one is playing.
+    const bridge = vlcBridge() ?? exoBridge()
+    bridge?.log?.(line)
   }
   catch {
     // A diagnostic may never be the thing that breaks playback.
@@ -119,6 +121,25 @@ export function androidLog(line: string): void {
 
 function vlcBridge(): VlcBridge | null {
   return (globalThis as { RivuletPlayer?: VlcBridge }).RivuletPlayer ?? null
+}
+
+/**
+ * Media3 ExoPlayer, which Android installs beside libVLC.
+ *
+ * It is the better engine for *live*, and only for live: HLS is what Media3
+ * does best, and a live channel carries stereo AAC that every device decodes.
+ * A film is the other way round — it may carry Dolby or DTS, which Media3
+ * hands to the platform's decoders and a cheap device simply does not have,
+ * and libVLC's bundled FFmpeg is the whole reason it is here. So the two
+ * split on that line and nowhere else. See `RivuletPremiumPlayer.kt`.
+ */
+function exoBridge(): VlcBridge | null {
+  return (globalThis as { RivuletPremiumPlayer?: VlcBridge }).RivuletPremiumPlayer ?? null
+}
+
+/** Is Media3 available? Android only, and only once the page is in it. */
+export function hasExoPlayer() {
+  return !!exoBridge()
 }
 
 /** Is libVLC behind the controls? Android only, and only once the page is in it. */
@@ -629,8 +650,23 @@ export function videoEngine(video: HTMLVideoElement): PlayerEngine {
  * so the menu shows one list, and picking one turns libVLC's text renderer
  * off so the two don't draw over each other.
  */
+/**
+ * Media3 behind the same protocol libVLC and mpv answer.
+ *
+ * The bridge is shaped identically, so this is `vlcEngine` with a different
+ * object behind it — which is the point of the protocol. Subtitles are the
+ * page's either way (`utils/subtitles.ts`), so `sub-add` is handled here
+ * rather than passed down, exactly as it is for libVLC.
+ */
+export function exoEngine(): PlayerEngine | null {
+  return engineFor(exoBridge())
+}
+
 export function vlcEngine(): PlayerEngine | null {
-  const bridge = vlcBridge()
+  return engineFor(vlcBridge())
+}
+
+function engineFor(bridge: VlcBridge | null): PlayerEngine | null {
   if (!bridge)
     return null
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { readFileSync } from 'node:fs'
-import { deviceCodecs, hasNativePlayer, hasVideoOverlay, uhdPlayable, videoEngine, vlcEngine } from '../app/utils/htmlvideo'
+import { deviceCodecs, exoEngine, hasNativePlayer, hasVideoOverlay, uhdPlayable, videoEngine, vlcEngine } from '../app/utils/htmlvideo'
 import { nearestFrame, walkOrder } from '../app/utils/thumbs'
 // Self-check for the <video> player backend: `bun scripts/check-player.ts`.
 //
@@ -57,6 +57,7 @@ const player = videoEngine(video as any)
 // and the reason `bun run dev` gets a working player.
 assert.equal(hasNativePlayer(), false)
 assert.equal(vlcEngine(), null, 'and no Android bridge, so no libVLC either')
+assert.equal(exoEngine(), null, 'nor Media3')
 // Nor a surface in front of the page: both platform questions have to answer no
 // off Tauri, or the browser build punches holes for a window that isn't there.
 assert.equal(hasVideoOverlay(), false)
@@ -504,6 +505,24 @@ assert.match(vlcKt, /private val snapshotMs = 200L/, 'the snapshot is rebuilt at
 // live stream and the page said "Buffering…" over one that had simply stopped —
 // read as a hang, and answered with Retry. A pause is a pause.
 assert.match(vlcKt, /val reallyPaused = p\.playerState == 4/, 'a genuine pause is recognised')
+
+// --- Two engines, split on what each is good at -------------------------------
+// Live TV is HLS, which Media3 does best, and a channel carries stereo AAC that
+// any device decodes — so the reason libVLC is bundled does not apply there. A
+// film is the reverse: Dolby and DTS go to platform decoders Media3 cannot
+// supply, and libVLC's own FFmpeg is why it was chosen. The split is that line
+// and no other, and both answer the same protocol so nothing downstream knows.
+const exoKt = readFileSync(new URL('../src-tauri/gen/android/app/src/main/java/io/github/rivulet/rivulet/RivuletPremiumPlayer.kt', import.meta.url), 'utf8')
+assert.match(exoKt, /override fun onRenderedFirstFrame\(\)/, 'Media3 reports its first frame')
+assert.match(exoKt, /\.put\("vo-configured", firstFrame\)/, 'under the name the page already reads')
+assert.match(exoKt, /\.put\("paused-for-cache", buffering\)/, 'and starvation is Media3\'s own state, not a duration test live can never satisfy')
+assert.match(exoKt, /fun log\(line: String\)/, 'it can speak into logcat too')
+assert.doesNotMatch(exoKt, /vw = 1280/, 'and invents no resolution to report to the viewer')
+assert.match(
+  mpv,
+  /engine \?\?= \(isLive\.value \? exoEngine\(\) : null\) \?\? vlcEngine\(\)/,
+  'live picks Media3, everything else keeps libVLC, and a build without Media3 still falls back',
+)
 assert.match(vlcKt, /&& !reallyPaused && \(length <= 0 \|\| pos < duration\)/, 'and is not reported as starved for data')
 assert.match(vlcKt, /private fun rebuildTracks\(p: MediaPlayer\)/, 'the track list has a build of its own')
 assert.match(vlcKt, /if \(tracksDirty\)/, 'and is rebuilt only when libVLC says the tracks changed')
