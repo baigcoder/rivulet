@@ -450,4 +450,28 @@ assert.match(premiumUtil, /return `\$\{LOGO_BASE\}\/api\/premium-tv\/proxy\/imag
 const premiumSettings = readFileSync(new URL('../app/pages/settings/premium-tv.vue', import.meta.url), 'utf8')
 assert.match(premiumSettings, /v-if="settings\.isPremium"\s/, 'the subscription card reads the subscription')
 
+// --- A port already taken must say so ----------------------------------------
+// All three local servers bind fixed loopback ports. When one cannot, the spawn
+// logged to stderr — which a packaged app has nobody reading — and the pages
+// then asked a server that was not there and waited. Two orphaned mpv processes
+// holding 3031 and 3032 presented exactly that way: Free TV and Premium TV both
+// spinning for ever, with nothing anywhere naming the cause.
+const startupRs = readFileSync(new URL('../src-tauri/src/startup.rs', import.meta.url), 'utf8')
+assert.match(startupRs, /pub fn record_bind_failure/, 'a bind failure is recorded, not just printed')
+assert.match(startupRs, /pub fn startup_faults\(\) -> Vec<String>/, 'and the frontend can ask for it')
+assert.match(startupRs, /only one usage of each socket address/, 'the Windows wording counts as a taken port')
+assert.match(startupRs, /address already in use/, 'so does the unix one')
+
+assert.match(libRs, /startup::startup_faults,/, 'the command is registered')
+assert.match(libRs, /startup::record_bind_failure\(\s*"The Free TV stream proxy"/, 'Free TV reports its port')
+assert.match(libRs, /startup::record_bind_failure\(\s*"Premium TV's local server"/, 'and so does Premium')
+
+const appVue = readFileSync(new URL('../app/app.vue', import.meta.url), 'utf8')
+assert.match(appVue, /v-if="startupProblems\.length"/, 'and the app says so on screen')
+assert.match(
+  appVue,
+  /\$t\('Rivulet could not start one of its local services'\)/,
+  'in a sentence, rather than a spinner that names nothing',
+)
+
 console.info('free tv health: ok')

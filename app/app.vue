@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { mdiAlertCircleOutline } from '@mdi/js'
 import { applyTheme, paintedTheme } from '~/theme/themes'
 import { pushEntitlement } from '~/utils/premiumTv'
 
@@ -178,9 +179,49 @@ updates.startRecheckTimer()
 // Unlayered, so a user rule beats both Vuetify's components and UnoCSS —
 // otherwise "advanced" would mean "fight the cascade" (see assets/css/layers.css).
 useStyleTag(computed(() => settings.customCss), { id: 'rivulet-custom-css' })
+
+/**
+ * Local servers that never started.
+ *
+ * Asked once, a few seconds in: the servers are spawned during setup and a
+ * bind fails immediately, so anything still empty by then really is fine.
+ * Shown here rather than on the pages that suffer it, because a port already
+ * taken breaks Free TV and Premium TV together and neither page can say so —
+ * each would only sit there waiting for a server that is not listening.
+ */
+const startupProblems = ref<string[]>([])
+onMounted(() => {
+  window.setTimeout(() => {
+    void startupFaults().then(f => (startupProblems.value = f))
+  }, 4000)
+})
 </script>
 
 <template>
+  <div
+    v-if="startupProblems.length"
+    class="fixed inset-x-0 top-0 z-[3000] flex flex-col gap-1 bg-error px-4 py-2 text-on-error"
+    role="alert"
+  >
+    <div class="flex items-start gap-3">
+      <v-icon :icon="mdiAlertCircleOutline" size="20" class="mt-0.5 shrink-0" />
+      <div class="min-w-0 flex-1">
+        <p class="text-label-large font-semibold">
+          {{ $t('Rivulet could not start one of its local services') }}
+        </p>
+        <p v-for="(problem, i) in startupProblems" :key="i" class="text-body-small opacity-90">
+          {{ problem }}
+        </p>
+      </div>
+      <button
+        type="button"
+        class="shrink-0 rounded-lg px-2 py-1 text-label-medium font-semibold underline-offset-2 hover:underline focus-visible:underline focus-visible:outline-none"
+        @click="startupProblems = []"
+      >
+        {{ $t('Dismiss') }}
+      </button>
+    </div>
+  </div>
   <nuxt-layout>
     <nuxt-page />
   </nuxt-layout>

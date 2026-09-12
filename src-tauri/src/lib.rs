@@ -48,6 +48,10 @@ mod premium;
 /// local subscription state. Built in Phase 6.
 mod api;
 
+/// Why a local server did not start, so the page can say so instead of
+/// waiting for one that is not there.
+mod startup;
+
 /// Credential redaction for mpv's log tail. Every platform's
 /// `player_status` reads that log, and a live stream's URL carries the
 /// account's password in its path.
@@ -1084,6 +1088,7 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .manage(player::PlayerState::default())
         .invoke_handler(tauri::generate_handler![
+            startup::startup_faults,
             player::player_start,
             player::player_stop,
             player::player_ipc,
@@ -1245,6 +1250,13 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = iptv::proxy::run_proxy().await {
                     eprintln!("[iptv] stream proxy exited with error: {e:#}");
+                    // Free TV plays nothing without this, so the page has to
+                    // be able to say why rather than spin. See `startup`.
+                    startup::record_bind_failure(
+                        "The Free TV stream proxy",
+                        iptv::commands::PROXY_PORT,
+                        &e,
+                    );
                 }
             });
 
@@ -1371,6 +1383,13 @@ pub fn run() {
                     tauri::async_runtime::spawn(async move {
                         if let Err(e) = crate::api::run(api_state).await {
                             eprintln!("[premium-api] server exited with error: {e:#}");
+                            // Premium TV and every channel logo come from
+                            // here. See `startup`.
+                            crate::startup::record_bind_failure(
+                                "Premium TV's local server",
+                                3032,
+                                &e,
+                            );
                         }
                     });
                 }
