@@ -321,6 +321,21 @@ const moving = ref(false)
  * second reading before the player is torn down — see the poll.
  */
 let confirmedStopped = false
+
+/**
+ * How long a live channel may take to show its first frame.
+ *
+ * Twelve seconds was the figure for everything, and a real channel measured on
+ * a phone raised its first video output at 12.7s — losing to the deadline by
+ * seven hundred milliseconds, every single time, after which the auto-skip
+ * moved on and the viewer saw "connecting" and then a playback error on a
+ * channel that worked. A free playlist is other people's servers on whatever
+ * connection the viewer has; twelve seconds was a guess, and a poor one.
+ *
+ * A file keeps the old figure: it is served by the engine on loopback, and one
+ * that has not started in twelve seconds is not going to.
+ */
+const LIVE_START_GRACE_MS = 30_000
 /** Where the clock last stood, and when it last went forward. */
 let lastClock = -1
 let lastClockAt = 0
@@ -2113,7 +2128,7 @@ async function startPlayer() {
         }
         if (!streamDied())
           errorMsg.value = $t('This stream did not start. Try another quality, or change How Play works in Settings → Sources.')
-      }, 12_000)
+      }, isLive.value ? LIVE_START_GRACE_MS : 12_000)
     }
     // Push geometry and cutouts immediately so the stalled overlay's data-cut
     // hole appears in the native window before the next paint — waiting for

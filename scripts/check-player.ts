@@ -502,6 +502,12 @@ assert.match(mpv, /\|\| p\['vo-configured'\] === true/, 'and a video output that
 // output, which is what left a working stream under a "Connecting" HUD and
 // stopped the controls ever auto-hiding. The picture is the ground truth.
 assert.doesNotMatch(mpv, /moving\.value = started\.value/, 'and it is not gated on the page believing it started')
+// Twelve seconds was the deadline for everything. A real free channel, measured
+// on a phone, raised its first video output at 12.7s — losing by 700ms every
+// time, after which the auto-skip moved on and the viewer got "connecting" then
+// a playback error on a channel that worked.
+assert.match(mpv, /const LIVE_START_GRACE_MS = 30_000/, 'live gets thirty seconds for its first frame')
+assert.match(mpv, /isLive\.value \? LIVE_START_GRACE_MS : 12_000/, 'and a file, served from loopback, keeps twelve')
 assert.match(htmlSrc, /'vo-configured': \(\) => video\.videoWidth > 0/, 'the <video> shim answers it too')
 
 // --- Why a channel never opened -----------------------------------------------
