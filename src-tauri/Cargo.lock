@@ -4718,7 +4718,7 @@ dependencies = [
 
 [[package]]
 name = "rivulet"
-version = "0.6.33"
+version = "0.6.34"
 dependencies = [
  "aes-gcm",
  "anyhow",
