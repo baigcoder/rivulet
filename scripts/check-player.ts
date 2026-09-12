@@ -596,5 +596,15 @@ assert.match(hooks, /Where-Object Path -like '\*Rivulet\*'/, 'and only ours — 
 const tauriConf = readFileSync(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8')
 assert.match(tauriConf, /"installerHooks": "\.\/installer-hooks\.nsh"/, 'and the bundler is actually told to run them')
 
+// --- The first click on a channel ---------------------------------------------
+// `ensure` builds the TextureView, and its SurfaceTexture does not exist until a
+// layout pass later — so the first start called `play()` with nowhere to draw.
+// libVLC decoded into nothing: no vout, no picture, "Connecting" for good, while
+// Retry played at once because by then the surface was there. That the report
+// was always "the first click" is not a coincidence, it is the construction.
+assert.match(vlcKt, /if \(outputAttached\) \{\r?\n {8}p\.play\(\)/, 'playback waits until there is somewhere to draw')
+assert.match(vlcKt, /main\.postDelayed\(playWhenReady, surfaceWaitMs\)/, 'bounded, so a surface that never arrives still gets sound')
+assert.match(vlcKt, /if \(pendingPlay\) \{/, 'and the surface arriving is what starts it')
+
 // eslint-disable-next-line no-console
 console.log('player: ok')

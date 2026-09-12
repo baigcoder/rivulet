@@ -156,6 +156,35 @@ class RivuletPlayer(private val activity: MainActivity) {
   @Volatile
   private var hasMedia = false
 
+  /** How long a start may wait for the video surface before going without it. */
+  private val surfaceWaitMs = 3_000L
+
+  /**
+   * A start waiting on the TextureView's surface.
+   *
+   * `ensure` builds that view, and its SurfaceTexture does not exist until a
+   * layout pass later — so the first start after the player is built called
+   * `play()` with no video output attached. libVLC then decoded with nowhere
+   * to draw: no Vout, no picture, and the HUD sat on "Connecting" for good,
+   * while a second start played at once because by then the surface was there.
+   * That is the "first click does nothing, Retry works immediately" report,
+   * and being first-click-only is not a coincidence — it is the construction.
+   */
+  private var pendingPlay = false
+
+  /**
+   * The surface never came. Start regardless: sound with no picture beats a
+   * channel that never starts at all, and the output still attaches if it
+   * turns up later.
+   */
+  private val playWhenReady = Runnable {
+    if (pendingPlay) {
+      pendingPlay = false
+      note("no surface after ${surfaceWaitMs}ms - starting without one")
+      player?.play()
+    }
+  }
+
   private val tick = object : Runnable {
     override fun run() {
       refresh()
@@ -233,7 +262,14 @@ class RivuletPlayer(private val activity: MainActivity) {
       // Keep the page's mute/volume state when switching channels. This also
       // avoids leaving a reused MediaPlayer at volume zero after unmuting.
       p.volume = if (muted) 0 else vol
-      p.play()
+      // Only start once there is somewhere to draw — see `pendingPlay`.
+      if (outputAttached) {
+        p.play()
+      } else {
+        pendingPlay = true
+        main.removeCallbacks(playWhenReady)
+        main.postDelayed(playWhenReady, surfaceWaitMs)
+      }
       main.removeCallbacks(tick)
       tick.run()
     }
@@ -248,6 +284,8 @@ class RivuletPlayer(private val activity: MainActivity) {
     note("stop")
     onMain {
       main.removeCallbacks(tick)
+      pendingPlay = false
+      main.removeCallbacks(playWhenReady)
       player?.stop()
       activity.setVlcVideoMode(false)
       // A TextureView left visible keeps its last frame painted, which is a
@@ -584,6 +622,13 @@ class RivuletPlayer(private val activity: MainActivity) {
     updateVideoLayout()
     p.vlcVout.attachViews()
     outputAttached = true
+    // A start that was waiting for exactly this.
+    if (pendingPlay) {
+      pendingPlay = false
+      main.removeCallbacks(playWhenReady)
+      note("surface ready - starting")
+      p.play()
+    }
   }
 
   /** Keep libVLC's output dimensions in sync with the rotated TextureView. */
