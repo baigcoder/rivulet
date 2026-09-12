@@ -119,8 +119,12 @@ function formatExpiry(ms: number): string {
       :title="$t('Subscription')"
       :hint="$t('Premium TV unlocks Xtream and M3U IPTV sources with EPG, favourites and more.')"
     >
+      <!-- The subscription, not the provider. `premium.connected` means an
+           account is loaded, so this card called an active subscription with
+           no provider yet "No active subscription" — directly above the banner
+           saying Premium TV was active. -->
       <v-card
-        v-if="premium.connected"
+        v-if="settings.isPremium"
         rounded="xl"
         class="panel flex flex-col items-start gap-3 p-6"
       >

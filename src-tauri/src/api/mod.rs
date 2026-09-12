@@ -242,6 +242,20 @@ pub fn build_router(state: ApiState) -> Router {
 /// in the webview and against nothing at all in mpv.
 pub const ADDR: &str = "127.0.0.1:3032";
 
+/// Channel logos answer here, and having their own origin is the whole point.
+///
+/// A browser opens about six connections per origin. The channel grid asks for
+/// logos by the hundred and each one holds its connection until the upstream
+/// answers — up to `LOGO_TIMEOUT` — so a grid that was scrolling used every
+/// connection this origin had, and `/status` from the settings page could not
+/// get one at all. Blank tiles on Free TV and a Premium settings spinner that
+/// never stopped were the same bug seen from two ends.
+///
+/// If something else already holds this port the logo server does not start,
+/// images fail fast, and the cards fall back to their initials — which is a
+/// worse-looking grid but a working one, not a hung app.
+pub const LOGO_ADDR: &str = "127.0.0.1:3033";
+
 // ── Channel logo proxy ─────────────────────────────────────────────
 
 /// How long a failed logo is remembered as failed.
@@ -550,11 +564,41 @@ async fn proxy_image(
 
 /// Run the server until the process exits. Bound to loopback only —
 /// nothing outside the host can reach this address.
+/// The logo proxy, alone on its own origin. See `LOGO_ADDR`.
+fn build_logo_router() -> Router {
+    let cors = CorsLayer::new()
+        .allow_origin(AllowOrigin::predicate(|origin, _| is_local_app_origin(origin)))
+        .allow_methods([Method::GET])
+        .allow_headers([header::CONTENT_TYPE]);
+
+    Router::new()
+        .route("/api/premium-tv/proxy/image", get(proxy_image))
+        .layer(cors)
+}
+
 pub async fn run(state: ApiState) -> anyhow::Result<()> {
     let addr: SocketAddr = ADDR.parse()?;
     let app = build_router(state);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     eprintln!("[premium-api] listening on http://{addr}");
+
+    // Logos get their own listener — see `LOGO_ADDR`. Never fatal: the API is
+    // what the app cannot do without, and a missing logo server costs artwork.
+    match LOGO_ADDR.parse::<SocketAddr>() {
+        Ok(logo_addr) => match tokio::net::TcpListener::bind(logo_addr).await {
+            Ok(logo_listener) => {
+                eprintln!("[premium-api] logos on http://{logo_addr}");
+                tokio::spawn(async move {
+                    if let Err(e) = axum::serve(logo_listener, build_logo_router()).await {
+                        eprintln!("[premium-api] logo server exited: {e:#}");
+                    }
+                });
+            }
+            Err(e) => eprintln!("[premium-api] logo port unavailable: {e}"),
+        },
+        Err(e) => eprintln!("[premium-api] bad logo address: {e}"),
+    }
+
     axum::serve(listener, app).await?;
     Ok(())
 }

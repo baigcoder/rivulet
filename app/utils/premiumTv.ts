@@ -28,6 +28,19 @@ import { invoke, isTauri } from '@tauri-apps/api/core'
 const API_BASE = 'http://127.0.0.1:3032'
 
 /**
+ * Channel logos, on an origin of their own.
+ *
+ * A browser opens about six connections per origin. The grid asks for logos by
+ * the hundred and each holds its connection until the upstream answers, so a
+ * grid that was scrolling used every connection the API had and `/status` could
+ * not get one — blank tiles on Free TV and a Premium settings spinner that never
+ * stopped were one bug, seen from two ends. See `LOGO_ADDR` in
+ * `src-tauri/src/api/mod.rs`; if that port is taken the images fail fast and the
+ * cards fall back to initials, which is a duller grid but not a hung one.
+ */
+const LOGO_BASE = 'http://127.0.0.1:3033'
+
+/**
  * Proxy a channel logo URL through the local API to avoid mixed-content
  * blocking on Android, where the webview origin is `https://tauri.localhost`
  * and `http://` image URLs from the provider are silently rejected.
@@ -43,7 +56,7 @@ export function proxyLogo(url: string | null | undefined): string {
   // Already local — don't double-proxy
   if (url.startsWith('http://127.') || url.startsWith('http://localhost') || url.startsWith('/'))
     return url
-  return `${API_BASE}/api/premium-tv/proxy/image?url=${encodeURIComponent(url)}`
+  return `${LOGO_BASE}/api/premium-tv/proxy/image?url=${encodeURIComponent(url)}`
 }
 
 let token: string | null = null

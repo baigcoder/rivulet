@@ -429,4 +429,25 @@ assert.match(
 )
 assert.match(proxyRs, /"max_height" => max_height = decoded\.parse\(\)\.ok\(\)\.filter\(\|h\| \*h > 0\)/, 'and the proxy parses it, treating garbage as no cap')
 
+// --- Logos may not starve the API --------------------------------------------
+// A browser opens about six connections per origin. The grid asks for logos by
+// the hundred and each holds its connection until the upstream answers, so a
+// scrolling grid used every connection the API had and `/status` could not get
+// one: blank tiles on Free TV and a Premium settings spinner that never stopped
+// were the same bug from two ends. Logos live on their own origin now.
+const apiRs = readFileSync(new URL('../src-tauri/src/api/mod.rs', import.meta.url), 'utf8')
+assert.match(apiRs, /pub const LOGO_ADDR: &str = "127\.0\.0\.1:3033"/, 'logos have an address of their own')
+assert.match(apiRs, /pub const ADDR: &str = "127\.0\.0\.1:3032"/, 'and it is not the API\'s')
+assert.match(apiRs, /fn build_logo_router\(\) -> Router/, 'served by a router carrying nothing else')
+assert.match(apiRs, /Err\(e\) => eprintln!\("\[premium-api\] logo port unavailable/, 'and a port it cannot have costs artwork, never the API')
+const premiumUtil = readFileSync(new URL('../app/utils/premiumTv.ts', import.meta.url), 'utf8')
+assert.match(premiumUtil, /const LOGO_BASE = 'http:\/\/127\.0\.0\.1:3033'/, 'the page asks that origin')
+assert.match(premiumUtil, /return `\$\{LOGO_BASE\}\/api\/premium-tv\/proxy\/image/, 'for every channel logo')
+
+// The subscription card asks about the subscription. `premium.connected` means
+// an account is loaded, so an active subscription with no provider yet drew
+// "No active subscription" directly above a banner saying it was active.
+const premiumSettings = readFileSync(new URL('../app/pages/settings/premium-tv.vue', import.meta.url), 'utf8')
+assert.match(premiumSettings, /v-if="settings\.isPremium"\s/, 'the subscription card reads the subscription')
+
 console.info('free tv health: ok')
