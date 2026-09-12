@@ -593,6 +593,15 @@ assert.match(premiumStore, /for \(let attempt = 0; attempt < 2; attempt\+\+\)/, 
 const hooks = readFileSync(new URL('../src-tauri/installer-hooks.nsh', import.meta.url), 'utf8')
 assert.match(hooks, /!macro NSIS_HOOK_PREINSTALL/, 'the installer clears leftovers before it writes')
 assert.match(hooks, /Where-Object Path -like '\*Rivulet\*'/, 'and only ours — a stranger\'s mpv on the PATH is none of our business')
+// Killing the player was not enough: the installer log showed the kill running
+// and the next extract still refusing, because the app was alive to start
+// another one. Windows will not overwrite a running binary but will rename one,
+// so the name is taken away from whatever holds it and the stale copy is queued
+// for the next reboot. That path does not depend on winning a race.
+assert.match(hooks, /Rename "\$\{FILE\}" "\$\{FILE\}\.old"/, 'a locked binary is moved aside rather than fought over')
+assert.match(hooks, /Delete \/REBOOTOK "\$\{FILE\}\.old"/, 'and the stale copy is not left as clutter')
+assert.match(hooks, /!insertmacro RIVULET_FREE_FILE .*mpv\.exe/, 'mpv, the file that actually failed, is the one it frees')
+assert.match(hooks, /-Name rivulet,mpv/, 'and the app goes first, so nothing starts a new player behind us')
 const tauriConf = readFileSync(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8')
 assert.match(tauriConf, /"installerHooks": "\.\/installer-hooks\.nsh"/, 'and the bundler is actually told to run them')
 
