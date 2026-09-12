@@ -585,6 +585,14 @@ assert.match(premiumApiSrc, /'TimeoutError'/, 'under a name of its own: a caller
 assert.match(premiumApiSrc, /signal: ctrl\.signal/, 'the fetch obeys our controller, not only the caller\'s')
 const premiumStore = readFileSync(new URL('../app/stores/premiumTv.ts', import.meta.url), 'utf8')
 assert.match(premiumStore, /for \(let attempt = 0; attempt < 2; attempt\+\+\)/, 'and status is asked twice before it is called an error')
+// The fetch timeout was not enough, because the hang was before the fetch.
+// `premium_api_token` is a synchronous Tauri command that reads the OS
+// keychain, and `mintToken` caches its in-flight promise — so one wedged
+// invoke wedged every request after it for the life of the process, and the
+// settings page sat on disabled spinners with no error anywhere.
+assert.match(premiumApiSrc, /async function bounded<T>\(work: Promise<T>, ms: number\)/, 'IPC is bounded too')
+assert.match(premiumApiSrc, /bounded\(\s*invoke<\{ token: string, expiresAt: number \}>\('premium_api_token'\)/, 'minting a token cannot hang for ever')
+assert.match(premiumApiSrc, /bounded\(\s*invoke\('premium_set_entitlement'/, 'nor can pushing the entitlement')
 
 // --- The installer cannot overwrite a running mpv -----------------------------
 // mpv is its own process and outlives an app that crashed, so an upgrade failed

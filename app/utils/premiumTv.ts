@@ -27,6 +27,46 @@ import { invoke, isTauri } from '@tauri-apps/api/core'
  */
 const API_BASE = 'http://127.0.0.1:3032'
 
+/** How long any one IPC call may take before it is treated as unanswered. */
+const IPC_TIMEOUT_MS = 8_000
+
+/**
+ * A timeout, told apart from a caller's own cancel.
+ *
+ * `usePlaybackSource` drops `AbortError` on the floor by design — a zap that
+ * superseded an in-flight request is not a failure worth showing — so a
+ * timeout must not arrive wearing that name or it would be swallowed too.
+ */
+function ipcTimedOut(): DOMException {
+  return new DOMException('Premium TV did not answer.', 'TimeoutError')
+}
+
+/**
+ * Bound a promise that has no timeout of its own.
+ *
+ * `invoke` is exactly that. `premium_api_token` is a *synchronous* Tauri
+ * command that reads the OS keychain, so a stall there never returns — and
+ * `mintToken` below caches its in-flight promise, which means one wedged call
+ * wedged every request made after it for the life of the process. No fetch
+ * timeout could help: the hang happened before the fetch was ever reached.
+ * That is what left the Premium settings page spinning with disabled buttons
+ * and no error anywhere on it.
+ */
+async function bounded<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(ipcTimedOut()), ms)
+      }),
+    ])
+  }
+  finally {
+    clearTimeout(timer)
+  }
+}
+
 /**
  * Channel logos, on an origin of their own.
  *
@@ -112,7 +152,10 @@ async function mintToken(): Promise<string | null> {
     return minting
   minting = (async () => {
     try {
-      const res = await invoke<{ token: string, expiresAt: number }>('premium_api_token')
+      const res = await bounded(
+        invoke<{ token: string, expiresAt: number }>('premium_api_token'),
+        IPC_TIMEOUT_MS,
+      )
       setAuthToken(res.token)
       return res.token
     }
@@ -142,10 +185,13 @@ async function mintToken(): Promise<string | null> {
 export async function pushEntitlement(tier: string, expiresAtMs: number | null): Promise<void> {
   if (!isTauri())
     return
-  await invoke('premium_set_entitlement', {
-    tier,
-    expiresAtMs: expiresAtMs && expiresAtMs > 0 ? expiresAtMs : null,
-  })
+  await bounded(
+    invoke('premium_set_entitlement', {
+      tier,
+      expiresAtMs: expiresAtMs && expiresAtMs > 0 ? expiresAtMs : null,
+    }),
+    IPC_TIMEOUT_MS,
+  )
 }
 
 class PremiumApiError extends Error {
