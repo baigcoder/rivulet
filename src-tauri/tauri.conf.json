@@ -53,7 +53,7 @@
 		"devUrl": "http://localhost:3000"
 	},
 	"productName": "Rivulet",
-	"version": "0.6.36",
+	"version": "0.6.37",
 	"identifier": "io.github.rivulet.rivulet",
 	"plugins": {
 		"updater": {
