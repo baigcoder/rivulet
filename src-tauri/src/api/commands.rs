@@ -40,7 +40,14 @@ pub struct ApiTokenResponse {
 /// fresh hour-long token signed by the same keychain key, so a frontend
 /// that lost its copy (a reload, a cleared `sessionStorage`) just asks
 /// again.
-#[tauri::command]
+/// `async` on a synchronous function is deliberate. A Tauri command without
+/// it runs on the **main thread**, and this one reads the OS keychain — a
+/// blocking call that, stalled there, takes the event loop with it and so
+/// stalls the delivery of every other IPC response. The frontend caches the
+/// in-flight mint, so one stall wedged Premium TV until the app restarted:
+/// spinners that never stopped, with no error anywhere to say why.
+/// See https://v2.tauri.app/develop/calling-rust/.
+#[tauri::command(async)]
 pub fn premium_api_token() -> Result<ApiTokenResponse, String> {
     let (token, expires_at) = auth::mint_api_token().map_err(|e| {
         // `ApiError`'s conversion produces the frontend-safe message;
@@ -57,7 +64,7 @@ pub fn premium_api_token() -> Result<ApiTokenResponse, String> {
 /// the check is in `SubscriptionInfo::is_premium`, not here, so the
 /// frontend cannot express "premium but expired" and have it read as
 /// allowed.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn premium_set_entitlement(
     state: State<'_, Arc<EntitlementState>>,
     tier: String,
