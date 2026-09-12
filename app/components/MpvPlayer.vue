@@ -336,6 +336,9 @@ let confirmedStopped = false
  * that has not started in twelve seconds is not going to.
  */
 const LIVE_START_GRACE_MS = 30_000
+
+/** When the current stream was handed to the backend. See `streamDied`. */
+let startedAt = 0
 /** Where the clock last stood, and when it last went forward. */
 let lastClock = -1
 let lastClockAt = 0
@@ -2093,6 +2096,7 @@ async function startPlayer() {
     paused.value = false
     silentSaid = false
     started.value = true
+    startedAt = Date.now()
     // Torrent pieces arrive slowly, so assume a stall until the poll says
     // otherwise. A Direct HTTP link is already on a server — starting as
     // "Buffering…" is a wait the first frame does not need.
@@ -2241,6 +2245,17 @@ function streamDied(reason?: 'stub' | 'dead' | 'refused') {
   // the page then reconnected over a stream that was working. Nothing upstream
   // of this is trusted to have got that right.
   if (lastClockAt > 0 && Date.now() - lastClockAt < 3000)
+    return false
+  // Nor is a live stream that is still filling its buffer inside the opening
+  // window. Measured on a phone: attempts ran four and six seconds with data
+  // plainly arriving — `buffering` true the whole time — and were torn down
+  // before libVLC had produced a frame. Each teardown reminted a token and
+  // opened a second upstream, which on a one-connection account is what got
+  // the next attempt refused. That is the whole of "it only works on Retry".
+  //
+  // The clock cannot help here: it does not move until the first frame, so
+  // there is nothing else at this point that can tell opening from dead.
+  if (isLive.value && buffering.value && startedAt > 0 && Date.now() - startedAt < LIVE_START_GRACE_MS)
     return false
   // Premium movies and episodes are finite files — the watch page's live
   // reconnect loop would remint tokens mid-playback and fight a stream that

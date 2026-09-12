@@ -508,6 +508,16 @@ assert.doesNotMatch(mpv, /moving\.value = started\.value/, 'and it is not gated 
 // a playback error on a channel that worked.
 assert.match(mpv, /const LIVE_START_GRACE_MS = 30_000/, 'live gets thirty seconds for its first frame')
 assert.match(mpv, /isLive\.value \? LIVE_START_GRACE_MS : 12_000/, 'and a file, served from loopback, keeps twelve')
+// A stream still filling its buffer is not a dead one. Measured on a phone:
+// attempts ran four and six seconds with data plainly arriving and were torn
+// down before libVLC produced a frame, each teardown reminting a token and
+// opening a second upstream — which on a one-connection account is what got
+// the next attempt refused, and the whole of "it only works on Retry".
+assert.match(
+  mpv,
+  /if \(isLive\.value && buffering\.value && startedAt > 0 && Date\.now\(\) - startedAt < LIVE_START_GRACE_MS\)/,
+  'opening is told from dead by whether data is arriving, since the clock cannot say',
+)
 assert.match(htmlSrc, /'vo-configured': \(\) => video\.videoWidth > 0/, 'the <video> shim answers it too')
 
 // --- Why a channel never opened -----------------------------------------------
