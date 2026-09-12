@@ -150,6 +150,64 @@ class RivuletPlayer(private val activity: MainActivity) {
   /** How long a live stream may be silent before it has really stopped. */
   private val liveRecoverMs = 6_000L
 
+  /**
+   * How often the snapshot the page reads is rebuilt.
+   *
+   * The page polls every 200ms, so rebuilding at 100 threw half of it away —
+   * and the rebuild runs on the main thread, so the waste was frames.
+   */
+  private val snapshotMs = 200L
+
+  /** Whether libVLC's track list has changed since it was last built. */
+  @Volatile
+  private var tracksDirty = true
+
+  private var cachedTracks = JSONArray()
+  private var audioIndexById = HashMap<Int, Int>()
+  private var spuIndexById = HashMap<Int, Int>()
+
+  /**
+   * Build the page's track list, and the id → index maps that go with it.
+   *
+   * Numbered sequentially: the 1-based indices the page puts in `track-list`
+   * and the way `set_property aid/sid` round-trip.
+   */
+  private fun rebuildTracks(p: MediaPlayer) {
+    val audioTracks = p.audioTracks ?: emptyArray()
+    val spuTracks = p.spuTracks ?: emptyArray()
+    val list = JSONArray()
+    val audioIds = HashMap<Int, Int>()
+    val spuIds = HashMap<Int, Int>()
+    var audioIdx = 0
+    for (track in audioTracks) {
+      audioIdx++
+      list.put(
+        JSONObject()
+          .put("id", audioIdx)
+          .put("type", "audio")
+          .put("lang", JSONObject.NULL)
+          .put("title", track.name ?: JSONObject.NULL),
+      )
+      audioIds[track.id] = audioIdx
+    }
+    var spuIdx = 0
+    for (track in spuTracks) {
+      spuIdx++
+      list.put(
+        JSONObject()
+          .put("id", audioIdx + spuIdx)
+          .put("type", "sub")
+          .put("lang", JSONObject.NULL)
+          .put("title", track.name ?: JSONObject.NULL),
+      )
+      spuIds[track.id] = audioIdx + spuIdx
+    }
+    cachedTracks = list
+    audioIndexById = audioIds
+    spuIndexById = spuIds
+    tracksDirty = false
+  }
+
   /** Whether a media is loaded, so `start` knows to close one before opening
    *  another. Ours, rather than `player.media`, which hands back a reference
    *  that then has to be released. */
@@ -188,7 +246,7 @@ class RivuletPlayer(private val activity: MainActivity) {
   private val tick = object : Runnable {
     override fun run() {
       refresh()
-      main.postDelayed(this, 100)
+      main.postDelayed(this, snapshotMs)
     }
   }
 
@@ -201,6 +259,7 @@ class RivuletPlayer(private val activity: MainActivity) {
     failure = null
     running = true
     deadAt = 0L
+    tracksDirty = true
     userPaused = false
     cacheFill = 0
     voutCount = 0
@@ -552,7 +611,11 @@ class RivuletPlayer(private val activity: MainActivity) {
             voutCount = event.voutCount
             note("Vout ${event.voutCount}")
           }
-          if (event.type == MediaPlayer.Event.ESAdded) note("ESAdded")
+          if (event.type == MediaPlayer.Event.ESAdded) {
+            // The only thing that makes the cached track list stale.
+            tracksDirty = true
+            note("ESAdded")
+          }
           // Cover/stretch need the video track size; that only exists after
           // the first vout. `setVideoScale` is a no-op on a raw TextureView.
           updateVideoLayout()
@@ -775,40 +838,21 @@ class RivuletPlayer(private val activity: MainActivity) {
       }
     }
 
-    val audioTracks = p.audioTracks ?: emptyArray()
-    val spuTracks = p.spuTracks ?: emptyArray()
-    val list = JSONArray()
-    var aid: Any = "no"
-    var sid: Any = "no"
-    val currentAudioId = p.audioTrack
-    val currentSpuId = p.spuTrack
-
-    // Numbered sequentially for the page — the 1-based indices it puts in
-    // `track-list` and the way `set_property aid/sid` round-trip.
-    var audioIdx = 0
-    for (track in audioTracks) {
-      audioIdx++
-      list.put(
-        JSONObject()
-          .put("id", audioIdx)
-          .put("type", "audio")
-          .put("lang", JSONObject.NULL)
-          .put("title", track.name ?: JSONObject.NULL),
-      )
-      if (currentAudioId == track.id) aid = audioIdx
-    }
-    var spuIdx = 0
-    for (track in spuTracks) {
-      spuIdx++
-      list.put(
-        JSONObject()
-          .put("id", audioIdx + spuIdx)
-          .put("type", "sub")
-          .put("lang", JSONObject.NULL)
-          .put("title", track.name ?: JSONObject.NULL),
-      )
-      if (currentSpuId == track.id) sid = audioIdx + spuIdx
-    }
+    // The track list is rebuilt only when the tracks themselves changed.
+    //
+    // It used to be rebuilt on every tick: two JNI array fetches, a fresh
+    // JSONObject per track and a new JSONArray, ten times a second, on the
+    // main thread — which is the UI thread, so it came straight out of the
+    // frame budget. A phone measured a 29ms median frame and 545 slow draw
+    // commands with this running. Tracks change when libVLC says they have,
+    // and at no other time.
+    if (tracksDirty)
+      rebuildTracks(p)
+    val list = cachedTracks
+    // Selection is read every tick — these are cheap scalars, and the map
+    // turns them into the page's 1-based indices without touching JNI arrays.
+    val aid: Any = audioIndexById[p.audioTrack] ?: "no"
+    val sid: Any = spuIndexById[p.spuTrack] ?: "no"
 
     val length = p.length
     val duration = if (length <= 0) 0.0 else length / 1000.0

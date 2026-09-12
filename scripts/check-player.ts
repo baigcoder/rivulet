@@ -494,6 +494,14 @@ assert.match(freeWatch, /p\.videoWidth > 0\) \|\| asBool\(p\.moving\)/, 'Free TV
 // libVLC's Vout event is the one signal it always sends; mpv calls it vo-configured.
 assert.match(vlcKt, /if \(event\.type == MediaPlayer\.Event\.Vout\) \{[\s\S]*?voutCount = event\.voutCount/, 'Android counts its video outputs')
 assert.match(vlcKt, /\.put\("vo-configured", voutCount > 0\)/, 'and reports them as vo-configured')
+// The snapshot is rebuilt on the main thread, which is the UI thread, so
+// anything done per tick comes straight out of the frame budget. It rebuilt the
+// whole track list — two JNI array fetches and a JSONObject per track — ten
+// times a second, while the page read it five. A phone measured a 29ms median
+// frame and 545 slow draw commands with that running.
+assert.match(vlcKt, /private val snapshotMs = 200L/, 'the snapshot is rebuilt at the rate the page reads it, not twice that')
+assert.match(vlcKt, /private fun rebuildTracks\(p: MediaPlayer\)/, 'the track list has a build of its own')
+assert.match(vlcKt, /if \(tracksDirty\)/, 'and is rebuilt only when libVLC says the tracks changed')
 assert.match(vlcKt, /cacheFill = 0\s+voutCount = 0/, 'a new start forgets the last channel\'s output')
 assert.match(mpv, /POLLED = \[[^\]]*'vo-configured'/, 'the player polls it')
 assert.match(mpv, /\|\| p\['vo-configured'\] === true/, 'and a video output that is up counts as a picture')
