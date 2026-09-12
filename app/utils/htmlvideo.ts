@@ -464,6 +464,8 @@ export function videoEngine(video: HTMLVideoElement): PlayerEngine {
       w: video.videoWidth || 0,
       h: video.videoHeight || 0,
     }),
+    // mpv's "a video output is up": here, a decoded frame has a size.
+    'vo-configured': () => video.videoWidth > 0,
   }
 
   function setProp(name: string, value: unknown) {

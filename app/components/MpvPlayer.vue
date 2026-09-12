@@ -2295,7 +2295,7 @@ defineExpose({
 // Polling: playback props, plus a liveness check so a dead mpv reports itself
 // instead of leaving a black rectangle behind.
 // ---------------------------------------------------------------------------
-const POLLED = ['pause', 'paused-for-cache', 'duration', 'time-pos', 'demuxer-cache-time', 'cache-buffering-state', 'volume', 'mute', 'speed', 'mouse-pos', 'sub-text', 'video-params']
+const POLLED = ['pause', 'paused-for-cache', 'duration', 'time-pos', 'demuxer-cache-time', 'cache-buffering-state', 'volume', 'mute', 'speed', 'mouse-pos', 'sub-text', 'video-params', 'vo-configured']
 let tick = 0
 let lastMouseX = -1
 let lastMouseY = -1
@@ -2461,12 +2461,16 @@ async function poll() {
   // position, which the rAF loop advances between polls whether or not
   // anything is playing.
   if (typeof p['time-pos'] === 'number') {
-    const now = Date.now()
     if (lastClock >= 0 && p['time-pos'] > lastClock + 0.05)
-      lastClockAt = now
+      lastClockAt = Date.now()
     lastClock = p['time-pos']
-    moving.value = started.value && lastClockAt > 0 && now - lastClockAt < 2000
   }
+  // A video output that is up is a picture too, clock or no clock: libVLC on
+  // Android plays some live HLS channels with no size and a time that never
+  // moves, and the watch pages sat on "Connecting" over the playing channel.
+  // mpv answers the same property, and on desktop a size arrives with it anyway.
+  moving.value = started.value
+    && ((lastClockAt > 0 && Date.now() - lastClockAt < 2000) || p['vo-configured'] === true)
 
   // A start-up log line can land before the first frame; once time is
   // moving the message is stale and must not sit over a playing picture.

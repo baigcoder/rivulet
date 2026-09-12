@@ -70,6 +70,15 @@ class RivuletPlayer(private val activity: MainActivity) {
   @Volatile
   private var cacheFill = 0
 
+  /**
+   * Video outputs libVLC has open, from its `Vout` event. Some live HLS
+   * channels play with no size on `currentVideoTrack` and a `time` that never
+   * moves, so neither of the page's picture signals ever arrives and it sat on
+   * "Connecting" over a playing channel. A vout is the one that always does.
+   */
+  @Volatile
+  private var voutCount = 0
+
   @Volatile
   private var snap = JSONObject()
 
@@ -96,6 +105,7 @@ class RivuletPlayer(private val activity: MainActivity) {
     running = true
     userPaused = false
     cacheFill = 0
+    voutCount = 0
     onMain {
       val p = ensure()
       activity.setVlcVideoMode(true)
@@ -147,6 +157,7 @@ class RivuletPlayer(private val activity: MainActivity) {
   @JavascriptInterface
   fun stop() {
     running = false
+    voutCount = 0
     onMain {
       main.removeCallbacks(tick)
       player?.stop()
@@ -363,6 +374,7 @@ class RivuletPlayer(private val activity: MainActivity) {
         MediaPlayer.Event.Playing, MediaPlayer.Event.Vout, MediaPlayer.Event.ESAdded -> {
           if (event.type == MediaPlayer.Event.Playing)
             cacheFill = 100
+          if (event.type == MediaPlayer.Event.Vout) voutCount = event.voutCount
           // Cover/stretch need the video track size; that only exists after
           // the first vout. `setVideoScale` is a no-op on a raw TextureView.
           updateVideoLayout()
@@ -624,6 +636,8 @@ class RivuletPlayer(private val activity: MainActivity) {
       .put("aid", aid)
       .put("sid", sid)
       .put("sub-text", "")
+      // mpv's name for "a video output is up" — see `voutCount`.
+      .put("vo-configured", voutCount > 0)
     if (track != null && track.width > 0 && track.height > 0) {
       snap.put(
         "video-params",

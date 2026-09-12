@@ -485,5 +485,15 @@ const freeWatch = readFileSync(new URL('../app/pages/live-tv/watch.vue', import.
 assert.match(premiumWatch, /p\.videoWidth > 0\) \|\| asBool\(p\.moving\)/, 'Premium TV counts a moving clock as a picture, so a real start resets the reconnect counter')
 assert.match(freeWatch, /p\.videoWidth > 0\) \|\| asBool\(p\.moving\)/, 'Free TV counts it too')
 
+// …and some live HLS on Android plays with neither a size nor a moving clock, so
+// both pages sat on "Connecting" over a channel that was plainly on screen.
+// libVLC's Vout event is the one signal it always sends; mpv calls it vo-configured.
+assert.match(vlcKt, /MediaPlayer\.Event\.Vout\) voutCount = event\.voutCount/, 'Android counts its video outputs')
+assert.match(vlcKt, /\.put\("vo-configured", voutCount > 0\)/, 'and reports them as vo-configured')
+assert.match(vlcKt, /cacheFill = 0\s+voutCount = 0/, 'a new start forgets the last channel\'s output')
+assert.match(mpv, /POLLED = \[[^\]]*'vo-configured'/, 'the player polls it')
+assert.match(mpv, /\|\| p\['vo-configured'\] === true\)/, 'and a video output that is up counts as a picture')
+assert.match(htmlSrc, /'vo-configured': \(\) => video\.videoWidth > 0/, 'the <video> shim answers it too')
+
 // eslint-disable-next-line no-console
 console.log('player: ok')
