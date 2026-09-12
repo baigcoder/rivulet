@@ -326,6 +326,21 @@ class RivuletPlayer(private val activity: MainActivity) {
     return out.toString()
   }
 
+  /**
+   * A line from the page, into logcat.
+   *
+   * Android has no devtools on a release build and the WebView's console does
+   * not reach logcat, so the page has no way to say what it is thinking. This
+   * is that way. It exists because libVLC was demonstrably playing — Playing at
+   * 0.8s, Vout at 2.3s, every event in the trace above — while the page went on
+   * showing "Connecting", and nothing could see which of its own values was
+   * wrong.
+   */
+  @JavascriptInterface
+  fun log(line: String) {
+    android.util.Log.d("RivuletPlayer", "js $line")
+  }
+
   @JavascriptInterface
   fun status(): String {
     val p = player

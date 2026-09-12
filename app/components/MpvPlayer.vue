@@ -2303,6 +2303,8 @@ defineExpose({
 // ---------------------------------------------------------------------------
 const POLLED = ['pause', 'paused-for-cache', 'duration', 'time-pos', 'demuxer-cache-time', 'cache-buffering-state', 'volume', 'mute', 'speed', 'mouse-pos', 'sub-text', 'video-params', 'vo-configured']
 let tick = 0
+/** When the "still no picture" line was last written. See the poll. */
+let lastStuckLog = 0
 let lastMouseX = -1
 let lastMouseY = -1
 let lastCursorX = -1
@@ -2488,6 +2490,19 @@ async function poll() {
   // mpv answers the same property, and on desktop a size arrives with it anyway.
   moving.value = started.value
     && ((lastClockAt > 0 && Date.now() - lastClockAt < 2000) || p['vo-configured'] === true)
+
+  // While there is still no picture the HUD is saying "Connecting", and on a
+  // phone that is all anyone can see. libVLC's own trace proved it was playing
+  // — Playing at 0.8s, Vout at 2.3s — so what is wrong is one of these values,
+  // and until they were written down there was no way to know which. Once a
+  // second, and only while it is still stuck, so a working channel is silent.
+  if (vlc && !moving.value && Date.now() - lastStuckLog > 1000) {
+    lastStuckLog = Date.now()
+    androidLog(
+      `no picture yet: started=${started.value} vo=${p['vo-configured']} w=${videoWidth.value}`
+      + ` buffering=${buffering.value} pos=${position.value.toFixed(1)} clockAgo=${lastClockAt ? Date.now() - lastClockAt : -1}`,
+    )
+  }
 
   // A start-up log line can land before the first frame; once time is
   // moving the message is stale and must not sit over a playing picture.

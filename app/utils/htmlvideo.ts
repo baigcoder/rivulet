@@ -97,6 +97,24 @@ interface VlcBridge {
   props: (json: string) => string
   status: () => string
   codecs: () => string
+  /** Absent on APKs older than 0.6.38. See `androidLog`. */
+  log?: (line: string) => void
+}
+
+/**
+ * Say something into logcat, from the page.
+ *
+ * Android release builds have no devtools and their console never reaches
+ * logcat, so this is the page's only voice on a phone. A no-op everywhere
+ * else, and on any APK built before the bridge gained the method.
+ */
+export function androidLog(line: string): void {
+  try {
+    vlcBridge()?.log?.(line)
+  }
+  catch {
+    // A diagnostic may never be the thing that breaks playback.
+  }
 }
 
 function vlcBridge(): VlcBridge | null {
