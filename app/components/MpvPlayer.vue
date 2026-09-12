@@ -317,11 +317,10 @@ const started = ref(false)
  */
 const moving = ref(false)
 /**
- * The player backend's own last events, when it keeps any. Only libVLC on
- * Android does — and a channel that never opens is the one case with nothing
- * else to go on, so the watch pages put these on screen.
+ * A live backend has reported "not running" once already. Live is given a
+ * second reading before the player is torn down — see the poll.
  */
-const playerTrace = ref<string[]>([])
+let confirmedStopped = false
 /** Where the clock last stood, and when it last went forward. */
 let lastClock = -1
 let lastClockAt = 0
@@ -2093,6 +2092,7 @@ async function startPlayer() {
     videoWidth.value = 0
     videoHeight.value = 0
     moving.value = false
+    confirmedStopped = false
     lastClock = -1
     lastClockAt = 0
     subDelay.value = 0 // a fresh mpv starts at zero
@@ -2286,7 +2286,6 @@ defineExpose({
   muted,
   started,
   moving,
-  playerTrace,
   buffering,
   ui,
   videoWidth,
@@ -2330,17 +2329,21 @@ async function poll() {
     const st = native
       ? await invoke<{ running: boolean, log_tail: string | null }>('player_status').catch(() => null)
       : engine?.status() ?? null
-    // Android's libVLC event trace, read whether or not the player is still
-    // running: a channel that never opens keeps running and reports nothing
-    // else, and this is the only account of what it was waiting on.
-    if (st && 'trace' in st && Array.isArray(st.trace))
-      playerTrace.value = st.trace.slice(-8)
     if (st && !st.running) {
+      // One reading is not a dead live stream. libVLC raises EndReached on an
+      // HLS discontinuity and reconnects itself, and tearing the player down on
+      // that is what left a playing channel under a "Connecting" HUD which then
+      // skipped down the list. Two readings, four seconds apart, is a real stop.
+      if (isLive.value && !confirmedStopped && moving.value) {
+        confirmedStopped = true
+        return
+      }
       stopPoll()
       started.value = false
       moving.value = false
-      // Exiting after real playback is just end-of-file, not a failure.
-      if (position.value > 0 && (duration.value === 0 || position.value >= duration.value - 2)) {
+      // Exiting after real playback is just end-of-file, not a failure. Live
+      // has no end to reach, so a live stream that stopped is one that broke.
+      if (!isLive.value && position.value > 0 && (duration.value === 0 || position.value >= duration.value - 2)) {
         ended.value = true
         // The one unambiguous "watched" signal — mpv played the file out.
         if (props.media)
@@ -2358,6 +2361,8 @@ async function poll() {
       }
       return
     }
+    // Still running, so any earlier blip was its own reconnect, not the end.
+    confirmedStopped = false
 
     // A picture with no sound is a codec the device lacks, and it looks exactly
     // like a muted TV until something says so. See `silent` in htmlvideo.ts —

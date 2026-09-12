@@ -506,12 +506,87 @@ assert.match(vlcKt, /fun safeUrl\(url: String\): String = url\.substringBefore\(
 assert.match(vlcKt, /note\("start \$\{safeUrl\(url\)\}"\)/, 'so no provider credential is ever traced')
 assert.match(vlcKt, /\.put\("trace", lines\)/, 'status carries it')
 assert.match(vlcKt, /MediaPlayer\.Event\.Opening -> note\("Opening"\)/, 'opening is traced, which is where a stuck channel stops')
-assert.match(mpv, /'trace' in st && Array\.isArray\(st\.trace\)/, 'the player reads it on every poll, running or not')
-assert.match(mpv, /defineExpose\(\{[\s\S]*?\bplayerTrace,/, 'and exposes it to the watch pages')
+// ...but the trace is a logcat aid, not something to paint over the picture.
+// It shipped on screen in 0.6.28 to catch the bug below, and came straight
+// back off once it had.
 const overlaySrc = readFileSync(new URL('../app/components/live-tv/LivePlayerOverlay.vue', import.meta.url), 'utf8')
-assert.equal((overlaySrc.match(/v-for="\(line, i\) in connectTrace"/g) ?? []).length, 2, 'the HUD shows it while connecting and on the error card')
-assert.match(freeWatch, /:connect-trace=/, 'Free TV passes it')
-assert.match(premiumWatch, /:connect-trace=/, 'Premium passes it')
+assert.doesNotMatch(overlaySrc, /connectTrace/, 'the HUD does not draw the event log')
+assert.doesNotMatch(freeWatch, /connect-trace/, 'nor does Free TV hand it one')
+assert.doesNotMatch(premiumWatch, /connect-trace/, 'nor does Premium')
+
+// --- A live stream that hiccups is not a dead one -----------------------------
+// `running` was one-way: set in `start`, cleared by the first EndReached, never
+// set again. libVLC raises that on an HLS discontinuity and reconnects itself,
+// so one hiccup marked a playing channel stopped for the rest of its life — the
+// page stopped polling, the HUD stuck on "Connecting" over a live picture, and
+// the auto-skip walked off down the list. Only Retry, a fresh `start`, cleared
+// it, which is exactly why Retry "worked immediately" every time.
+// Exact lines, no wildcard between them: a `[\s\S]*?running = true` also matches
+// the words inside a comment, so commenting the assignment out slipped past it.
+assert.match(
+  vlcKt,
+  /\n {10}running = true\r?\n {10}deadAt = 0L\r?\n {10}failure = null/,
+  'a picture puts the player back to running — that `running` was one-way is the whole bug',
+)
+assert.match(vlcKt, /markDead\("libVLC could not open this stream\."\)/, 'an error takes the grace path')
+assert.match(vlcKt, /markDead\(null\)/, 'and so does EndReached')
+assert.match(
+  vlcKt,
+  /fun isLiveStream\(\): Boolean = \(player\?\.length \?: 0L\) <= 0L/,
+  'live is "reports no length", which is what keeps a file ending the instant it says so',
+)
+assert.match(
+  vlcKt,
+  /if \(dead != 0L && android\.os\.SystemClock\.elapsedRealtime\(\) - dead > liveRecoverMs\)/,
+  'only the grace window may declare a live stream dead',
+)
+assert.match(
+  vlcKt,
+  /if \(isLiveStream\(\) && voutCount > 0\) \{/,
+  'but only a stream that showed a picture earns the grace — a channel that never opened must still fail fast, or Free TV crawls down the list',
+)
+assert.match(
+  mpv,
+  /if \(isLive\.value && !confirmedStopped && moving\.value\) \{/,
+  'and the page takes a second reading before tearing down a live stream that was playing',
+)
+assert.match(mpv, /if \(!isLive\.value && position\.value > 0 &&/, 'live has no end to reach, so it is never "ended"')
+
+// --- The provider's one slot is usually held by us ----------------------------
+// A pre-flight `probeAccount` refused to start whenever activeConnections was
+// at the limit — which on a one-slot account is true while our own previous
+// channel is still open, or while the panel has yet to release it. So it
+// refused streams that would have played, and spent a round trip per start
+// doing it. The probe belongs after a real 401/403, and nowhere else.
+assert.match(premiumWatch, /No pre-flight connection probe/, 'the reason it is gone is written down')
+assert.equal(
+  (premiumWatch.match(/premium\.probeAccount\(\)/g) ?? []).length,
+  2,
+  'probeAccount runs only on the two refusal paths, never before a start',
+)
+
+// --- Nothing on loopback may hang forever -------------------------------------
+// `fetch` has no timeout of its own, the API shares this process, and a cold
+// start on Android can have the page mounted before the listener is bound. With
+// nothing ever rejecting, `loadStatus` never left 'loading' and the Premium TV
+// page spun for good — the error branch that would have said so was unreachable.
+const premiumApiSrc = readFileSync(new URL('../app/utils/premiumTv.ts', import.meta.url), 'utf8')
+assert.match(premiumApiSrc, /const REQUEST_TIMEOUT_MS = 20_000/, 'every premium API call has a ceiling')
+assert.match(premiumApiSrc, /ctrl\.abort\(timedOut\(\)\)/, 'and one that runs past it is aborted')
+assert.match(premiumApiSrc, /'TimeoutError'/, 'under a name of its own: a caller\'s cancel is swallowed by design, a timeout must not be')
+assert.match(premiumApiSrc, /signal: ctrl\.signal/, 'the fetch obeys our controller, not only the caller\'s')
+const premiumStore = readFileSync(new URL('../app/stores/premiumTv.ts', import.meta.url), 'utf8')
+assert.match(premiumStore, /for \(let attempt = 0; attempt < 2; attempt\+\+\)/, 'and status is asked twice before it is called an error')
+
+// --- The installer cannot overwrite a running mpv -----------------------------
+// mpv is its own process and outlives an app that crashed, so an upgrade failed
+// on "Error opening file for writing: ...mpv.exe" with Abort/Retry/Ignore.
+// Tauri's template closes the app; it knows nothing about the app's children.
+const hooks = readFileSync(new URL('../src-tauri/installer-hooks.nsh', import.meta.url), 'utf8')
+assert.match(hooks, /!macro NSIS_HOOK_PREINSTALL/, 'the installer clears leftovers before it writes')
+assert.match(hooks, /Where-Object Path -like '\*Rivulet\*'/, 'and only ours — a stranger\'s mpv on the PATH is none of our business')
+const tauriConf = readFileSync(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8')
+assert.match(tauriConf, /"installerHooks": "\.\/installer-hooks\.nsh"/, 'and the bundler is actually told to run them')
 
 // eslint-disable-next-line no-console
 console.log('player: ok')

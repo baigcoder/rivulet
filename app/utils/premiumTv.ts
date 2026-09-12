@@ -153,6 +153,20 @@ interface RequestOptions {
   retried?: boolean
 }
 
+/** How long any one API call may take before it is treated as unanswered. */
+const REQUEST_TIMEOUT_MS = 20_000
+
+/**
+ * A timeout, told apart from a caller's own cancel.
+ *
+ * `usePlaybackSource` drops `AbortError` on the floor by design — a zap that
+ * superseded an in-flight request is not a failure worth showing — so a
+ * timeout must not arrive wearing that name or it would be swallowed too.
+ */
+function timedOut(): DOMException {
+  return new DOMException('The Premium TV API did not answer.', 'TimeoutError')
+}
+
 async function request<T>(
   method: 'GET' | 'POST' | 'DELETE',
   path: string,
@@ -163,12 +177,32 @@ async function request<T>(
   if (t)
     headers.Authorization = `Bearer ${t}`
 
-  const resp = await fetch(`${API_BASE}${path}`, {
-    method,
-    headers,
-    body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-    signal: opts.signal,
-  })
+  // Nothing on loopback may hang forever. `fetch` has no timeout of its own,
+  // and the API shares this process — so a request that never settles means it
+  // is not listening yet, which on Android is an ordinary cold start. Without a
+  // ceiling the Premium TV page sat on its spinner for good: the `catch` that
+  // would have shown an error was never reached, because nothing ever rejected.
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(timedOut()), REQUEST_TIMEOUT_MS)
+  const relay = () => ctrl.abort(opts.signal?.reason)
+  if (opts.signal?.aborted)
+    ctrl.abort(opts.signal.reason)
+  else
+    opts.signal?.addEventListener('abort', relay, { once: true })
+
+  let resp: Response
+  try {
+    resp = await fetch(`${API_BASE}${path}`, {
+      method,
+      headers,
+      body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+      signal: ctrl.signal,
+    })
+  }
+  finally {
+    clearTimeout(timer)
+    opts.signal?.removeEventListener('abort', relay)
+  }
 
   if (!resp.ok) {
     // A 401 on a token we had is the expected end of a long session: the

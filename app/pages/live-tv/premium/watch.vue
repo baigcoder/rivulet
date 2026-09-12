@@ -302,15 +302,12 @@ async function load({ fresh } = { fresh: true }): Promise<void> {
   if (fresh) {
     premium.resetPlayer()
     void premium.ensureLoaded()
-    await premium.probeAccount()
-    if (premium.atConnectionLimit === true) {
-      const a = premium.account
-      premium.setPlayer('error', $t('Your provider is at its connection limit ({active} of {max} streams in use). Stop playback on your other devices, then try again.', {
-        active: a?.activeConnections ?? 1,
-        max: a?.maxConnections ?? 1,
-      }))
-      return
-    }
+    // No pre-flight connection probe. On a one-slot account the connection it
+    // counts is almost always our own — the channel being replaced, or one the
+    // panel has not released yet — so this refused to open a channel that would
+    // have played, and spent a round trip before every start to do it. The
+    // limit is still named, from `onPlaybackFailed`, where a real 401/403 has
+    // already established that the provider actually said no.
   }
   premium.setPlayer(fresh ? 'loading' : 'reconnecting')
   playerCatchError.value = ''
@@ -670,7 +667,6 @@ onUnmounted(() => {
       :error="overlayError"
       :connecting="hudConnecting"
       :connect-detail="statusLine"
-      :connect-trace="Array.isArray(playerRef?.playerTrace) ? playerRef.playerTrace : []"
       :resolution-label="typeof playerRef?.resolutionLabel === 'string' ? playerRef.resolutionLabel : ''"
       :source-quality="playback.source.value?.quality ?? null"
       :quality-variants="qualityVariants"

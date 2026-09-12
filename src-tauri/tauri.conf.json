@@ -10,7 +10,8 @@
 			"nsis": {
 				"installMode": "currentUser",
 				"displayLanguageSelector": false,
-				"compression": "zlib"
+				"compression": "zlib",
+				"installerHooks": "./installer-hooks.nsh"
 			}
 		},
 		"icon": [

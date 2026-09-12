@@ -292,17 +292,27 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
   async function loadStatus(): Promise<void> {
     connection.value = 'loading'
     error.value = ''
-    try {
-      const s = await premiumApi.status()
-      account.value = s.account
-      catalog.value = s.catalog
-      connection.value = 'ready'
-    }
-    catch (e) {
-      account.value = null
-      catalog.value = null
-      connection.value = 'error'
-      error.value = message(e)
+    // Two goes. The API shares this process, so a page can be mounted before
+    // its listener is bound — an ordinary Android cold start — and one honest
+    // retry is worth more to the viewer than the first error would have been.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const s = await premiumApi.status()
+        account.value = s.account
+        catalog.value = s.catalog
+        connection.value = 'ready'
+        return
+      }
+      catch (e) {
+        if (attempt === 0) {
+          await new Promise(resolve => setTimeout(resolve, 800))
+          continue
+        }
+        account.value = null
+        catalog.value = null
+        connection.value = 'error'
+        error.value = message(e)
+      }
     }
   }
 

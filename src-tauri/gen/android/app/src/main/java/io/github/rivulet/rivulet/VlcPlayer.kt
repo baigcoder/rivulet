@@ -104,6 +104,26 @@ class RivuletPlayer(private val activity: MainActivity) {
   /** Scheme, host, port and path only — never the query. */
   private fun safeUrl(url: String): String = url.substringBefore('?')
 
+  /** No length is how libVLC says "live"; a file always reports one. */
+  private fun isLiveStream(): Boolean = (player?.length ?: 0L) <= 0L
+
+  /**
+   * libVLC says the stream stopped. For a file that is the truth and the page
+   * should hear it now. For live it is a maybe, so start the grace window and
+   * let `refresh` decide after libVLC has had its own go at reconnecting.
+   */
+  private fun markDead(why: String?) {
+    if (why != null) failure = why
+    // Only a stream that has actually shown a picture gets the benefit of the
+    // doubt. One that never produced a vout has not hiccuped, it has failed,
+    // and Free TV's walk down the list must not wait out a grace window for it.
+    if (isLiveStream() && voutCount > 0) {
+      if (deadAt == 0L) deadAt = android.os.SystemClock.elapsedRealtime()
+    } else {
+      running = false
+    }
+  }
+
   @Volatile
   private var snap = JSONObject()
 
@@ -112,6 +132,23 @@ class RivuletPlayer(private val activity: MainActivity) {
 
   @Volatile
   private var failure: String? = null
+
+  /**
+   * When libVLC last said this stream ended or errored, or 0.
+   *
+   * Live reports both spuriously: an HLS discontinuity raises EndReached,
+   * `:http-reconnect` carries on, and the picture never actually stops.
+   * `running` used to be one-way — set in `start`, cleared on the first
+   * hiccup — so one of those left a channel marked stopped for the rest of
+   * its life while it played on. The page then sat on "Connecting" and
+   * started skipping down the list over a working picture. Live now gets a
+   * grace window; a file, which has a length, still ends the moment it says so.
+   */
+  @Volatile
+  private var deadAt = 0L
+
+  /** How long a live stream may be silent before it has really stopped. */
+  private val liveRecoverMs = 6_000L
 
   private val tick = object : Runnable {
     override fun run() {
@@ -128,6 +165,7 @@ class RivuletPlayer(private val activity: MainActivity) {
   fun start(url: String) {
     failure = null
     running = true
+    deadAt = 0L
     userPaused = false
     cacheFill = 0
     voutCount = 0
@@ -185,6 +223,7 @@ class RivuletPlayer(private val activity: MainActivity) {
   @JavascriptInterface
   fun stop() {
     running = false
+    deadAt = 0L
     voutCount = 0
     note("stop")
     onMain {
@@ -407,12 +446,11 @@ class RivuletPlayer(private val activity: MainActivity) {
     p.setEventListener { event ->
       when (event.type) {
         MediaPlayer.Event.EncounteredError -> {
-          running = false
-          failure = "libVLC could not open this stream."
+          markDead("libVLC could not open this stream.")
           note("EncounteredError")
         }
         MediaPlayer.Event.EndReached -> {
-          running = false
+          markDead(null)
           note("EndReached")
         }
         MediaPlayer.Event.Buffering -> {
@@ -426,6 +464,13 @@ class RivuletPlayer(private val activity: MainActivity) {
         MediaPlayer.Event.Opening -> note("Opening")
         MediaPlayer.Event.Stopped -> note("Stopped")
         MediaPlayer.Event.Playing, MediaPlayer.Event.Vout, MediaPlayer.Event.ESAdded -> {
+          // Any of the three is proof the stream is alive. This is what makes
+          // `running` recoverable: without it a single spurious EndReached
+          // stopped the page's polling for good, and only a fresh `start`
+          // (the Retry button) ever set it back.
+          running = true
+          deadAt = 0L
+          failure = null
           if (event.type == MediaPlayer.Event.Playing) {
             cacheFill = 100
             note("Playing")
@@ -638,6 +683,17 @@ class RivuletPlayer(private val activity: MainActivity) {
    */
   private fun refresh() {
     val p = player ?: return
+
+    // A live stream that said it stopped and then stayed quiet really has
+    // stopped. One that came back on its own already cleared this above.
+    val dead = deadAt
+    if (dead != 0L && android.os.SystemClock.elapsedRealtime() - dead > liveRecoverMs) {
+      deadAt = 0L
+      if (!p.isPlaying) {
+        running = false
+        note("no picture after the grace window - giving up")
+      }
+    }
 
     val audioTracks = p.audioTracks ?: emptyArray()
     val spuTracks = p.spuTracks ?: emptyArray()
