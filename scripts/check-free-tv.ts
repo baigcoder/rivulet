@@ -359,9 +359,15 @@ const overlaySrc = readFileSync(new URL('../app/components/live-tv/LivePlayerOve
 // said the same thing twice.
 assert.match(overlaySrc, /connectDetail \|\| \$t\('Opening the stream…'\)/, 'connecting says which step is running')
 assert.match(overlaySrc, /v-if="connecting && !error"[\s\S]{0,2500}nextEntry/, 'and offers the next channel')
-assert.doesNotMatch(
-  overlaySrc,
-  /class="[^"]*\bborder-2\b(?![^"]*\bborder-solid\b)[^"]*"/,
+// Class membership, not a substring: `border-2` is one word in the attribute
+// and `border-24` is a different class. A single regex for that needs a `\b`
+// after `[^"]*`, which can never require anything — so split the words instead.
+const bareBorder2 = [...overlaySrc.matchAll(/class="([^"]*)"/g)]
+  .map(m => (m[1] ?? '').split(/\s+/))
+  .filter(words => words.includes('border-2') && !words.includes('border-solid'))
+assert.deepEqual(
+  bareBorder2,
+  [],
   'every bordered marker says border-solid: this app sets no default border style, so a bare border-2 draws nothing',
 )
 assert.doesNotMatch(watchPage, /Connecting to live stream…/, 'Free TV draws no centre connecting layer')

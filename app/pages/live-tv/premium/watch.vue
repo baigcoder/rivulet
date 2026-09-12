@@ -670,6 +670,7 @@ onUnmounted(() => {
       :error="overlayError"
       :connecting="hudConnecting"
       :connect-detail="statusLine"
+      :connect-trace="Array.isArray(playerRef?.playerTrace) ? playerRef.playerTrace : []"
       :resolution-label="typeof playerRef?.resolutionLabel === 'string' ? playerRef.resolutionLabel : ''"
       :source-quality="playback.source.value?.quality ?? null"
       :quality-variants="qualityVariants"
@@ -693,8 +694,10 @@ onUnmounted(() => {
     <!-- Guide. Renders nothing at all when the provider has no listing for
          this channel — an empty container with headings in it is worse
          than no panel. -->
+    <!-- Not while the HUD's connecting panel is up: the two sit in the same
+         corner, and on a phone their text drew straight through each other. -->
     <div
-      v-if="!fatal && !isVod && (guide.length > 0 || guideLoading)"
+      v-if="!fatal && !isVod && !hudConnecting && (guide.length > 0 || guideLoading)"
       class="pointer-events-none absolute bottom-24 left-4 z-30 w-80 max-w-[85vw] rounded-2xl bg-black/70 p-4 text-white ring-1 ring-white/10 transition-opacity duration-300"
       :class="overlayRef?.visible ? 'opacity-100' : 'opacity-0'"
     >

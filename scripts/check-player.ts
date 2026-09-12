@@ -488,12 +488,30 @@ assert.match(freeWatch, /p\.videoWidth > 0\) \|\| asBool\(p\.moving\)/, 'Free TV
 // …and some live HLS on Android plays with neither a size nor a moving clock, so
 // both pages sat on "Connecting" over a channel that was plainly on screen.
 // libVLC's Vout event is the one signal it always sends; mpv calls it vo-configured.
-assert.match(vlcKt, /MediaPlayer\.Event\.Vout\) voutCount = event\.voutCount/, 'Android counts its video outputs')
+assert.match(vlcKt, /if \(event\.type == MediaPlayer\.Event\.Vout\) \{[\s\S]*?voutCount = event\.voutCount/, 'Android counts its video outputs')
 assert.match(vlcKt, /\.put\("vo-configured", voutCount > 0\)/, 'and reports them as vo-configured')
 assert.match(vlcKt, /cacheFill = 0\s+voutCount = 0/, 'a new start forgets the last channel\'s output')
 assert.match(mpv, /POLLED = \[[^\]]*'vo-configured'/, 'the player polls it')
 assert.match(mpv, /\|\| p\['vo-configured'\] === true\)/, 'and a video output that is up counts as a picture')
 assert.match(htmlSrc, /'vo-configured': \(\) => video\.videoWidth > 0/, 'the <video> shim answers it too')
+
+// --- Why a channel never opened -----------------------------------------------
+// A stream that never arrives fires no libVLC event at all: `EncounteredError`
+// is a decoder failure, so "Connecting…" sat there with nothing anywhere to
+// explain it. The event trace is that account, and it has to reach the screen —
+// a phone has no logcat.
+assert.match(vlcKt, /private val trace = java\.util\.concurrent\.ConcurrentLinkedDeque/, 'Android keeps its last libVLC events')
+assert.match(vlcKt, /while \(trace\.size > 24\) trace\.pollFirst\(\)/, 'and the trace is capped')
+assert.match(vlcKt, /fun safeUrl\(url: String\): String = url\.substringBefore\('\?'\)/, 'the URL is recorded without its query')
+assert.match(vlcKt, /note\("start \$\{safeUrl\(url\)\}"\)/, 'so no provider credential is ever traced')
+assert.match(vlcKt, /\.put\("trace", lines\)/, 'status carries it')
+assert.match(vlcKt, /MediaPlayer\.Event\.Opening -> note\("Opening"\)/, 'opening is traced, which is where a stuck channel stops')
+assert.match(mpv, /'trace' in st && Array\.isArray\(st\.trace\)/, 'the player reads it on every poll, running or not')
+assert.match(mpv, /defineExpose\(\{[\s\S]*?\bplayerTrace,/, 'and exposes it to the watch pages')
+const overlaySrc = readFileSync(new URL('../app/components/live-tv/LivePlayerOverlay.vue', import.meta.url), 'utf8')
+assert.equal((overlaySrc.match(/v-for="\(line, i\) in connectTrace"/g) ?? []).length, 2, 'the HUD shows it while connecting and on the error card')
+assert.match(freeWatch, /:connect-trace=/, 'Free TV passes it')
+assert.match(premiumWatch, /:connect-trace=/, 'Premium passes it')
 
 // eslint-disable-next-line no-console
 console.log('player: ok')

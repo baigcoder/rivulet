@@ -316,6 +316,12 @@ const started = ref(false)
  * one sign every backend gives whether or not it knows the size.
  */
 const moving = ref(false)
+/**
+ * The player backend's own last events, when it keeps any. Only libVLC on
+ * Android does — and a channel that never opens is the one case with nothing
+ * else to go on, so the watch pages put these on screen.
+ */
+const playerTrace = ref<string[]>([])
 /** Where the clock last stood, and when it last went forward. */
 let lastClock = -1
 let lastClockAt = 0
@@ -2280,6 +2286,7 @@ defineExpose({
   muted,
   started,
   moving,
+  playerTrace,
   buffering,
   ui,
   videoWidth,
@@ -2323,6 +2330,11 @@ async function poll() {
     const st = native
       ? await invoke<{ running: boolean, log_tail: string | null }>('player_status').catch(() => null)
       : engine?.status() ?? null
+    // Android's libVLC event trace, read whether or not the player is still
+    // running: a channel that never opens keeps running and reports nothing
+    // else, and this is the only account of what it was waiting on.
+    if (st && 'trace' in st && Array.isArray(st.trace))
+      playerTrace.value = st.trace.slice(-8)
     if (st && !st.running) {
       stopPoll()
       started.value = false

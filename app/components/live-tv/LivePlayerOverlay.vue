@@ -84,6 +84,12 @@ const props = withDefaults(
     nowStop?: number | null
     /** Which step of connecting is running, in the page's words ("Reconnecting… attempt 2 of 4"). */
     connectDetail?: string
+    /**
+     * Android only: the player's own last events with their timings. Shown
+     * under the steps because a channel that never opens reports nothing
+     * else, and the phone is where it has to be readable — see `VlcPlayer.kt`.
+     */
+    connectTrace?: string[]
     channelLogo?: string
     channelIndex?: number
     channelTotal?: number
@@ -123,6 +129,7 @@ const props = withDefaults(
     nowStart: null,
     nowStop: null,
     connectDetail: '',
+    connectTrace: () => [],
     channelLogo: '',
     channelIndex: 0,
     channelTotal: 0,
@@ -672,6 +679,11 @@ defineExpose({ show, hide, visible })
             <p class="text-body-small leading-relaxed text-white/70">
               {{ friendlyErrorText }}
             </p>
+            <ul v-if="connectTrace.length" class="grid list-none gap-0.5 p-0 text-start font-mono text-[11px] leading-4 text-white/40">
+              <li v-for="(line, i) in connectTrace" :key="i" class="truncate">
+                {{ line }}
+              </li>
+            </ul>
           </div>
 
           <div class="flex flex-wrap items-center justify-center gap-2 pt-1">
@@ -807,6 +819,12 @@ defineExpose({ show, hide, visible })
             {{ $t('Filling the buffer') }}
           </li>
         </ol>
+        <!-- What the player itself last did. Only Android fills this in. -->
+        <ul v-if="connectTrace.length" class="mt-3 grid list-none gap-0.5 p-0 font-mono text-[11px] leading-4 text-white/45">
+          <li v-for="(line, i) in connectTrace" :key="i" class="truncate">
+            {{ line }}
+          </li>
+        </ul>
         <div class="mt-3 flex flex-wrap items-center gap-2">
           <button
             type="button"

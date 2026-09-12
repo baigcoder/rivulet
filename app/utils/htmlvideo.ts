@@ -75,7 +75,20 @@ export interface PlayerEngine {
   stop: () => void
   command: (cmd: unknown[]) => unknown
   props: (names: string[]) => Record<string, unknown>
-  status: () => { running: boolean, log_tail: string | null }
+  /**
+   * `trace` and the counters beside it are Android's: the last libVLC events
+   * with their timings, which is the only account of why a channel never
+   * started (see `VlcPlayer.kt`). Absent on every other backend.
+   */
+  status: () => {
+    running: boolean
+    log_tail: string | null
+    trace?: string[]
+    state?: number
+    vout?: number
+    buffering?: number
+    time?: number
+  }
 }
 
 /** The bridge `MainActivity` installs on Android. See `VlcPlayer.kt`. */

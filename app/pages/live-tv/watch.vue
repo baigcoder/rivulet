@@ -632,6 +632,7 @@ onUnmounted(() => {
       :error="overlayError"
       :connecting="waiting"
       :connect-detail="connectDetail"
+      :connect-trace="Array.isArray(playerRef?.playerTrace) ? playerRef.playerTrace : []"
       :aspect-ratio="aspectRatio"
       @back="goBack"
       @prev="zap(-1)"

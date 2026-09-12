@@ -79,6 +79,31 @@ class RivuletPlayer(private val activity: MainActivity) {
   @Volatile
   private var voutCount = 0
 
+  /**
+   * The last events libVLC sent, newest last, with the milliseconds since
+   * `start()`. A channel that never opens produces no error at all —
+   * `EncounteredError` is a decoder failure, and a stream that simply never
+   * arrives fires nothing — so "Connecting…" sat on screen with nothing
+   * anywhere to say why. This is that missing answer, and the player shows it.
+   *
+   * The URL is recorded without its query: a Free TV proxy URL carries the
+   * upstream in `?url=`, and an Xtream one carries the account's password.
+   */
+  private val trace = java.util.concurrent.ConcurrentLinkedDeque<String>()
+
+  @Volatile
+  private var startedAt = 0L
+
+  private fun note(what: String) {
+    val at = if (startedAt == 0L) 0 else android.os.SystemClock.elapsedRealtime() - startedAt
+    trace.addLast("${at}ms $what")
+    while (trace.size > 24) trace.pollFirst()
+    android.util.Log.d("RivuletPlayer", "trace ${at}ms $what")
+  }
+
+  /** Scheme, host, port and path only — never the query. */
+  private fun safeUrl(url: String): String = url.substringBefore('?')
+
   @Volatile
   private var snap = JSONObject()
 
@@ -106,6 +131,9 @@ class RivuletPlayer(private val activity: MainActivity) {
     userPaused = false
     cacheFill = 0
     voutCount = 0
+    trace.clear()
+    startedAt = android.os.SystemClock.elapsedRealtime()
+    note("start ${safeUrl(url)}")
     onMain {
       val p = ensure()
       activity.setVlcVideoMode(true)
@@ -158,6 +186,7 @@ class RivuletPlayer(private val activity: MainActivity) {
   fun stop() {
     running = false
     voutCount = 0
+    note("stop")
     onMain {
       main.removeCallbacks(tick)
       player?.stop()
@@ -201,8 +230,22 @@ class RivuletPlayer(private val activity: MainActivity) {
   }
 
   @JavascriptInterface
-  fun status(): String =
-    JSONObject().put("running", running).put("log_tail", failure ?: JSONObject.NULL).toString()
+  fun status(): String {
+    val lines = JSONArray()
+    for (line in trace) lines.put(line)
+    val p = player
+    return JSONObject()
+      .put("running", running)
+      .put("log_tail", failure ?: JSONObject.NULL)
+      // What the player is actually doing, for the diagnostic the page shows
+      // when a channel will not start. See `trace`.
+      .put("trace", lines)
+      .put("state", p?.playerState ?: -1)
+      .put("vout", voutCount)
+      .put("buffering", cacheFill)
+      .put("time", if (p == null || p.time < 0) 0L else p.time)
+      .toString()
+  }
 
   /**
    * Every mime type this device can decode, straight from the platform.
@@ -365,22 +408,39 @@ class RivuletPlayer(private val activity: MainActivity) {
       when (event.type) {
         MediaPlayer.Event.EncounteredError -> {
           running = false
-          failure = "libVLC could not play this file."
-          android.util.Log.e("RivuletPlayer", "EncounteredError — decoder failed or codec unsupported")
+          failure = "libVLC could not open this stream."
+          note("EncounteredError")
         }
-        MediaPlayer.Event.EndReached -> running = false
-        MediaPlayer.Event.Buffering -> cacheFill = event.buffering.toInt().coerceIn(0, 100)
-        MediaPlayer.Event.Paused -> android.util.Log.d("RivuletPlayer", "Paused")
+        MediaPlayer.Event.EndReached -> {
+          running = false
+          note("EndReached")
+        }
+        MediaPlayer.Event.Buffering -> {
+          val pct = event.buffering.toInt().coerceIn(0, 100)
+          // Every buffering tick would be two dozen lines of noise; the ends
+          // of the range are what say whether data is arriving at all.
+          if (pct == 0 || pct >= 100 || cacheFill / 25 != pct / 25) note("Buffering $pct%")
+          cacheFill = pct
+        }
+        MediaPlayer.Event.Paused -> note("Paused")
+        MediaPlayer.Event.Opening -> note("Opening")
+        MediaPlayer.Event.Stopped -> note("Stopped")
         MediaPlayer.Event.Playing, MediaPlayer.Event.Vout, MediaPlayer.Event.ESAdded -> {
-          if (event.type == MediaPlayer.Event.Playing)
+          if (event.type == MediaPlayer.Event.Playing) {
             cacheFill = 100
-          if (event.type == MediaPlayer.Event.Vout) voutCount = event.voutCount
+            note("Playing")
+          }
+          if (event.type == MediaPlayer.Event.Vout) {
+            voutCount = event.voutCount
+            note("Vout ${event.voutCount}")
+          }
+          if (event.type == MediaPlayer.Event.ESAdded) note("ESAdded")
           // Cover/stretch need the video track size; that only exists after
           // the first vout. `setVideoScale` is a no-op on a raw TextureView.
           updateVideoLayout()
         }
         MediaPlayer.Event.TimeChanged -> Unit
-        else -> android.util.Log.d("RivuletPlayer", "Event: ${event.type}")
+        else -> note("Event ${event.type}")
       }
     }
 
