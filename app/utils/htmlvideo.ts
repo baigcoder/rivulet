@@ -76,14 +76,12 @@ export interface PlayerEngine {
   command: (cmd: unknown[]) => unknown
   props: (names: string[]) => Record<string, unknown>
   /**
-   * `trace` and the counters beside it are Android's: the last libVLC events
-   * with their timings, which is the only account of why a channel never
-   * started (see `VlcPlayer.kt`). Absent on every other backend.
+   * The counters after `log_tail` are Android's, straight off libVLC (see
+   * `VlcPlayer.kt`). Absent on every other backend.
    */
   status: () => {
     running: boolean
     log_tail: string | null
-    trace?: string[]
     state?: number
     vout?: number
     buffering?: number

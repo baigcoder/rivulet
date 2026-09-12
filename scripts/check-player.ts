@@ -504,7 +504,11 @@ assert.match(vlcKt, /private val trace = java\.util\.concurrent\.ConcurrentLinke
 assert.match(vlcKt, /while \(trace\.size > 24\) trace\.pollFirst\(\)/, 'and the trace is capped')
 assert.match(vlcKt, /fun safeUrl\(url: String\): String = url\.substringBefore\('\?'\)/, 'the URL is recorded without its query')
 assert.match(vlcKt, /note\("start \$\{safeUrl\(url\)\}"\)/, 'so no provider credential is ever traced')
-assert.match(vlcKt, /\.put\("trace", lines\)/, 'status carries it')
+assert.match(vlcKt, /android\.util\.Log\.d\("RivuletPlayer"/, 'and every line goes to logcat, which is where a trace belongs')
+assert.doesNotMatch(vlcKt, /\.put\("trace"/, 'status does not carry it: nothing reads it, and it was two dozen strings every poll')
+// Anything still open holds the provider's slot, and on a one-connection
+// account that is the next channel refused.
+assert.match(vlcKt, /if \(hasMedia\) p\.stop\(\)/, 'a new stream closes the old one before it opens')
 assert.match(vlcKt, /MediaPlayer\.Event\.Opening -> note\("Opening"\)/, 'opening is traced, which is where a stuck channel stops')
 // ...but the trace is a logcat aid, not something to paint over the picture.
 // It shipped on screen in 0.6.28 to catch the bug below, and came straight

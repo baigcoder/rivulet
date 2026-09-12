@@ -150,6 +150,12 @@ class RivuletPlayer(private val activity: MainActivity) {
   /** How long a live stream may be silent before it has really stopped. */
   private val liveRecoverMs = 6_000L
 
+  /** Whether a media is loaded, so `start` knows to close one before opening
+   *  another. Ours, rather than `player.media`, which hands back a reference
+   *  that then has to be released. */
+  @Volatile
+  private var hasMedia = false
+
   private val tick = object : Runnable {
     override fun run() {
       refresh()
@@ -174,6 +180,12 @@ class RivuletPlayer(private val activity: MainActivity) {
     note("start ${safeUrl(url)}")
     onMain {
       val p = ensure()
+      // Anything still open is still holding the provider's slot, and on a
+      // one-connection account that is the difference between the next channel
+      // playing and being refused. The page's zap already stops before it
+      // starts; this covers every other way in — a quality switch, a retry, a
+      // second start that never saw a stop.
+      if (hasMedia) p.stop()
       activity.setVlcVideoMode(true)
       textureView?.visibility = View.VISIBLE
       // `Media(lib, url)`'s constructor doesn't always take the URL through
@@ -210,6 +222,7 @@ class RivuletPlayer(private val activity: MainActivity) {
       media.addOption(":http-reconnect")
       media.addOption(":no-mediacodec-dr")
       p.media = media
+      hasMedia = true
       media.release()
       // Keep the page's mute/volume state when switching channels. This also
       // avoids leaving a reused MediaPlayer at volume zero after unmuting.
@@ -224,6 +237,7 @@ class RivuletPlayer(private val activity: MainActivity) {
   fun stop() {
     running = false
     deadAt = 0L
+    hasMedia = false
     voutCount = 0
     note("stop")
     onMain {
@@ -270,15 +284,15 @@ class RivuletPlayer(private val activity: MainActivity) {
 
   @JavascriptInterface
   fun status(): String {
-    val lines = JSONArray()
-    for (line in trace) lines.put(line)
     val p = player
+    // The event trace is not in here. It went to the page for one release, to
+    // find out why a channel would not open; it found out, the on-screen log
+    // came back off, and serialising two dozen strings every couple of seconds
+    // for nobody to read is not worth the allocation. `note` still writes each
+    // one to logcat, which is where a trace belongs.
     return JSONObject()
       .put("running", running)
       .put("log_tail", failure ?: JSONObject.NULL)
-      // What the player is actually doing, for the diagnostic the page shows
-      // when a channel will not start. See `trace`.
-      .put("trace", lines)
       .put("state", p?.playerState ?: -1)
       .put("vout", voutCount)
       .put("buffering", cacheFill)
