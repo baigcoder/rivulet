@@ -447,7 +447,9 @@ function syncPlayerState(): void {
 
   if (premium.player === 'reconnecting' || premium.player === 'error')
     return
-  if (!asBool(p.started))
+  // A picture outranks the flag. Sitting in `loading` while frames arrive is
+  // what printed "Connecting to live stream…" over a channel that was playing.
+  if (!asBool(p.started) && !picture)
     return
   if (asBool(p.buffering) || !picture)
     premium.setPlayer('buffering')

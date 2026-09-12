@@ -130,7 +130,7 @@ function formatExpiry(ms: number): string {
       >
         <div class="flex items-center gap-3">
           <v-icon :icon="mdiShieldCheckOutline" size="24" color="success" />
-          <span class="text-title-medium font-bold text-success">{{ $t('Premium active') }}</span>
+          <span class="text-title-medium font-bold text-success">{{ $t('Subscription active') }}</span>
         </div>
         <p v-if="settings.subscriptionExpiresAt" class="text-body-small opacity-70">
           {{ $t('Expires {date}', { date: formatExpiry(settings.subscriptionExpiresAt) }) }}

@@ -2220,6 +2220,13 @@ function handleProviderSlate(text: string, dur = duration.value): boolean {
 }
 
 function streamDied(reason?: 'stub' | 'dead' | 'refused') {
+  // A clock that moved a moment ago is a stream that is playing, whatever else
+  // concluded otherwise. Two starts were torn down within a second of libVLC
+  // reporting Playing, each before its first frame had a chance to arrive, and
+  // the page then reconnected over a stream that was working. Nothing upstream
+  // of this is trusted to have got that right.
+  if (lastClockAt > 0 && Date.now() - lastClockAt < 3000)
+    return false
   // Premium movies and episodes are finite files — the watch page's live
   // reconnect loop would remint tokens mid-playback and fight a stream that
   // is still advancing. Failures stay in the player; the page only hears
@@ -2488,8 +2495,14 @@ async function poll() {
   // Android plays some live HLS channels with no size and a time that never
   // moves, and the watch pages sat on "Connecting" over the playing channel.
   // mpv answers the same property, and on desktop a size arrives with it anyway.
-  moving.value = started.value
-    && ((lastClockAt > 0 && Date.now() - lastClockAt < 2000) || p['vo-configured'] === true)
+  // Not gated on `started`. A picture is the ground truth for "something is
+  // playing", and making it depend on the page's own idea of having started is
+  // what let a channel run for half a minute under a HUD that still said
+  // Connecting — libVLC reported Playing at 0.8s and a video output at 2.3s
+  // throughout. Both signals below are cleared by `start` and `stop`, so a
+  // stale one cannot survive into the next stream.
+  moving.value = (lastClockAt > 0 && Date.now() - lastClockAt < 2000)
+    || p['vo-configured'] === true
 
   // While there is still no picture the HUD is saying "Connecting", and on a
   // phone that is all anyone can see. libVLC's own trace proved it was playing

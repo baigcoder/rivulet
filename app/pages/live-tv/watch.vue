@@ -90,7 +90,10 @@ function syncPlayerState() {
   // A size, or a clock that is moving — see `moving` in MpvPlayer. libVLC often
   // reports no size at all for a live channel on Android.
   hasPicture.value = (typeof p.videoWidth === 'number' && p.videoWidth > 0) || asBool(p.moving)
-  playerPlaying.value = asBool(p.started) && !asBool(p.paused) && hasPicture.value
+  // The picture decides. Requiring `started` as well meant a channel could play
+  // while the page still called it not-playing, which is what kept the
+  // connecting panel up and stopped the controls ever auto-hiding.
+  playerPlaying.value = hasPicture.value && !asBool(p.paused)
   playerBehindLive.value = asBool(p.behindLive)
   playerVolume.value = typeof p.volume === 'number' ? p.volume : 100
   playerMuted.value = asBool(p.muted)

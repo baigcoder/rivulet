@@ -496,7 +496,12 @@ assert.match(vlcKt, /if \(event\.type == MediaPlayer\.Event\.Vout\) \{[\s\S]*?vo
 assert.match(vlcKt, /\.put\("vo-configured", voutCount > 0\)/, 'and reports them as vo-configured')
 assert.match(vlcKt, /cacheFill = 0\s+voutCount = 0/, 'a new start forgets the last channel\'s output')
 assert.match(mpv, /POLLED = \[[^\]]*'vo-configured'/, 'the player polls it')
-assert.match(mpv, /\|\| p\['vo-configured'\] === true\)/, 'and a video output that is up counts as a picture')
+assert.match(mpv, /\|\| p\['vo-configured'\] === true/, 'and a video output that is up counts as a picture')
+// ...on its own account. Gating this on `started` meant the page could decide
+// a channel was not playing while libVLC was reporting Playing and a video
+// output, which is what left a working stream under a "Connecting" HUD and
+// stopped the controls ever auto-hiding. The picture is the ground truth.
+assert.doesNotMatch(mpv, /moving\.value = started\.value/, 'and it is not gated on the page believing it started')
 assert.match(htmlSrc, /'vo-configured': \(\) => video\.videoWidth > 0/, 'the <video> shim answers it too')
 
 // --- Why a channel never opened -----------------------------------------------
