@@ -454,7 +454,11 @@ const vlcKt = readFileSync(new URL('../src-tauri/gen/android/app/src/main/java/i
 assert.doesNotMatch(vlcKt, /skiploopfilter=4/, 'skipping every HEVC loop filter is why Android 4K looked blocky')
 assert.doesNotMatch(vlcKt, /skipidct=4/, 'skipping IDCT is the same soft-UHD path')
 assert.match(vlcKt, /avcodec-skiploopfilter=0/, 'libVLC must keep the HEVC loop filter on 4K')
-assert.match(vlcKt, /live-caching=3000/, '4K IDR frames need more than 300ms or the decoder drops them')
+// Halved once the proxy started capping this device's ladder at 1080: three
+// seconds of buffer is three seconds before the first frame, which on live TV
+// is the difference between a channel that starts and one that "keeps loading".
+assert.match(vlcKt, /live-caching=1500/, 'live starts on a buffer sized for what this device is actually sent')
+assert.match(vlcKt, /network-caching=1500/, 'and the network buffer matches it')
 
 // --- Android full screen: after playback starts, never during it ---------------
 // The watch page keys the player on `src`, so one start mounts it twice. Entering

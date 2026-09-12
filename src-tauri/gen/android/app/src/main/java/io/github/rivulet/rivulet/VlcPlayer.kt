@@ -204,13 +204,19 @@ class RivuletPlayer(private val activity: MainActivity) {
       // Options have to be added before the media is handed to the player and
       // before it is released. Adding one afterwards calls into a freed native
       // object and is the release-build crash seen when opening a stream.
-      // 4K HEVC IDR frames need more than 300ms or the decoder skips
-      // them and the picture stays 1080p-soft. Hardware decode keeps
-      // this from stalling start; skipping the loop filter / IDCT is
-      // what made UHD look like a transcode.
-      media.addOption(":network-caching=3000")
+      // Three seconds of buffer is three seconds before the first frame, and on
+      // live TV that is the whole complaint: a channel that takes an age to
+      // start. The number was picked for 4K HEVC, whose IDR frames need the
+      // room — but the proxy now caps this device's HLS ladder at 1080
+      // (SOFT_DECODE_MAX_HEIGHT in iptv/proxy.rs), so the case it was bought for
+      // largely cannot arrive any more. Halved, which halves the wait.
+      //
+      // This is the one number to put back if channels stutter on a weak
+      // connection. It trades startup latency against rebuffering, and nothing
+      // else here does.
+      media.addOption(":network-caching=1500")
       media.addOption(":file-caching=1200")
-      media.addOption(":live-caching=3000")
+      media.addOption(":live-caching=1500")
       // Keep every HEVC loop-filter / IDCT coefficient. The previous
       // skip=4 path is why Android 4K looked like a 720p transcode.
       media.addOption(":avcodec-skiploopfilter=0")
