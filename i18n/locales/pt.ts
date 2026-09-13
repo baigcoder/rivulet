@@ -153,6 +153,7 @@ export default {
   "Copyright in what you play is unaffected by the tool you play it with. Whether you have the right to download a given title is yours to answer, under the law where you are. Reports about a source belong with whoever operates it — the project has no control over, and no relationship with, any of them.": "Os direitos autorais do que você reproduz não mudam conforme a ferramenta usada. Se você tem o direito de baixar determinado título é você quem responde, conforme a lei do lugar onde está. Reclamações sobre uma fonte cabem a quem a opera — o projeto não tem controle sobre nenhuma delas nem relação com elas.",
   "Could not activate Premium TV. Restart the app and try again.": "TODO_TRANSLATION: Could not activate Premium TV. Restart the app and try again.",
   "Could not find the server. Check the URL.": "TODO_TRANSLATION: Could not find the server. Check the URL.",
+  "Could not reach GitHub to read the release manifest. Check the connection and try again — or use Open the release to download the installer yourself.": "TODO_TRANSLATION: Could not reach GitHub to read the release manifest. Check the connection and try again — or use Open the release to download the installer yourself.",
   "Could not reach the torrent engine on 127.0.0.1:3030.": "Não foi possível alcançar o motor de torrents em 127.0.0.1:3030.",
   "Couldn't load reviews.": "TODO_TRANSLATION: Couldn't load reviews.",
   "Couldn't load the provider list from TMDB.": "Não foi possível carregar a lista de provedores do TMDB.",

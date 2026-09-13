@@ -110,6 +110,36 @@ export const useUpdatesStore = defineStore('updates', () => {
   }
 
   /**
+   * The updater plugin's own `check()`, retried before it is believed.
+   *
+   * This one fetches `latest.json` from Rust over the plugin's HTTP client, and
+   * a single refused connection is the difference between an update and a dead
+   * end. The message reqwest hands back has its cause chain stripped — `error
+   * sending request for url (…)` is all that reaches the page — so a DNS blip,
+   * an expired certificate and a genuinely unreachable GitHub are one string,
+   * and none of them say to try again. Two more attempts cost a second and make
+   * the transient one invisible.
+   *
+   * A `null` result is not a failure and is returned as it stands: it means the
+   * manifest carried nothing for this platform, which retrying cannot change.
+   */
+  const UPDATER_ATTEMPTS = 3
+  async function checkForBundle() {
+    let last: unknown
+    for (let attempt = 0; attempt < UPDATER_ATTEMPTS; attempt++) {
+      if (attempt)
+        await new Promise(resolve => setTimeout(resolve, 500 * attempt))
+      try {
+        return await useTauriUpdaterCheck()
+      }
+      catch (e) {
+        last = e
+      }
+    }
+    throw new Error(transportMessage(last))
+  }
+
+  /**
    * Download the new bundle and hand it to the platform's installer.
    *
    * On desktop this is the updater plugin's own `check()`, not the release we
@@ -178,7 +208,7 @@ export const useUpdatesStore = defineStore('updates', () => {
     progress.value = 0
     error.value = ''
     try {
-      const update = await useTauriUpdaterCheck()
+      const update = await checkForBundle()
       if (!update)
         throw new Error($t('The release carries no update for this platform.'))
 

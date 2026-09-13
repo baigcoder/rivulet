@@ -153,6 +153,7 @@ export default {
   "Copyright in what you play is unaffected by the tool you play it with. Whether you have the right to download a given title is yours to answer, under the law where you are. Reports about a source belong with whoever operates it — the project has no control over, and no relationship with, any of them.": "మీరు ప్లే చేసేదానిపై ఉన్న కాపీరైట్, దాన్ని ప్లే చేసే సాధనం వల్ల మారదు. ఒక టైటిల్‌ను డౌన్‌లోడ్ చేసే హక్కు మీకు ఉందా అనేదానికి, మీరున్న చోటి చట్టం ప్రకారం మీరే సమాధానం చెప్పాలి. ఒక మూలం గురించిన ఫిర్యాదులు దాన్ని నడిపేవారికే చెందుతాయి — ఈ ప్రాజెక్టుకు వాటిలో దేనిపైనా నియంత్రణా లేదు, సంబంధమూ లేదు.",
   "Could not activate Premium TV. Restart the app and try again.": "TODO_TRANSLATION: Could not activate Premium TV. Restart the app and try again.",
   "Could not find the server. Check the URL.": "TODO_TRANSLATION: Could not find the server. Check the URL.",
+  "Could not reach GitHub to read the release manifest. Check the connection and try again — or use Open the release to download the installer yourself.": "TODO_TRANSLATION: Could not reach GitHub to read the release manifest. Check the connection and try again — or use Open the release to download the installer yourself.",
   "Could not reach the torrent engine on 127.0.0.1:3030.": "127.0.0.1:3030 వద్ద టొరెంట్ ఇంజిన్‌ను చేరుకోలేకపోయాం.",
   "Couldn't load reviews.": "TODO_TRANSLATION: Couldn't load reviews.",
   "Couldn't load the provider list from TMDB.": "TODO_TRANSLATION: Couldn't load the provider list from TMDB.",

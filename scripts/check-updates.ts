@@ -7,7 +7,8 @@
 // quietly parsed to an empty version would turn the badge off with nothing
 // anywhere to notice.
 import assert from 'node:assert'
-import { compareVersions, isNewer, parseUpdate, RELEASES_URL } from '../app/utils/updates'
+import { compareVersions, isNewer, parseUpdate, RELEASES_URL, transportMessage } from '../app/utils/updates'
+import './i18n-stub'
 
 // --- Ordering ----------------------------------------------------------------
 
@@ -81,5 +82,28 @@ assert.equal(parseUpdate({ ...release, prerelease: true }), null)
 // Anything without a version is not a release, however well-formed the rest is.
 for (const bad of [null, undefined, {}, { tag_name: '' }, { tag_name: 'v' }, 'not json'])
   assert.equal(parseUpdate(bad), null, `rejected: ${JSON.stringify(bad)}`)
+
+// --- What a failed install says ----------------------------------------------
+// The updater plugin fetches latest.json from Rust, and reqwest's error arrives
+// with its cause chain stripped. Left alone it reads as a broken release rather
+// than as a network that was briefly gone, and it tells nobody to try again.
+
+const OPAQUE = 'error sending request for url (https://github.com/baigcoder/rivulet/releases/latest/download/latest.json)'
+assert.ok(
+  !transportMessage(new Error(OPAQUE)).includes('error sending request'),
+  'the stripped transport error must not be shown to the user as-is',
+)
+assert.match(transportMessage(new Error(OPAQUE)), /Open the release/, 'say where else to get the installer')
+
+// Every other shape of the same nothing.
+for (const raw of ['error trying to connect: dns error', 'operation timed out', 'connection refused'])
+  assert.notEqual(transportMessage(new Error(raw)), raw, `${raw} is machine noise too`)
+
+// An error that *does* carry a reason keeps it: the manifest genuinely not
+// covering this platform is the case the fallback button exists for, and
+// flattening it into "check the connection" sends people looking the wrong way.
+const REAL = 'The release carries no update for this platform.'
+assert.equal(transportMessage(new Error(REAL)), REAL)
+assert.equal(transportMessage('a bare string'), 'a bare string')
 
 console.log('check-updates: ok')

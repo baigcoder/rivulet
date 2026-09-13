@@ -153,6 +153,7 @@ export default {
   "Copyright in what you play is unaffected by the tool you play it with. Whether you have the right to download a given title is yours to answer, under the law where you are. Reports about a source belong with whoever operates it — the project has no control over, and no relationship with, any of them.": "Ne vez ket cheñchet gwirioù aozer ar pezh a lennit gant ar benveg a implijit d'e lenn. Ma vez gwir deoc'h pellgargañ un titl bennak a zo deoc'h-c'hwi da respont, hervez lezenn al lec'h m'emaoc'h. An disklêriadurioù diwar-benn ur vammenn a sell ouzh an hini a ren anezhi — n'en deus ar raktres na mestroni na darempred gant hini anezho.",
   "Could not activate Premium TV. Restart the app and try again.": "TODO_TRANSLATION: Could not activate Premium TV. Restart the app and try again.",
   "Could not find the server. Check the URL.": "TODO_TRANSLATION: Could not find the server. Check the URL.",
+  "Could not reach GitHub to read the release manifest. Check the connection and try again — or use Open the release to download the installer yourself.": "TODO_TRANSLATION: Could not reach GitHub to read the release manifest. Check the connection and try again — or use Open the release to download the installer yourself.",
   "Could not reach the torrent engine on 127.0.0.1:3030.": "N'eo ket bet gallet tizhout ar c'heflusker torrent war 127.0.0.1:3030.",
   "Couldn't load reviews.": "TODO_TRANSLATION: Couldn't load reviews.",
   "Couldn't load the provider list from TMDB.": "TODO_TRANSLATION: Couldn't load the provider list from TMDB.",

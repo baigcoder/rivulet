@@ -153,6 +153,7 @@ export default {
   "Copyright in what you play is unaffected by the tool you play it with. Whether you have the right to download a given title is yours to answer, under the law where you are. Reports about a source belong with whoever operates it — the project has no control over, and no relationship with, any of them.": "നിങ്ങൾ പ്ലേ ചെയ്യുന്നതിന്റെ പകർപ്പവകാശം ഏത് ഉപകരണം കൊണ്ട് പ്ലേ ചെയ്യുന്നു എന്നതിനാൽ മാറുന്നില്ല. ഒരു ശീർഷകം ഡൗൺലോഡ് ചെയ്യാൻ നിങ്ങൾക്ക് അവകാശമുണ്ടോ എന്നത് നിങ്ങൾ തന്നെ ഉത്തരം പറയേണ്ടതാണ്, നിങ്ങളുള്ള സ്ഥലത്തെ നിയമപ്രകാരം. ഒരു ഉറവിടത്തെക്കുറിച്ചുള്ള പരാതികൾ അത് നടത്തുന്നവർക്കുള്ളതാണ് — ഈ പ്രോജക്റ്റിന് അവയിലൊന്നിന്മേലും നിയന്ത്രണമില്ല, ബന്ധവുമില്ല.",
   "Could not activate Premium TV. Restart the app and try again.": "TODO_TRANSLATION: Could not activate Premium TV. Restart the app and try again.",
   "Could not find the server. Check the URL.": "TODO_TRANSLATION: Could not find the server. Check the URL.",
+  "Could not reach GitHub to read the release manifest. Check the connection and try again — or use Open the release to download the installer yourself.": "TODO_TRANSLATION: Could not reach GitHub to read the release manifest. Check the connection and try again — or use Open the release to download the installer yourself.",
   "Could not reach the torrent engine on 127.0.0.1:3030.": "127.0.0.1:3030-ലെ ടോറന്റ് എൻജിനിലേക്ക് എത്താനായില്ല.",
   "Couldn't load reviews.": "TODO_TRANSLATION: Couldn't load reviews.",
   "Couldn't load the provider list from TMDB.": "TODO_TRANSLATION: Couldn't load the provider list from TMDB.",

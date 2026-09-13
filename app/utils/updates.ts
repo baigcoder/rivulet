@@ -175,3 +175,23 @@ export async function latestUpdate(): Promise<Update | null> {
     return null
   }
 }
+
+/**
+ * What to show when the updater plugin's own fetch of `latest.json` fails.
+ *
+ * That request is made from Rust, and the error reqwest hands back reaches the
+ * page with its cause chain gone — `error sending request for url (…)` is the
+ * whole of it, whether the name did not resolve, the certificate had expired or
+ * the machine was simply offline. None of those read as "try again", and all of
+ * them look to a user like the release itself is broken. So the opaque ones get
+ * a sentence that says what is actually known and where else to go; anything
+ * carrying a real reason is passed through untouched rather than flattened into
+ * the same line.
+ */
+export function transportMessage(e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e)
+  const opaque = /error sending request|error trying to connect|dns error|timed out|connection (?:closed|refused|reset)/i.test(raw)
+  return opaque
+    ? $t('Could not reach GitHub to read the release manifest. Check the connection and try again — or use Open the release to download the installer yourself.')
+    : raw
+}
