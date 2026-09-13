@@ -126,7 +126,12 @@ function clientRoutes(): Route[] {
   // `request`'s own `fetch(`${API_BASE}${path}`)` is the indirection the loop
   // above already read: it normalizes to nothing, so the `/api/` test drops
   // it rather than inventing a route.
-  for (const m of CLIENT.matchAll(/`\$\{API_BASE\}([^`]*)`/g)) {
+  // `LOGO_BASE` as well as `API_BASE`. v0.6.34 moved channel logos onto their
+  // own server — the browser allows about six connections per origin and the
+  // images were spending all of them, so the API on the same origin starved —
+  // and `proxyLogo` has built its URL on that base ever since. This scan did
+  // not follow, so the one route it names looked like a route nothing calls.
+  for (const m of CLIENT.matchAll(/`\$\{(?:API_BASE|LOGO_BASE)\}([^`]*)`/g)) {
     const path = normalize(m[1]!)
     if (!path.startsWith('/api/'))
       continue
@@ -392,6 +397,15 @@ if (live) {
   await check('every route refuses an unauthenticated caller with 401', async () => {
     for (const r of server) {
       if (r.path.startsWith('/premium-stream/'))
+        continue
+      // Health is open on purpose and is the second of the two. It exists to
+      // answer *before* there is a token to attach — `mintToken` needs the
+      // server to be listening, and a liveness probe that demands the thing it
+      // is probing for cannot report anything. It is bound to loopback, takes
+      // no parameters and answers a constant string, so there is nothing in it
+      // to protect. Requiring 401 here would mean deleting the one route that
+      // tells the page the API came up.
+      if (r.path === '/api/premium-tv/health')
         continue
       const path = r.path.replace(':id', 'nonexistent')
       const resp = r.method === 'GET' ? await get(path) : await post(path, BODIES[path] ?? {})
