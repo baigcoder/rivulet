@@ -465,6 +465,16 @@ assert.match(startupRs, /address already in use/, 'so does the unix one')
 assert.match(libRs, /startup::startup_faults,/, 'the command is registered')
 assert.match(libRs, /startup::record_bind_failure\(\s*"The Free TV stream proxy"/, 'Free TV reports its port')
 assert.match(libRs, /startup::record_bind_failure\(\s*"Premium TV's local server"/, 'and so does Premium')
+// A port is not the only way a service never starts. Premium TV opens a
+// database first and only spawns its server if that worked, so a database that
+// will not open takes the settings page, the catalogue and playback with it —
+// and did so in silence, which is indistinguishable from a slow one.
+assert.match(startupRs, /pub fn record_fault\(line: String\)/, 'a failure that is not about a port is recordable too')
+assert.match(
+  libRs,
+  /startup::record_fault\(format!\(\s*"Premium TV could not open its database/,
+  'and the premium database is the one that takes the whole feature with it',
+)
 
 const appVue = readFileSync(new URL('../app/app.vue', import.meta.url), 'utf8')
 assert.match(appVue, /v-if="startupProblems\.length"/, 'and the app says so on screen')

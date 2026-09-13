@@ -1398,7 +1398,19 @@ pub fn run() {
                     // rather than half-available: a server whose every
                     // handler answers 500 is harder to diagnose than a
                     // port that is not listening.
-                    eprintln!("[premium] open db failed: {e}");
+                    //
+                    // Said out loud, because this branch takes the whole
+                    // feature with it and used to do so in silence: the
+                    // API never bound, every Premium request failed to
+                    // connect, and the settings page, the catalogue and
+                    // playback all span with nothing on screen to say why.
+                    // The path is in the message and a credential is not:
+                    // this is a file that would not open.
+                    crate::startup::record_fault(format!(
+                        "Premium TV could not open its database, so its local \
+                         server never started: {e}. Premium TV stays \
+                         unavailable until this is fixed."
+                    ));
                 }
             }
 
