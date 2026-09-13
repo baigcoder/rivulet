@@ -523,9 +523,17 @@ assert.match(exoKt, /fun log\(line: String\)/, 'it can speak into logcat too')
 assert.doesNotMatch(exoKt, /vw = 1280/, 'and invents no resolution to report to the viewer')
 assert.match(
   mpv,
-  /engine \?\?= \(isLive\.value && isHlsSource\(props\.src\) \? exoEngine\(\) : null\) \?\? vlcEngine\(\)/,
+  /const wantExo = isLive\.value && isHlsSource\(props\.src\) && !exoRefused\s+engine \?\?= \(wantExo \? exoEngine\(\) : null\) \?\? vlcEngine\(\)/,
   'only an HLS live source picks Media3; everything else keeps libVLC, and a build without Media3 still falls back',
 )
+// A wrong engine must cost one attempt, not the feature. Media3's "Input does
+// not start with the #EXTM3U header" is fatal to Media3 and says nothing about
+// libVLC, which reads transport streams fine — so the refusal retires the
+// engine and the reconnect the page was already making picks the other one.
+// Without it, v0.6.44's misroute made every retry repeat the same parse.
+assert.match(mpv, /let exoRefused = false/, 'a refusal by Media3 is remembered')
+assert.match(mpv, /if \(engineIsExo && tail\) \{[\s\S]{0,200}exoRefused = true/, 'and retires it on a source error')
+assert.match(mpv, /\(wantExo \? exoEngine\(\) : null\)/, 'so the next selection skips it')
 // The safety net, for a source that reaches Media3 anyway: it must decide from
 // the stream rather than assume, or the misroute is fatal instead of merely wrong.
 assert.doesNotMatch(

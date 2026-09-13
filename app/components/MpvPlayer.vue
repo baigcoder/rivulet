@@ -298,6 +298,24 @@ const playBtn = ref<HTMLButtonElement | null>(null)
 const videoEl = ref<HTMLVideoElement | null>(null)
 const aspectRatio = ref<'contain' | 'cover' | 'fill'>(props.aspect ?? 'contain')
 let engine: PlayerEngine | null = null
+/**
+ * Is the engine above Media3, and has Media3 already refused this source?
+ *
+ * The engine is picked once and then trusted, which is fine until the choice
+ * is wrong: v0.6.44 sent MPEG-TS live channels to Media3's HLS parser, which
+ * rejected every one with "Input does not start with the #EXTM3U header" —
+ * and the page answered by reconnecting, with backoff, into exactly the same
+ * parser. Bounded, so it stopped; useless, because nothing about the retry
+ * differed from the attempt before it.
+ *
+ * A source error from Media3 is fatal to Media3 and says nothing about
+ * libVLC, which reads transport streams perfectly well. So the refusal
+ * retires the engine instead of the stream, and the reconnect the page was
+ * already going to make picks the other one. A routing mistake then costs a
+ * few seconds rather than the whole feature until the next release.
+ */
+let engineIsExo = false
+let exoRefused = false
 /** The no-sound notice is said once per file, not every poll. See `poll`. */
 let silentSaid = false
 
@@ -2098,7 +2116,9 @@ async function startPlayer() {
       // Both answer the same protocol, so nothing below this line knows which
       // one replied. Falls back to libVLC where Media3 is absent — an older
       // APK, or a build without it.
-      engine ??= (isLive.value && isHlsSource(props.src) ? exoEngine() : null) ?? vlcEngine() ?? videoEngine(videoEl.value!)
+      const wantExo = isLive.value && isHlsSource(props.src) && !exoRefused
+      engine ??= (wantExo ? exoEngine() : null) ?? vlcEngine() ?? videoEngine(videoEl.value!)
+      engineIsExo = wantExo && !!exoEngine() && engine === exoEngine()
       await engine.start(props.src)
     }
 
@@ -2404,6 +2424,18 @@ async function poll() {
       }
       else {
         const tail = st.log_tail?.trim() || ''
+        // Media3 said this source is not something it can read. That is a fact
+        // about Media3, not about the stream — libVLC reads transport streams
+        // perfectly well — so retire the engine and let the reconnect the page
+        // is about to make pick the other one. Without this a routing mistake
+        // is permanent: every retry repeats the parse that already failed.
+        if (engineIsExo && tail) {
+          exoRefused = true
+          engineIsExo = false
+          engine?.stop()
+          engine = null
+          androidLog(`engine: Media3 refused this source (${tail}); libVLC takes the next attempt`)
+        }
         if (!isLive.value) {
           errorMsg.value = friendlyPlaybackError(tail || (native ? $t('mpv exited unexpectedly.') : $t('Playback stopped unexpectedly.')))
         }
