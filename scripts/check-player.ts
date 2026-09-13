@@ -500,6 +500,11 @@ assert.match(vlcKt, /\.put\("vo-configured", voutCount > 0\)/, 'and reports them
 // times a second, while the page read it five. A phone measured a 29ms median
 // frame and 545 slow draw commands with that running.
 assert.match(vlcKt, /private val snapshotMs = 200L/, 'the snapshot is rebuilt at the rate the page reads it, not twice that')
+// Live reports no length, so the starved-for-data test was true for any paused
+// live stream and the page said "Buffering…" over one that had simply stopped —
+// read as a hang, and answered with Retry. A pause is a pause.
+assert.match(vlcKt, /val reallyPaused = p\.playerState == 4/, 'a genuine pause is recognised')
+assert.match(vlcKt, /&& !reallyPaused && \(length <= 0 \|\| pos < duration\)/, 'and is not reported as starved for data')
 assert.match(vlcKt, /private fun rebuildTracks\(p: MediaPlayer\)/, 'the track list has a build of its own')
 assert.match(vlcKt, /if \(tracksDirty\)/, 'and is rebuilt only when libVLC says the tracks changed')
 assert.match(vlcKt, /cacheFill = 0\s+voutCount = 0/, 'a new start forgets the last channel\'s output')

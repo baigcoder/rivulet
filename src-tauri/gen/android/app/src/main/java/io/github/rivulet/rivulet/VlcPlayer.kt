@@ -592,7 +592,10 @@ class RivuletPlayer(private val activity: MainActivity) {
           if (pct == 0 || pct >= 100 || cacheFill / 25 != pct / 25) note("Buffering $pct%")
           cacheFill = pct
         }
-        MediaPlayer.Event.Paused -> note("Paused")
+        // `userPaused` says whether the page asked for this. Something pauses
+        // playback a couple of seconds after the first frame and it is not yet
+        // known what; this is how the next capture will say.
+        MediaPlayer.Event.Paused -> note("Paused userPaused=$userPaused")
         MediaPlayer.Event.Opening -> note("Opening")
         MediaPlayer.Event.Stopped -> note("Stopped")
         MediaPlayer.Event.Playing, MediaPlayer.Event.Vout, MediaPlayer.Event.ESAdded -> {
@@ -860,7 +863,19 @@ class RivuletPlayer(private val activity: MainActivity) {
     val rate = p.rate.toDouble()
     // Opening a Direct URL reports pause and length=0. `pos < duration` is
     // then false, so the page thought we were idle and hid Loading.
-    val stalling = !p.isPlaying && !userPaused && (length <= 0 || pos < duration)
+    // A stream libVLC has actually paused is paused, not starved.
+    //
+    // Live reports no length, so `length <= 0` is always true here and the only
+    // thing keeping this honest was `userPaused` — which is set when the *page*
+    // asks for a pause and at no other time. Anything else that paused playback
+    // (and something does, two seconds after the first frame) left this saying
+    // "starved for data" for as long as it lasted, which the page renders as
+    // "Buffering…" over a stream that had simply stopped. The viewer reads that
+    // as a hang and reaches for Retry, which is the whole report.
+    //
+    // 4 is libVLC's Paused; the states are the same integers Media.State uses.
+    val reallyPaused = p.playerState == 4
+    val stalling = !p.isPlaying && !userPaused && !reallyPaused && (length <= 0 || pos < duration)
     val track = p.currentVideoTrack
     snap = JSONObject()
       .put("pause", !p.isPlaying)
