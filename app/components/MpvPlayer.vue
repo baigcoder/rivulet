@@ -2008,6 +2008,15 @@ watch(paused, () => saveProgress())
 // Lifecycle
 // ---------------------------------------------------------------------------
 async function startPlayer() {
+  // Where a start goes, when it does not arrive.
+  //
+  // A Premium film reaches this component — the transport draws, the centre
+  // says "Opening the stream…", which is `started` still false — and libVLC
+  // never logs a start, so `engine.start` is not being reached. Every early
+  // return below is now named, because from outside they are all the same
+  // spinner. Live is unaffected by the extra line: it only writes one per
+  // call, not per tick.
+  androidLog(`start: src=${props.src ? 'yes' : 'none'} mode=${props.mode ?? 'vod'} busy=${busy.value}`)
   if (busy.value)
     return
   busy.value = true
@@ -2015,10 +2024,13 @@ async function startPlayer() {
   slateHandled = false
   ended.value = false
   try {
-    if (!props.src)
+    if (!props.src) {
+      androidLog('start: gave up — no src')
       return
+    }
 
     if (!await waitForBox()) {
+      androidLog('start: gave up — the player box never got a size')
       errorMsg.value = $t('The player area never got a size, so playback was not started.')
       return
     }

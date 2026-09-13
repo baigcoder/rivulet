@@ -315,7 +315,17 @@ async function load({ fresh } = { fresh: true }): Promise<void> {
   premium.setPlayer(fresh ? 'loading' : 'reconnecting')
   playerCatchError.value = ''
 
+  // The VOD path, out loud.
+  //
+  // Films and shows reach the player and sit on "Opening the stream", and the
+  // device traces show why it could not be diagnosed from outside: no request
+  // for one ever reaches the network. Not a /movie/ or /series/ GET on the
+  // proxy, not a redirector token — so the failure is this await, and nothing
+  // downstream of it. Whether it throws, returns nothing, or never settles is
+  // the one thing left to know, and a release WebView cannot be asked.
+  androidLog(`premium load kind=${kind} id=${id} ext=${playExt.value} fresh=${fresh}`)
   await playback.load(id, { kind, ext: playExt.value })
+  androidLog(`premium load done kind=${kind} err=${playback.error.value || 'none'} src=${playback.source.value ? 'yes' : 'no'}`)
   // A zap that landed while this was in flight owns the page now.
   if (id !== (isVod.value ? playId.value : channelId.value))
     return
@@ -436,9 +446,9 @@ function syncPlayerState(): void {
   // below is not what the player thinks it is, and none of them can be seen
   // from outside. A release WebView has no devtools and no console; this is
   // the only way to read them.
-  if (!playerPlaying.value && Date.now() - lastStateLog > 1000) {
+  if (premium.player !== 'playing' && Date.now() - lastStateLog > 1000) {
     lastStateLog = Date.now()
-    androidLog(`premium hud=${premium.player} started=${asBool(p.started)} paused=${asBool(p.paused)} moving=${asBool(p.moving)} buffering=${asBool(p.buffering)} w=${typeof p.videoWidth === 'number' ? p.videoWidth : 'n/a'} picture=${picture} pos=${playerPosition.value}`)
+    androidLog(`premium hud=${premium.player} playing=${playerPlaying.value} started=${asBool(p.started)} paused=${asBool(p.paused)} moving=${asBool(p.moving)} buffering=${asBool(p.buffering)} w=${typeof p.videoWidth === 'number' ? p.videoWidth : 'n/a'} picture=${picture} pos=${playerPosition.value}`)
   }
 
   playerBehindLive.value = asBool(p.behindLive)
@@ -468,7 +478,22 @@ function syncPlayerState(): void {
     playback.prefetch([zapList.value[i - 1]?.id, zapList.value[i + 1]?.id])
   }
 
-  if (premium.player === 'reconnecting' || premium.player === 'error')
+  // A picture outranks every state the page is holding — including its own
+  // reconnect and its own error.
+  //
+  // This guard existed so a torn-down player could not overwrite those two
+  // with `loading` on the next tick, which is real: mpv reports nothing
+  // useful between a stop and the next start. But it was unconditional, so
+  // once the page entered `reconnecting` — one transient drop is enough, and
+  // libVLC raises EndReached on an ordinary HLS discontinuity — the HUD was
+  // never updated from the player again. The channel came back, played, drew
+  // a picture, and went on sitting under "Connecting to live stream…" with
+  // the chrome up. Retry appeared to fix it because `load` calls
+  // `resetPlayer`, which clears the state this was refusing to leave.
+  //
+  // So it now guards only the case it was written for: no picture. Frames on
+  // screen are not something the page gets to disbelieve.
+  if (!playerPlaying.value && (premium.player === 'reconnecting' || premium.player === 'error'))
     return
   // A picture outranks the flag. Sitting in `loading` while frames arrive is
   // what printed "Connecting to live stream…" over a channel that was playing.
