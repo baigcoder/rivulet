@@ -233,6 +233,23 @@ const trailer = ref(false)
 const trailerFrame = ref<HTMLIFrameElement | null>(null)
 
 /**
+ * Where the dialog has got to in the key list, which is not where the hero is.
+ *
+ * TMDB hands back every trailer, teaser and clip a title has (`trailersOf`),
+ * and the hero already walks them: a video the uploader withheld from one
+ * country is one video, not the title. The dialog was walking nothing — it took
+ * key zero, and a geo-block there ended it with YouTube's own "not available in
+ * your country" sitting in the frame.
+ *
+ * Its own index rather than the hero's, because the two disagree about what a
+ * failure is. The hero is background art and gives a key five seconds before
+ * moving on; the dialog was opened on purpose and a slow line is not a refusal,
+ * so being skipped for the hero must not cost a key its turn here.
+ */
+const dialogPick = ref(0)
+const dialogKey = computed(() => trailerKeys.value[dialogPick.value] ?? '')
+
+/**
  * The trailer embed never got as far as playing.
  *
  * On Linux the embed is all there is, and WebKitGTK decodes it through the
@@ -250,7 +267,7 @@ let trailerWait = 0
 
 function onTrailerMessage(e: MessageEvent) {
   if (youtubeError(e.data)) {
-    trailerBroken.value = true
+    trailerFailed()
     return
   }
   if (!youtubePlaying(e.data))
@@ -261,6 +278,47 @@ function onTrailerMessage(e: MessageEvent) {
 
 function onTrailerReady() {
   trailerFrame.value?.contentWindow?.postMessage(JSON.stringify({ event: 'listening' }), '*')
+}
+
+/**
+ * Why nothing played, in the words of the thing that actually went wrong.
+ *
+ * The codec answer is Linux's and only Linux's — it was being shown on Windows
+ * and macOS too, telling people to install GStreamer packages their machine has
+ * no use for while the real cause, a video the uploader withheld from their
+ * country, went unmentioned. By the time the other branch shows, every key the
+ * title has has been refused, so the honest thing to say is that the trailers
+ * are blocked here rather than that the app cannot decode them.
+ */
+const trailerBrokenText = computed(() => youtubeCodecsMissing()
+  ? $t('This trailer would not play in the app. On Linux the embedded player decodes with the system GStreamer — installing its codec plugins (gst-plugins-good and gst-libav) fixes it. Open on YouTube works either way.')
+  : $t('YouTube would not play any of the trailers for this title here — the uploader has restricted them, or blocked them in your country. Open on YouTube works either way.'))
+
+/**
+ * Nine seconds for the key now showing — armed per key, not per dialog.
+ * Inheriting what the last candidate had left over would call the next one
+ * broken for being second.
+ */
+function armTrailerWait() {
+  clearTimeout(trailerWait)
+  trailerWait = window.setTimeout(trailerFailed, 9000)
+}
+
+/**
+ * This key never played. Try the next one the title has, and only say so when
+ * there is no next one — which is the difference between "this trailer is
+ * blocked here" and "no trailer will play", and they are not the same message.
+ */
+function trailerFailed() {
+  if (!trailer.value)
+    return
+  if (dialogPick.value + 1 < trailerKeys.value.length) {
+    dialogPick.value += 1
+    armTrailerWait()
+    return
+  }
+  clearTimeout(trailerWait)
+  trailerBroken.value = true
 }
 
 // Only ever armed while the dialog is open, and generous: a slow line is not a
@@ -275,11 +333,15 @@ watch(trailer, open => {
   trailerBroken.value = false
   if (!open || import.meta.server)
     return
+  // From the top: the hero may have retired keys on a five-second budget this
+  // one does not share, and a title with one blocked trailer and three good
+  // ones must not open on the blocked one twice.
+  dialogPick.value = 0
   if (youtubeCodecsMissing()) {
     trailerBroken.value = true
     return
   }
-  trailerWait = window.setTimeout(() => (trailerBroken.value = true), 9000)
+  armTrailerWait()
 })
 
 function onHeroMessage(e: MessageEvent) {
@@ -323,7 +385,7 @@ onUnmounted(() => {
 })
 
 const trailerSrc = computed(() => {
-  const key = trailerKey.value
+  const key = dialogKey.value
   if (!key)
     return ''
   return youtubeEmbedSrc(key)
@@ -404,7 +466,7 @@ const credits = computed(() => {
 const torrentPickerRef = ref<{ open: () => void } | null>(null)
 
 async function openTrailer() {
-  const url = `https://www.youtube.com/watch?v=${trailerKey.value || media.value?.trailer}`
+  const url = `https://www.youtube.com/watch?v=${dialogKey.value || trailerKeys.value[0] || media.value?.trailer}`
   try {
     await useTauriShellOpen(url)
   }
@@ -714,7 +776,7 @@ watch(() => props.id, () => {
                 :size="mobile ? 'default' : 'large'"
               />
               <v-btn
-                v-if="trailerKey"
+                v-if="trailerKeys.length"
                 :prepend-icon="mdiYoutube"
                 :size="mobile ? 'default' : 'large'"
                 variant="tonal"
@@ -814,13 +876,13 @@ watch(() => props.id, () => {
             allowfullscreen
             @load="onTrailerReady"
           />
-          <!-- The embed decodes through the host's GStreamer on Linux, so a
-               machine without the plugins gets YouTube's own "can't play this
-               video" and no idea what to do about it. Say which, and point at
-               the button that always works. -->
+          <!-- Only after every key the title has has been tried: a blocked
+               trailer is one video, and TMDB usually knows several. What is
+               left to say depends on which of the two things went wrong —
+               see `trailerBrokenText`. -->
           <div v-if="trailerBroken" class="flex items-start gap-3 px-4 pt-4 text-body-small opacity-80">
             <v-icon :icon="mdiAlertCircleOutline" size="small" class="mt-0.5 shrink-0" />
-            <span>{{ $t('This trailer would not play in the app. On Linux the embedded player decodes with the system GStreamer — installing its codec plugins (gst-plugins-good and gst-libav) fixes it. Open on YouTube works either way.') }}</span>
+            <span>{{ trailerBrokenText }}</span>
           </div>
           <v-card-actions>
             <v-btn :prepend-icon="mdiOpenInNew" size="small" :variant="trailerBroken ? 'tonal' : 'text'" @click="openTrailer">

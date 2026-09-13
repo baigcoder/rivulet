@@ -797,6 +797,7 @@ export default {
   "Xtream & M3U": "Xtream & M3U",
   "Xtream Codes": "Xtream Codes",
   "Year": "Year",
+  "YouTube would not play any of the trailers for this title here — the uploader has restricted them, or blocked them in your country. Open on YouTube works either way.": "YouTube would not play any of the trailers for this title here — the uploader has restricted them, or blocked them in your country. Open on YouTube works either way.",
   "Your IPTV provider — live, movies and shows.": "Your IPTV provider — live, movies and shows.",
   "Your colour": "Your colour",
   "Your download is ready to watch": "Your download is ready to watch",

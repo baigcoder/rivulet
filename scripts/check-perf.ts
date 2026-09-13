@@ -456,6 +456,34 @@ assert.match(detail, /useIntersectionObserver/, 'hero pause is driven by the her
 assert.match(detail, /nextTrailer/, 'a geo-blocked YouTube key must fall through to the next TMDB trailer')
 assert.match(detail, /youtubeError/, 'YouTube onError must skip the blocked embed, not paint the country card')
 
+// The dialog walks the same list the hero does. It used to take key zero and
+// stop there, so one trailer the uploader had withheld from the viewer's
+// country was the whole feature gone: YouTube's own "Video unavailable" card
+// sitting in the frame, under a note about Linux codec packages.
+assert.match(detail, /dialogPick/, 'the trailer dialog needs its own place in the key list')
+assert.match(
+  detail,
+  /function trailerFailed\(\)[\s\S]*?dialogPick\.value \+= 1/,
+  'a refused key must advance the dialog to the next trailer, not end it',
+)
+assert.doesNotMatch(
+  detail,
+  /const trailerSrc = computed\(\(\) => \{\s*const key = trailerKey\.value/,
+  'the dialog must play its own key, not whichever one the hero survived on',
+)
+// The hero gives a key five seconds because it is background art; the dialog
+// was opened deliberately. So it starts from the top rather than inheriting a
+// list the hero pruned on a budget this one does not share.
+assert.match(detail, /dialogPick\.value = 0/, 'opening the dialog restarts the walk')
+// Two causes, two sentences. The GStreamer advice is Linux's and was being
+// shown on every platform, in place of the geo-block that was the real reason.
+assert.match(detail, /trailerBrokenText/, 'the failure note must name the cause it actually found')
+assert.match(
+  detail,
+  /youtubeCodecsMissing\(\)[\s\S]{0,40}\?\s*\$t\('This trailer would not play/,
+  'the codec advice belongs to the codec case alone',
+)
+
 const youtube = read('app/utils/youtube.ts')
 assert.match(youtube, /vq:\s*['"]hd720['"]/, 'browser embeds request 720p')
 assert.match(read('src-tauri/src/iptv/proxy.rs'), /vq=hd720/, 'the Tauri YouTube relay requests 720p')

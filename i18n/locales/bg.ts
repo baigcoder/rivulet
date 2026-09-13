@@ -797,6 +797,7 @@ export default {
   "Xtream & M3U": "TODO_TRANSLATION: Xtream & M3U",
   "Xtream Codes": "TODO_TRANSLATION: Xtream Codes",
   "Year": "Година",
+  "YouTube would not play any of the trailers for this title here — the uploader has restricted them, or blocked them in your country. Open on YouTube works either way.": "TODO_TRANSLATION: YouTube would not play any of the trailers for this title here — the uploader has restricted them, or blocked them in your country. Open on YouTube works either way.",
   "Your IPTV provider — live, movies and shows.": "TODO_TRANSLATION: Your IPTV provider — live, movies and shows.",
   "Your colour": "Вашият цвят",
   "Your download is ready to watch": "TODO_TRANSLATION: Your download is ready to watch",
