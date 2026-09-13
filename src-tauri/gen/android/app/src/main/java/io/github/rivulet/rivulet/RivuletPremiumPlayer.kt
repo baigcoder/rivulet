@@ -325,7 +325,14 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
         val vw = format?.width ?: 0
         val vh = format?.height ?: 0
         snap = JSONObject()
-            .put("pause", !p.isPlaying)
+            // Paused means the viewer paused it. Media3's `isPlaying` is false
+            // through every rebuffer as well — and a live stream rebuffers
+            // constantly — so reporting that as `pause` dropped the page out of
+            // "playing" several times a minute: the chrome stopped auto-hiding
+            // and the connecting overlay came back over a channel that was on
+            // screen. `playWhenReady` is the intent, which is what mpv's
+            // `pause` means; starvation is `paused-for-cache` below.
+            .put("pause", !p.playWhenReady)
             // Media3 says outright whether it is starved. The old test was
             // `pos < duration`, and live reports no duration — so it was always
             // false and the page could never learn it was waiting on data.

@@ -727,3 +727,7 @@ assert.doesNotMatch(
 // and while starved, and the page renders either as a pause.
 assert.match(vlcKt, /\.put\("pause", reallyPaused\)/, 'pause reports a pause')
 assert.doesNotMatch(vlcKt, /\.put\("pause", !p\.isPlaying\)/, 'not merely "not rendering right now"')
+// Media3 has the same distinction to make, and its `isPlaying` is false through
+// every rebuffer — which for a live channel is several times a minute.
+assert.match(exoKt, /\.put\("pause", !p\.playWhenReady\)/, 'Media3 reports intent, not the current frame')
+assert.doesNotMatch(exoKt, /\.put\("pause", !p\.isPlaying\)/, 'rebuffering is not a pause')
