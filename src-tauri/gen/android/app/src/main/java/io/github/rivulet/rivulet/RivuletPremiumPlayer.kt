@@ -14,6 +14,7 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import org.json.JSONArray
 import org.json.JSONObject
@@ -109,8 +110,20 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
                 .setReadTimeoutMs(10_000)
                 .setAllowCrossProtocolRedirects(true)
             val dataSourceFactory = DefaultDataSource.Factory(activity, httpFactory)
-            val source: MediaSource = HlsMediaSource.Factory(dataSourceFactory)
-                .createMediaSource(MediaItem.fromUri(url))
+            // HLS only when the stream is HLS. This class was written for
+            // Premium TV, where "the source is already an HLS manifest" holds,
+            // and it forced `HlsMediaSource` on whatever it was handed. Once
+            // live TV in general was routed here that stopped being true: a
+            // Free TV channel is usually raw MPEG-TS behind the loopback proxy,
+            // and asking the HLS parser to read a transport stream as a playlist
+            // fails on the first bytes — which reached the page as a channel
+            // that never opened, and never as a reason.
+            val source: MediaSource = if (looksLikeHls(url))
+                HlsMediaSource.Factory(dataSourceFactory)
+                    .createMediaSource(MediaItem.fromUri(url))
+            else
+                DefaultMediaSourceFactory(dataSourceFactory)
+                    .createMediaSource(MediaItem.fromUri(url))
             p.setMediaSource(source)
             p.prepare()
             p.volume = if (muted) 0f else vol / 100f
@@ -183,6 +196,36 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
     }
 
     // ── Player setup ────────────────────────────────────────
+
+    /**
+     * Does this URL name an HLS playlist?
+     *
+     * Free TV plays through the loopback proxy, whose own path says nothing
+     * about the stream — the real address is the `url=` parameter, so that is
+     * what gets read. Everything else (an Xtream `…/id.ts`, a bare progressive
+     * link) is not HLS and must not be handed to the HLS parser.
+     */
+    private fun looksLikeHls(url: String): Boolean {
+        var target = url
+        val q = url.indexOf('?')
+        if (q >= 0) {
+            for (pair in url.substring(q + 1).split('&')) {
+                val (k, v) = pair.split('=', limit = 2).let {
+                    it[0] to (it.getOrNull(1) ?: "")
+                }
+                if (k == "url" && v.isNotEmpty()) {
+                    target = try {
+                        java.net.URLDecoder.decode(v, "UTF-8")
+                    } catch (_: Exception) {
+                        v
+                    }
+                    break
+                }
+            }
+        }
+        val path = target.substringBefore('#').substringBefore('?').lowercase()
+        return path.endsWith(".m3u8") || path.endsWith(".m3u")
+    }
 
     private fun ensure(): ExoPlayer {
         player?.let { return it }

@@ -2084,19 +2084,21 @@ async function startPlayer() {
       })
     }
     else {
-      // Media3 for live, libVLC for everything else.
+      // Media3 for HLS, libVLC for everything else.
       //
-      // They are good at opposite things. Live TV is HLS, which is what Media3
-      // does best, and a channel carries stereo AAC that every device decodes —
-      // so the reason libVLC is here does not apply. A film is the other way
-      // round: it may carry Dolby or DTS, which Media3 hands to the platform's
-      // decoders and a cheap device does not have, and libVLC's bundled FFmpeg
-      // is precisely why it was chosen. The split is on that line and no other.
+      // The split was "live vs film" and that was wrong: what Media3 is good at
+      // is HLS, and a Free TV channel is almost always raw MPEG-TS behind the
+      // loopback proxy. Sending those to Media3 handed a transport stream to a
+      // playlist parser, which fails on the first bytes — a channel that never
+      // opened, and no reason given. Raw TS is libVLC's strength; so is a film,
+      // which may carry Dolby or DTS that Media3 hands to platform decoders a
+      // cheap device does not have, and libVLC's bundled FFmpeg is precisely
+      // why it is here.
       //
       // Both answer the same protocol, so nothing below this line knows which
       // one replied. Falls back to libVLC where Media3 is absent — an older
       // APK, or a build without it.
-      engine ??= (isLive.value ? exoEngine() : null) ?? vlcEngine() ?? videoEngine(videoEl.value!)
+      engine ??= (isLive.value && isHlsSource(props.src) ? exoEngine() : null) ?? vlcEngine() ?? videoEngine(videoEl.value!)
       await engine.start(props.src)
     }
 

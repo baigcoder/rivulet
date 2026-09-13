@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { readFileSync } from 'node:fs'
-import { deviceCodecs, exoEngine, hasNativePlayer, hasVideoOverlay, uhdPlayable, videoEngine, vlcEngine } from '../app/utils/htmlvideo'
+import { deviceCodecs, exoEngine, hasNativePlayer, hasVideoOverlay, isHlsSource, uhdPlayable, videoEngine, vlcEngine } from '../app/utils/htmlvideo'
 import { nearestFrame, walkOrder } from '../app/utils/thumbs'
 // Self-check for the <video> player backend: `bun scripts/check-player.ts`.
 //
@@ -507,11 +507,14 @@ assert.match(vlcKt, /private val snapshotMs = 200L/, 'the snapshot is rebuilt at
 assert.match(vlcKt, /val reallyPaused = p\.playerState == 4/, 'a genuine pause is recognised')
 
 // --- Two engines, split on what each is good at -------------------------------
-// Live TV is HLS, which Media3 does best, and a channel carries stereo AAC that
-// any device decodes — so the reason libVLC is bundled does not apply there. A
-// film is the reverse: Dolby and DTS go to platform decoders Media3 cannot
-// supply, and libVLC's own FFmpeg is why it was chosen. The split is that line
-// and no other, and both answer the same protocol so nothing downstream knows.
+// Not "live vs film", which is what v0.6.44 made it and what broke Free TV: the
+// line is HLS vs everything else. Media3's HLS implementation is its strength;
+// a raw MPEG-TS stream is libVLC's, and a Free TV channel is almost always raw
+// MPEG-TS behind the loopback proxy. Handing one of those to the HLS parser
+// fails on the first bytes and reaches the page as a channel that never opens.
+// Films stay on libVLC either way: Dolby and DTS go to platform decoders Media3
+// cannot supply, and libVLC's own FFmpeg is why it was bundled. Both answer the
+// same protocol, so nothing downstream knows which replied.
 const exoKt = readFileSync(new URL('../src-tauri/gen/android/app/src/main/java/io/github/rivulet/rivulet/RivuletPremiumPlayer.kt', import.meta.url), 'utf8')
 assert.match(exoKt, /override fun onRenderedFirstFrame\(\)/, 'Media3 reports its first frame')
 assert.match(exoKt, /\.put\("vo-configured", firstFrame\)/, 'under the name the page already reads')
@@ -520,9 +523,27 @@ assert.match(exoKt, /fun log\(line: String\)/, 'it can speak into logcat too')
 assert.doesNotMatch(exoKt, /vw = 1280/, 'and invents no resolution to report to the viewer')
 assert.match(
   mpv,
-  /engine \?\?= \(isLive\.value \? exoEngine\(\) : null\) \?\? vlcEngine\(\)/,
-  'live picks Media3, everything else keeps libVLC, and a build without Media3 still falls back',
+  /engine \?\?= \(isLive\.value && isHlsSource\(props\.src\) \? exoEngine\(\) : null\) \?\? vlcEngine\(\)/,
+  'only an HLS live source picks Media3; everything else keeps libVLC, and a build without Media3 still falls back',
 )
+// The safety net, for a source that reaches Media3 anyway: it must decide from
+// the stream rather than assume, or the misroute is fatal instead of merely wrong.
+assert.doesNotMatch(
+  exoKt,
+  /val source: MediaSource = HlsMediaSource\.Factory/,
+  'Media3 must not force the HLS parser onto whatever it is handed',
+)
+assert.match(exoKt, /if \(looksLikeHls\(url\)\)/, 'it picks the source by what the stream is')
+assert.match(exoKt, /DefaultMediaSourceFactory\(dataSourceFactory\)/, 'and reads a transport stream as a transport stream')
+// The proxy's own path says nothing about the stream, so the detector reads the
+// real address out of `url=` — on both sides of the bridge.
+assert.match(exoKt, /if \(k == "url" && v\.isNotEmpty\(\)\)/, 'Kotlin looks through the proxy URL')
+assert.equal(isHlsSource('http://127.0.0.1:3031/?url=http%3A%2F%2Fhost%2Flive%2Fu%2Fp%2F12.ts'), false, 'a proxied MPEG-TS channel is not HLS')
+assert.equal(isHlsSource('http://127.0.0.1:3031/?url=http%3A%2F%2Fhost%2Flive%2Fu%2Fp%2F12.m3u8'), true, 'a proxied HLS channel is')
+assert.equal(isHlsSource('http://host/live/u/p/12.m3u8'), true)
+assert.equal(isHlsSource('http://host/live/u/p/12.m3u8?token=x'), true, 'a query string does not hide the extension')
+assert.equal(isHlsSource('http://host/movie/u/p/9.mkv'), false)
+assert.equal(isHlsSource(''), false)
 assert.match(vlcKt, /&& !reallyPaused && \(length <= 0 \|\| pos < duration\)/, 'and is not reported as starved for data')
 assert.match(vlcKt, /private fun rebuildTracks\(p: MediaPlayer\)/, 'the track list has a build of its own')
 assert.match(vlcKt, /if \(tracksDirty\)/, 'and is rebuilt only when libVLC says the tracks changed')

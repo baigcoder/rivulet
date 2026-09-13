@@ -147,6 +147,33 @@ export function hasVlcPlayer() {
   return !!vlcBridge()
 }
 
+/**
+ * Does this source name an HLS playlist?
+ *
+ * The Media3/libVLC split is not "live vs film", which is what v0.6.44 made it
+ * — it is HLS vs everything else. Media3's strength is its HLS implementation;
+ * a raw MPEG-TS stream is libVLC's, and a Free TV channel is almost always raw
+ * MPEG-TS behind the loopback proxy. Routing those to Media3 handed a transport
+ * stream to a playlist parser, which fails on the first bytes and reaches the
+ * page as a channel that never opens.
+ *
+ * The proxy's own path says nothing about the stream, so the real address in
+ * `url=` is what gets read.
+ */
+export function isHlsSource(url: string): boolean {
+  if (!url)
+    return false
+  let target = url
+  const q = url.indexOf('?')
+  if (q >= 0) {
+    const inner = new URLSearchParams(url.slice(q + 1)).get('url')
+    if (inner)
+      target = inner
+  }
+  const path = target.split('#')[0]!.split('?')[0]!.toLowerCase()
+  return path.endsWith('.m3u8') || path.endsWith('.m3u')
+}
+
 let codecCache: Set<string> | null = null
 
 /**
