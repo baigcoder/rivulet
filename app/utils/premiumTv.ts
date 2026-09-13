@@ -210,10 +210,27 @@ interface RequestOptions {
   signal?: AbortSignal
   /** Internal: set while replaying a request after a fresh mint. */
   retried?: boolean
+  /** Override the default ceiling. See `CATALOG_TIMEOUT_MS`. */
+  timeoutMs?: number
 }
 
 /** How long any one API call may take before it is treated as unanswered. */
 const REQUEST_TIMEOUT_MS = 20_000
+
+/**
+ * The VOD catalog endpoints get longer, because they are not loopback work.
+ *
+ * A Premium film list is answered by asking the panel for its whole VOD
+ * catalog — tens of megabytes of JSON for a large provider — which is then
+ * paged locally. A desktop does that inside a second or two and twenty was
+ * never tested against anything slower. A phone on Wi-Fi, parsing the same
+ * payload on a weaker CPU, goes past it: the request aborts, `prefetchVod`
+ * swallowed the error because the section was off screen, and Movies and
+ * Series stayed empty with nothing to read. Which is exactly the shape of it —
+ * the same provider, the same build, working on the desktop and not on the
+ * phone.
+ */
+const CATALOG_TIMEOUT_MS = 90_000
 
 /**
  * A timeout, told apart from a caller's own cancel.
@@ -242,7 +259,7 @@ async function request<T>(
   // ceiling the Premium TV page sat on its spinner for good: the `catch` that
   // would have shown an error was never reached, because nothing ever rejected.
   const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(timedOut()), REQUEST_TIMEOUT_MS)
+  const timer = setTimeout(() => ctrl.abort(timedOut()), opts.timeoutMs ?? REQUEST_TIMEOUT_MS)
   const relay = () => ctrl.abort(opts.signal?.reason)
   if (opts.signal?.aborted)
     ctrl.abort(opts.signal.reason)
@@ -444,11 +461,11 @@ export const premiumApi = {
 
   /** Xtream movie categories from the panel (not cached locally). */
   vodMovieCategories(): Promise<VodCategory[]> {
-    return request('GET', '/api/premium-tv/vod/movies/categories')
+    return request('GET', '/api/premium-tv/vod/movies/categories', { timeoutMs: CATALOG_TIMEOUT_MS })
   },
 
   vodSeriesCategories(): Promise<VodCategory[]> {
-    return request('GET', '/api/premium-tv/vod/series/categories')
+    return request('GET', '/api/premium-tv/vod/series/categories', { timeoutMs: CATALOG_TIMEOUT_MS })
   },
 
   vodMovies(args: {
@@ -471,7 +488,7 @@ export const premiumApi = {
     if (args.limit)
       params.set('limit', String(args.limit))
     const qs = params.toString()
-    return request('GET', `/api/premium-tv/vod/movies${qs ? `?${qs}` : ''}`, { signal: args.signal })
+    return request('GET', `/api/premium-tv/vod/movies${qs ? `?${qs}` : ''}`, { signal: args.signal, timeoutMs: CATALOG_TIMEOUT_MS })
   },
 
   vodSeries(args: {
@@ -494,11 +511,11 @@ export const premiumApi = {
     if (args.limit)
       params.set('limit', String(args.limit))
     const qs = params.toString()
-    return request('GET', `/api/premium-tv/vod/series${qs ? `?${qs}` : ''}`, { signal: args.signal })
+    return request('GET', `/api/premium-tv/vod/series${qs ? `?${qs}` : ''}`, { signal: args.signal, timeoutMs: CATALOG_TIMEOUT_MS })
   },
 
   vodSeriesDetail(id: string): Promise<PremiumSeriesDetail> {
-    return request('GET', `/api/premium-tv/vod/series/${encodeURIComponent(id)}`)
+    return request('GET', `/api/premium-tv/vod/series/${encodeURIComponent(id)}`, { timeoutMs: CATALOG_TIMEOUT_MS })
   },
 
   vodPlayMovie(id: string, ext?: string, signal?: AbortSignal): Promise<PlaybackSource> {

@@ -153,6 +153,19 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
   const selectedVodCategory = ref('')
   const vodMovies = shallowRef<PremiumVodItem[]>([])
   const vodSeries = shallowRef<PremiumSeriesItem[]>([])
+  /**
+   * Why a VOD catalog is empty, remembered per section.
+   *
+   * `prefetchVod` warms Movies and Series while the viewer is still on Live,
+   * and for a section that is not on screen `forScreen` is false — which is
+   * also the flag the catch below used to decide whether to report anything at
+   * all. So the ordinary case, a prefetch that failed, set nothing: the list
+   * stayed empty, `error` stayed blank, and switching to Movies showed an empty
+   * grid reading "no titles" over a provider that had in fact answered with a
+   * failure. Keep it here instead, and let the section that owns it say so when
+   * the viewer arrives.
+   */
+  const vodError = ref<Record<'movies' | 'series', string>>({ movies: '', series: '' })
   const vodTotal = ref(0)
   const vodNextCursor = ref<string | null>(null)
   const vodLoading = ref(false)
@@ -660,6 +673,11 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
         return
       if (e instanceof DOMException && e.name === 'AbortError')
         return
+      // Recorded whether or not this section is the one being looked at. A
+      // prefetch runs for a section that is off screen by definition, and
+      // reporting only the on-screen case is what left Movies and Series empty
+      // and silent when the provider had in fact refused them.
+      vodError.value = { ...vodError.value, [active]: message(e) }
       if (forScreen)
         error.value = message(e)
     }
@@ -976,6 +994,7 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
     vodTotal,
     vodHasMore,
     vodLoading,
+    vodError,
     seriesDetailCache,
     cacheSeriesDetail,
     zapList,

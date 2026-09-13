@@ -7,6 +7,7 @@
 // quietly parsed to an empty version would turn the badge off with nothing
 // anywhere to notice.
 import assert from 'node:assert'
+import { readFileSync } from 'node:fs'
 import { compareVersions, isNewer, parseUpdate, RELEASES_URL, transportMessage } from '../app/utils/updates'
 import './i18n-stub'
 
@@ -107,3 +108,27 @@ assert.equal(transportMessage(new Error(REAL)), REAL)
 assert.equal(transportMessage('a bare string'), 'a bare string')
 
 console.log('check-updates: ok')
+
+// --- The VOD catalog is not loopback work ------------------------------------
+// A Premium film list makes the panel hand over its whole VOD catalog, tens of
+// megabytes of JSON, which is then paged locally. The desktop does that in a
+// second or two; a phone parsing the same payload went past the twenty-second
+// ceiling meant for loopback, the prefetch swallowed the abort because the
+// section was off screen, and Movies and Series stayed empty and silent. Same
+// provider, same build, working on desktop and not on the phone.
+const premiumApiTs = readFileSync(new URL('../app/utils/premiumTv.ts', import.meta.url), 'utf8')
+assert.match(premiumApiTs, /const CATALOG_TIMEOUT_MS = 90_000/, 'the catalog endpoints get a realistic ceiling')
+assert.equal(
+  (premiumApiTs.match(/timeoutMs: CATALOG_TIMEOUT_MS/g) ?? []).length,
+  5,
+  'and all five of them use it — two category lists, two pages, one series detail',
+)
+assert.match(premiumApiTs, /opts\.timeoutMs \?\? REQUEST_TIMEOUT_MS/, 'everything else keeps the loopback ceiling')
+
+// And a catalog that failed says why. The prefetch runs for a section that is
+// off screen by definition, so gating the report on being on screen reported
+// nothing at all in the one case that matters.
+const premiumStore = readFileSync(new URL('../app/stores/premiumTv.ts', import.meta.url), 'utf8')
+assert.match(premiumStore, /vodError\.value = \{ \.\.\.vodError\.value, \[active\]: message\(e\) \}/, 'a failed VOD load is recorded per section')
+const browser = readFileSync(new URL('../app/components/premium-tv/PremiumBrowser.vue', import.meta.url), 'utf8')
+assert.match(browser, /premium\.vodError\[/, 'and the empty state says it instead of "returned nothing"')

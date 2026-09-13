@@ -167,8 +167,16 @@ const emptyMessage = computed(() => {
       ? $t('No channels match that search.')
       : $t('Nothing matches that search.')
   }
-  if (!isLive.value)
+  // A catalog that is empty because the provider refused it says so. This used
+  // to read "returned nothing for that category" over a request that had in
+  // fact failed — the prefetch runs off screen, and the only error reporting
+  // there was gated on being on screen. See `vodError` in the store.
+  if (!isLive.value) {
+    const why = premium.vodError[premium.contentSection === 'series' ? 'series' : 'movies']
+    if (why)
+      return why
     return $t('This provider returned nothing for that category.')
+  }
   if (premium.view === 'favorites')
     return $t('Star a channel and it shows up here.')
   if (premium.view === 'recent')
