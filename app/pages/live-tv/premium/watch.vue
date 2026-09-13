@@ -26,6 +26,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { usePlaybackSource } from '~/composables/usePlaybackSource'
 import { MAX_RECONNECT_ATTEMPTS } from '~/stores/premiumTv'
 import { cycleAspect } from '~/utils/aspectRatio'
+import { androidLog } from '~/utils/htmlvideo'
 import { friendlyPlaybackError } from '~/utils/playbackError'
 import { premiumApi } from '~/utils/premiumTv'
 
@@ -33,6 +34,8 @@ definePageMeta({ layout: false })
 
 /** How often mpv's transport state is mirrored for the overlay. */
 const POLL_MS = 250
+/** Wallclock of the last HUD-state line, so the diagnostic is one a second. */
+let lastStateLog = 0
 
 const route = useRoute()
 const router = useRouter()
@@ -417,7 +420,27 @@ function syncPlayerState(): void {
   // minutes as "opening" while every ordinary drop counted towards the four
   // reconnects — see `moving` in MpvPlayer.
   const picture = (typeof p.videoWidth === 'number' && p.videoWidth > 0) || asBool(p.moving)
-  playerPlaying.value = asBool(p.started) && !asBool(p.paused) && picture
+  // A picture that is not paused is playing. `started` is the page's own
+  // bookkeeping and was in this test until now — the same mistake the Free TV
+  // page had until v0.6.39, fixed there and left here, which is why that page
+  // came right and this one did not. A channel whose picture is on screen is
+  // playing whatever the flag says.
+  playerPlaying.value = picture && !asBool(p.paused)
+  // Why the HUD disagrees with the player, in one line a second.
+  //
+  // The device settled the first half of this: libVLC reaches Vout in under
+  // two seconds and the clock runs, and MpvPlayer's own "no picture yet" line
+  // stops at exactly that moment — so the player knows it has a picture. The
+  // page went on printing "Connecting to live stream…" over it, and Retry,
+  // which changes nothing about the stream, cleared it. So one of the values
+  // below is not what the player thinks it is, and none of them can be seen
+  // from outside. A release WebView has no devtools and no console; this is
+  // the only way to read them.
+  if (!playerPlaying.value && Date.now() - lastStateLog > 1000) {
+    lastStateLog = Date.now()
+    androidLog(`premium hud=${premium.player} started=${asBool(p.started)} paused=${asBool(p.paused)} moving=${asBool(p.moving)} buffering=${asBool(p.buffering)} w=${typeof p.videoWidth === 'number' ? p.videoWidth : 'n/a'} picture=${picture} pos=${playerPosition.value}`)
+  }
+
   playerBehindLive.value = asBool(p.behindLive)
   playerVolume.value = typeof p.volume === 'number' ? p.volume : 100
   playerMuted.value = asBool(p.muted)

@@ -878,7 +878,21 @@ class RivuletPlayer(private val activity: MainActivity) {
     val stalling = !p.isPlaying && !userPaused && !reallyPaused && (length <= 0 || pos < duration)
     val track = p.currentVideoTrack
     snap = JSONObject()
-      .put("pause", !p.isPlaying)
+      // Paused means paused, not "not rendering this instant".
+      //
+      // This was `!p.isPlaying`, which is also true while the stream is
+      // opening, while it is starved, and in the gaps libVLC has not yet
+      // filled — none of which are a pause, and all of which the page renders
+      // as one. `playerPlaying` on the watch pages is
+      // `started && !paused && picture`, so a single false reading takes the
+      // HUD out of "playing": the chrome stops auto-hiding, the transport
+      // shows a Play button over a running channel, and the overlay goes back
+      // to saying it is still connecting. Retry appeared to fix it because a
+      // fresh start happens to land the flags in the right order.
+      //
+      // `paused-for-cache` above already learned this distinction (v0.6.43);
+      // `pause` kept the old test. 4 is libVLC's Paused.
+      .put("pause", reallyPaused)
       .put("paused-for-cache", stalling)
       .put("duration", duration)
       .put("time-pos", pos)

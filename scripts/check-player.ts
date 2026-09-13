@@ -707,3 +707,23 @@ assert.match(vlcKt, /if \(pendingPlay\) \{/, 'and the surface arriving is what s
 
 // eslint-disable-next-line no-console
 console.log('player: ok')
+
+// --- The HUD must agree with the picture -------------------------------------
+// The device settled this one: libVLC reached Playing at ~0.9s and Vout at
+// ~1.5s on every attempt, first click and retry alike, while the page showed
+// "Connecting", kept the chrome up and drew a Play button over a running
+// channel. Two values were lying.
+assert.match(
+  premiumWatch,
+  /playerPlaying\.value = picture && !asBool\(p\.paused\)/,
+  'a picture that is not paused is playing — `started` is the page guessing',
+)
+assert.doesNotMatch(
+  premiumWatch,
+  /playerPlaying\.value = asBool\(p\.started\)/,
+  'the Free TV page dropped `started` in v0.6.39; Premium must not keep it',
+)
+// mpv's `pause` means paused. libVLC's isPlaying is also false while opening
+// and while starved, and the page renders either as a pause.
+assert.match(vlcKt, /\.put\("pause", reallyPaused\)/, 'pause reports a pause')
+assert.doesNotMatch(vlcKt, /\.put\("pause", !p\.isPlaying\)/, 'not merely "not rendering right now"')
