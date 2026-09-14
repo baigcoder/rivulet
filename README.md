@@ -30,7 +30,7 @@ Nuxt and Tauri, driven as happily by a TV remote as by a mouse.
 
 <br/>
 
-https://github.com/user-attachments/assets/2d0bd58f-c838-43e2-a0ce-e503f9317aa8
+<video src="public/hero.mp4" controls autoplay loop muted width="100%" alt="Rivulet demo"></video>
 
 <p align="center">
   <sub><b>One minute, end to end</b> &middot; browsing, themes and backgrounds, then a torrent
@@ -147,26 +147,22 @@ Premium TV with EPG, categories, favourites and recent channels.
 <table>
 <tr>
 <td width="50%" align="center">
-<img src="docs/media/detail.png" width="100%" alt="Title detail page"><br/>
-<sub><b>Detail</b> &middot; backdrop, cast, ratings, seasons and episodes, with resume points and
-watched ticks per episode.</sub>
+<img src="public/landing-showcase.jpg" width="100%" alt="Player Interface"><br/>
+<sub><b>Player Interface</b> &middot; browsing, backdrops, and poster grid.</sub>
 </td>
 <td width="50%" align="center">
-<img src="docs/media/player.png" width="100%" alt="Player"><br/>
-<sub><b>Player</b> &middot; embedded mpv with seek-preview frames, track menus and subtitle styling
-that previews live.</sub>
+<img src="public/landing-player-real.jpg" width="100%" alt="Native mpv Engine"><br/>
+<sub><b>Native mpv Engine</b> &middot; embedded player with seek-preview frames and subtitle menu.</sub>
 </td>
 </tr>
 <tr>
 <td width="50%" align="center">
-<img src="docs/media/downloads.png" width="100%" alt="Downloads page"><br/>
-<sub><b>Downloads</b> &middot; the torrent engine's own UI — per-file selection, seeding, speed
-limits, disk budget.</sub>
+<img src="public/landing-downloads.jpg" width="100%" alt="Downloads"><br/>
+<sub><b>Downloads</b> &middot; torrent engine UI — file selection, seeding, speed limits, disk budget.</sub>
 </td>
 <td width="50%" align="center">
-<img src="docs/media/themes.png" width="100%" alt="Appearance settings"><br/>
-<sub><b>Appearance</b> &middot; a palette generated from any colour, 26 presets,
-poster size, app scale and a global CSS box.</sub>
+<img src="public/landing-themes.jpg" width="100%" alt="Themes"><br/>
+<sub><b>Appearance</b> &middot; 26 curated themes with live colour styling.</sub>
 </td>
 </tr>
 </table>
