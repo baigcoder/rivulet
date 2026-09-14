@@ -147,22 +147,22 @@ Premium TV with EPG, categories, favourites and recent channels.
 <table>
 <tr>
 <td width="50%" align="center">
-<img src="public/landing-showcase.jpg" width="100%" alt="Player Interface"><br/>
-<sub><b>Player Interface</b> &middot; browsing, backdrops, and poster grid.</sub>
+<img src="public/app-home.jpg" width="100%" alt="Home screen with featured title and streaming services"><br/>
+<sub><b>Home</b> &middot; trending, popular and top rated rows, a featured title, and continue watching.</sub>
 </td>
 <td width="50%" align="center">
-<img src="public/landing-player-real.jpg" width="100%" alt="Native mpv Engine"><br/>
-<sub><b>Native mpv Engine</b> &middot; embedded player with seek-preview frames and subtitle menu.</sub>
+<img src="public/app-detail.jpg" width="100%" alt="Title detail page with backdrop, cast and ratings"><br/>
+<sub><b>Title details</b> &middot; backdrop, synopsis, cast, trailer, seasons and episodes.</sub>
 </td>
 </tr>
 <tr>
 <td width="50%" align="center">
-<img src="public/landing-downloads.jpg" width="100%" alt="Downloads"><br/>
-<sub><b>Downloads</b> &middot; torrent engine UI — file selection, seeding, speed limits, disk budget.</sub>
+<img src="public/live-free.jpg" width="100%" alt="Free TV channel guide"><br/>
+<sub><b>Free TV</b> &middot; public channels from around the world, with channel health and EPG.</sub>
 </td>
 <td width="50%" align="center">
-<img src="public/landing-themes.jpg" width="100%" alt="Themes"><br/>
-<sub><b>Appearance</b> &middot; 26 curated themes with live colour styling.</sub>
+<img src="public/app-appearance.jpg" width="100%" alt="Appearance settings with theme presets"><br/>
+<sub><b>Themes</b> &middot; 26 curated presets, plus one from any colour.</sub>
 </td>
 </tr>
 </table>
