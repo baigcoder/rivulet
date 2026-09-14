@@ -394,6 +394,19 @@ bundle's `Info.plist` and can't change it at runtime, so the `stremio://` switch
 Rivulet includes a built-in live TV player with two modes — both reachable from the *Live TV*
 room in the sidebar.
 
+<table>
+<tr>
+<td width="50%" align="center">
+<img src="public/live-free.jpg" width="100%" alt="Free TV channel guide"><br/>
+<sub><b>Free TV</b> &middot; public channels with health checks, EPG, and auto-failover.</sub>
+</td>
+<td width="50%" align="center">
+<img src="public/live-premium.jpg" width="100%" alt="Premium TV with Xtream provider"><br/>
+<sub><b>Premium TV</b> &middot; your provider's channels, movies and series in one view.</sub>
+</td>
+</tr>
+</table>
+
 ### Free TV
 
 Uses the [iptv-org](https://github.com/iptv-org/iptv) public channel list — no account, no
@@ -436,6 +449,19 @@ player always talks to a local proxy with a signed redirector token (valid ~30 s
 | **Adult filter** | "Hide adult channels" toggle — provider-flagged 18+ or category-name detected |
 | **Subscription** | Two tiers: `free` and `premium` (30-day trial or unlimited activation) |
 | **Reconnect** | Exponential backoff (2s, 4s, 8s, 20s cap), max 4 attempts, accounts for provider connection slot release timing |
+
+<table>
+<tr>
+<td width="50%" align="center">
+<img src="public/live-movies.jpg" width="100%" alt="Provider movies catalogue"><br/>
+<sub><b>Provider movies</b> &middot; your provider's films, with posters and categories.</sub>
+</td>
+<td width="50%" align="center">
+<img src="public/live-shows.jpg" width="100%" alt="Provider series catalogue"><br/>
+<sub><b>Provider series</b> &middot; seasons and episodes, counted per show.</sub>
+</td>
+</tr>
+</table>
 
 ### The Live TV Player
 
