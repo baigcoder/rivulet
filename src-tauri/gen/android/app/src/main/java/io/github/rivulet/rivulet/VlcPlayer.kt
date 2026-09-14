@@ -214,7 +214,7 @@ class RivuletPlayer(private val activity: MainActivity) {
   @Volatile
   private var hasMedia = false
 
-  /** How long a start may wait for the video surface before going without it. */
+  /** How long to wait before recording that Android is still laying out video. */
   private val surfaceWaitMs = 3_000L
 
   /**
@@ -231,15 +231,14 @@ class RivuletPlayer(private val activity: MainActivity) {
   private var pendingPlay = false
 
   /**
-   * The surface never came. Start regardless: sound with no picture beats a
-   * channel that never starts at all, and the output still attaches if it
-   * turns up later.
+   * A slow first layout is normal while Android is changing into player mode.
+   * Do not start without an output: libVLC can then decode into nowhere and
+   * never recover even after the surface arrives. Keep `pendingPlay` set so
+   * `attachVideoOutput` owns the one real start.
    */
   private val playWhenReady = Runnable {
     if (pendingPlay) {
-      pendingPlay = false
-      note("no surface after ${surfaceWaitMs}ms - starting without one")
-      player?.play()
+      note("still waiting for video surface after ${surfaceWaitMs}ms")
     }
   }
 
@@ -663,6 +662,15 @@ class RivuletPlayer(private val activity: MainActivity) {
       override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {}
 
       override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
+        // Entering player mode can rotate a phone after `start()` has already
+        // handed libVLC its first surface. libVLC drops its output with that
+        // surface and does not reliably resume when a new one is attached.
+        // Treat the replacement exactly like the initial surface, unless the
+        // viewer explicitly paused or the stream was stopped. Otherwise the
+        // first click remains on "Connecting" and Retry only works because
+        // the rotation has finished by then.
+        if (hasMedia && !userPaused)
+          pendingPlay = true
         player?.vlcVout?.detachViews()
         outputAttached = false
         videoSurface?.release()

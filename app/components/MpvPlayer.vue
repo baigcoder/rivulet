@@ -2353,12 +2353,28 @@ async function zapTo() {
   await restart()
 }
 
+/**
+ * Start only if this mounted player has not started yet.
+ *
+ * A page can resolve its loopback source before Vue delivers this component's
+ * mount hook on a cold Android WebView. The source exists, but the original
+ * mount-time start is missed; Retry then appears to fix the channel only
+ * because it is the first code path that calls back into the player. Parents
+ * call this after `nextTick()` to close that handoff gap without restarting a
+ * stream that is already opening or playing.
+ */
+async function ensureStarted() {
+  if (!started.value && !busy.value)
+    await startPlayer()
+}
+
 // `ui` is exposed because a page-level HUD (Live TV) cannot compute it itself:
 // where mpv paints over the page no mousemove ever reaches the DOM, and this
 // flag is the one fed by the native pointer poll.
 defineExpose({
   osd,
   zapTo,
+  ensureStarted,
   togglePlay,
   goLive,
   behindLive,

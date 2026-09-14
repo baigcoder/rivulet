@@ -8,7 +8,7 @@
  *   - TV Remote key navigation (Up/Down/Left/Right/ChannelUp/ChannelDown)
  *   - Aspect ratio mode switcher (Contain, Cover, Fill)
  */
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { cycleAspect } from '~/utils/aspectRatio'
 import { iptvProxyHealth, liveResolveStream, proxyFreeStreamUrl } from '~/utils/iptv'
 import { MAX_AUTO_SKIPS, nextPlayable } from '~/utils/livehealth'
@@ -34,6 +34,7 @@ const playerRef = ref<{
   errorMsg?: string
   zapTo: () => void | Promise<void>
   goLive: () => void | Promise<void>
+  ensureStarted: () => void | Promise<void>
   behindLive?: boolean
   videoWidth: number
   moving?: boolean
@@ -246,7 +247,7 @@ const waiting = computed(() =>
  */
 const resolvedById = new Map<string, { url: string, ua: string | null, referer: string | null }>()
 
-function playNow(url: string, ua?: string | null, ref?: string | null) {
+async function playNow(url: string, ua?: string | null, ref?: string | null) {
   userAgent.value = ua ?? null
   referer.value = ref ?? null
   streamUrl.value = url
@@ -254,6 +255,11 @@ function playNow(url: string, ua?: string | null, ref?: string | null) {
   hasPicture.value = false
   playerPlaying.value = false
   resolving.value = false
+  // Source resolution and a cold Android child mount can cross. Explicitly
+  // hand the first source to the child after Vue has rendered it; Retry used
+  // to be the only path that did this.
+  await nextTick()
+  await playerRef.value?.ensureStarted()
 }
 
 async function resolveStreamUrl() {
@@ -266,7 +272,7 @@ async function resolveStreamUrl() {
   const id = channelId.value
   const cached = id ? resolvedById.get(id) : undefined
   if (cached) {
-    playNow(cached.url, cached.ua, cached.referer)
+    await playNow(cached.url, cached.ua, cached.referer)
     return
   }
 
@@ -288,7 +294,7 @@ async function resolveStreamUrl() {
             referer: resolved.referer ?? null,
           }
           resolvedById.set(id, next)
-          playNow(next.url, next.ua, next.referer)
+          await playNow(next.url, next.ua, next.referer)
           return
         }
       }
@@ -307,7 +313,7 @@ async function resolveStreamUrl() {
       if (proxied) {
         if (id)
           resolvedById.set(id, { url: proxied, ua: channelUa, referer: channelReferer })
-        playNow(proxied, channelUa, channelReferer)
+        await playNow(proxied, channelUa, channelReferer)
         return
       }
     }
@@ -324,7 +330,7 @@ async function resolveStreamUrl() {
     if (proxied) {
       if (id)
         resolvedById.set(id, { url: proxied, ua: channelUa, referer: channelReferer })
-      playNow(proxied, channelUa, channelReferer)
+      await playNow(proxied, channelUa, channelReferer)
       return
     }
     resolveError.value = $t('This channel\'s stream is not available. Try another channel.')

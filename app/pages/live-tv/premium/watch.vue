@@ -22,7 +22,7 @@
  */
 import type { EpgProgram, IPTVChannel } from '~/types/premium'
 import { mdiCheck, mdiClose } from '@mdi/js'
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { usePlaybackSource } from '~/composables/usePlaybackSource'
 import { MAX_RECONNECT_ATTEMPTS } from '~/stores/premiumTv'
 import { cycleAspect } from '~/utils/aspectRatio'
@@ -86,6 +86,7 @@ const playerRef = ref<{
   ipc: (command: unknown[]) => Promise<unknown>
   goLive: () => void | Promise<void>
   behindLive?: boolean
+  ensureStarted: () => void | Promise<void>
 } | null>(null)
 
 function asBool(v: boolean | { value?: boolean } | undefined): boolean {
@@ -336,6 +337,14 @@ async function load({ fresh } = { fresh: true }): Promise<void> {
       : $t('This channel could not be opened.')))
     return
   }
+
+  // On a cold Android WebView the async source can arrive in the narrow gap
+  // before Vue runs MpvPlayer's mount hook. The signed source is valid, but no
+  // native `start()` is sent until Retry. Wait for the child to exist and make
+  // the initial handoff explicit; this is a no-op when its mount hook already
+  // started the stream.
+  await nextTick()
+  await playerRef.value?.ensureStarted()
 
   if (fresh && !isVod.value) {
     const ch = await resolveChannel(id)

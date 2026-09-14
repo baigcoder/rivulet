@@ -51,6 +51,26 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
     private var player: ExoPlayer? = null
     private var textureView: TextureView? = null
     private var videoSurface: Surface? = null
+    private var outputAttached = false
+
+    /**
+     * A newly-added TextureView does not have a SurfaceTexture until Android's
+     * next layout pass. Starting Media3 before then is usually fine on a warm
+     * player, but on the first channel it can leave the decoder with no output
+     * and the web UI waits for a first frame forever. Keep the start pending
+     * until the surface arrives, just as the libVLC player does.
+     */
+    private var pendingPlay = false
+    private val surfaceWaitMs = 3_000L
+    private val playWhenReady = Runnable {
+        if (pendingPlay) {
+            // Orientation and system-bar changes can take longer than this on
+            // a cold Android start. Starting headless is not a fallback: it is
+            // the first-attempt bug. Leave the start pending for the surface
+            // callback, which is the only safe place to begin rendering.
+            android.util.Log.d("RivuletPremiumPlayer", "still waiting for video surface")
+        }
+    }
 
     @Volatile
     private var running = false
@@ -127,7 +147,17 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
             p.setMediaSource(source)
             p.prepare()
             p.volume = if (muted) 0f else vol / 100f
-            p.playWhenReady = true
+            // Do not ask the decoder for its first frame until it has somewhere
+            // to draw it. A retry works only because that surface happens to
+            // exist by then; the first attempt must wait for it itself.
+            p.playWhenReady = false
+            if (outputAttached) {
+                p.playWhenReady = true
+            } else {
+                pendingPlay = true
+                main.removeCallbacks(playWhenReady)
+                main.postDelayed(playWhenReady, surfaceWaitMs)
+            }
             main.removeCallbacks(tick)
             tick.run()
         }
@@ -140,6 +170,8 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
         buffering = false
         onMain {
             main.removeCallbacks(tick)
+            pendingPlay = false
+            main.removeCallbacks(playWhenReady)
             player?.stop()
             activity.setVlcVideoMode(false)
             textureView?.visibility = View.GONE
@@ -183,6 +215,8 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
     fun release() {
         onMain {
             main.removeCallbacks(tick)
+            pendingPlay = false
+            main.removeCallbacks(playWhenReady)
             player?.release()
             player = null
             videoSurface?.release()
@@ -269,13 +303,23 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
         val tv = TextureView(activity)
         tv.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
+                videoSurface?.release()
                 videoSurface = Surface(surface)
                 p.setVideoSurface(videoSurface)
+                outputAttached = true
+                if (pendingPlay) {
+                    pendingPlay = false
+                    main.removeCallbacks(playWhenReady)
+                    android.util.Log.d("RivuletPremiumPlayer", "surface ready; starting")
+                    p.playWhenReady = true
+                }
             }
 
             override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {}
 
             override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
+                p.clearVideoSurface()
+                outputAttached = false
                 videoSurface?.release()
                 videoSurface = null
                 return true
@@ -291,6 +335,15 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
         activity.findViewById<ViewGroup>(android.R.id.content).addView(tv, 0, params)
         textureView = tv
         player = p
+        // Usually the listener runs after the view is added, but Android may
+        // hand us an already-created TextureView synchronously. Attach in both
+        // orders so that fast first navigation cannot wait forever for a
+        // callback that already happened.
+        if (tv.isAvailable && videoSurface == null) {
+            videoSurface = Surface(tv.surfaceTexture)
+            p.setVideoSurface(videoSurface)
+            outputAttached = true
+        }
         return p
     }
 

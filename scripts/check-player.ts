@@ -702,8 +702,15 @@ assert.match(tauriConf, /"installerHooks": "\.\/installer-hooks\.nsh"/, 'and the
 // Retry played at once because by then the surface was there. That the report
 // was always "the first click" is not a coincidence, it is the construction.
 assert.match(vlcKt, /if \(outputAttached\) \{\r?\n {8}p\.play\(\)/, 'playback waits until there is somewhere to draw')
-assert.match(vlcKt, /main\.postDelayed\(playWhenReady, surfaceWaitMs\)/, 'bounded, so a surface that never arrives still gets sound')
+assert.match(vlcKt, /still waiting for video surface after/, 'libVLC never starts headless while Android is still laying out')
+assert.doesNotMatch(vlcKt, /private val playWhenReady = Runnable \{[\s\S]{0,300}player\?\.play\(\)/, 'libVLC cannot consume the first attempt before a surface exists')
 assert.match(vlcKt, /if \(pendingPlay\) \{/, 'and the surface arriving is what starts it')
+assert.match(vlcKt, /if \(hasMedia && !userPaused\)\r?\n\s*pendingPlay = true/, 'a player-mode rotation resumes the stream on its replacement surface')
+assert.match(exoKt, /if \(outputAttached\) \{\r?\n {16}p\.playWhenReady = true/, 'Media3 also waits for its first video surface')
+assert.match(exoKt, /still waiting for video surface/, 'Media3 never starts headless while Android is still laying out')
+assert.doesNotMatch(exoKt, /private val playWhenReady = Runnable \{[\s\S]{0,450}player\?\.playWhenReady = true/, 'Media3 cannot consume the first attempt before a surface exists')
+assert.match(exoKt, /surface ready; starting/, 'the Media3 surface starts the pending first attempt')
+assert.match(exoKt, /if \(tv\.isAvailable && videoSurface == null\)/, 'Media3 also handles a surface created before its listener can observe it')
 
 // eslint-disable-next-line no-console
 console.log('player: ok')
