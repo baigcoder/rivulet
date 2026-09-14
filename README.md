@@ -30,7 +30,7 @@ Nuxt and Tauri, driven as happily by a TV remote as by a mouse.
 
 <br/>
 
-<video src="public/hero.mp4" controls autoplay loop muted width="100%" alt="Rivulet demo"></video>
+https://github.com/user-attachments/assets/2d0bd58f-c838-43e2-a0ce-e503f9317aa8
 
 <p align="center">
   <sub><b>One minute, end to end</b> &middot; browsing, themes and backgrounds, then a torrent
