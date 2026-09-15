@@ -483,9 +483,6 @@ assert.match(
   /\$t\('Rivulet could not start one of its local services'\)/,
   'in a sentence, rather than a spinner that names nothing',
 )
-
-console.info('free tv health: ok')
-
 // --- Free TV: a picture ends the notice --------------------------------------
 // `LivePlayerOverlay` pins its chrome while `connecting` is true, so one stuck
 // flag was both complaints at once: the connecting panel sat over a channel
@@ -526,7 +523,7 @@ assert.match(
 )
 assert.match(
   liveWatch,
-  /if \(hasPicture\.value && !hadPicture\) \{/,
+  /if \(gainedPicture\) \{/,
   'and the last attempt\'s errors clear when the picture arrives',
 )
 // Acting on a stray failure while watching is a zap away from a working
@@ -536,3 +533,27 @@ assert.match(
   /async function onPlaybackFailed\(\) \{[\s\S]{0,700}?if \(hasPicture\.value\)\r?\n {4}return/,
   'a failure with frames on screen is not acted on',
 )
+
+// --- One reading, two pages ---------------------------------------------------
+// Both live pages mirror the same component into the same shape and then draw
+// different chrome over it. Two copies of that reading is what produced most of
+// the bugs here: `started` was dropped from the playing test on one page and
+// left on the other for four releases, the stale-error rule was fixed on one
+// and not the other, the failure handler learned to defer to the picture on one
+// and not the other. Each reached a viewer as the same complaint.
+const mirrorTs = readFileSync(new URL('../app/composables/usePlayerMirror.ts', import.meta.url), 'utf8')
+assert.match(mirrorTs, /export function usePlayerMirror\(\)/, 'the shared reading exists')
+assert.match(mirrorTs, /playerPlaying\.value = picture && !asBool\(p\.paused\)/, 'and it is the one that defines playing')
+assert.match(mirrorTs, /if \(picture \|\| playerPosition\.value > 0\.5\)/, 'and the one that suppresses a stale player error')
+for (const [name, page] of [['free', liveWatch], ['premium', premiumWatchSrc]] as const) {
+  assert.match(page, /usePlayerMirror\(\)/, `the ${name} page reads the player through it`)
+  // Resetting the ref on a new stream is fine; re-deriving the rule is not.
+  assert.doesNotMatch(
+    page,
+    /playerPlaying\.value = [^\n]*asBool\(p\.paused\)/,
+    `and the ${name} page does not keep its own copy of the rule`,
+  )
+}
+
+// eslint-disable-next-line no-console
+console.info('free tv health: ok')

@@ -487,8 +487,12 @@ assert.match(mpv, /videoWidth\.value === 0 && !moving\.value\)[\t\v\f\r \xA0\u16
 assert.match(mpv, /defineExpose\(\{[\s\S]*?\bmoving,/, 'the watch pages can read it')
 const premiumWatch = readFileSync(new URL('../app/pages/live-tv/premium/watch.vue', import.meta.url), 'utf8')
 const freeWatch = readFileSync(new URL('../app/pages/live-tv/watch.vue', import.meta.url), 'utf8')
-assert.match(premiumWatch, /p\.videoWidth > 0\) \|\| asBool\(p\.moving\)/, 'Premium TV counts a moving clock as a picture, so a real start resets the reconnect counter')
-assert.match(freeWatch, /p\.videoWidth > 0\) \|\| asBool\(p\.moving\)/, 'Free TV counts it too')
+// The picture test lives in the shared mirror now, so it is one rule rather
+// than two copies that drifted. Both pages read it through there.
+const mirrorSrc = readFileSync(new URL('../app/composables/usePlayerMirror.ts', import.meta.url), 'utf8')
+assert.match(mirrorSrc, /p\.videoWidth > 0\) \|\| asBool\(p\.moving\)/, 'a moving clock counts as a picture, so a real start resets the reconnect counter')
+assert.match(premiumWatch, /usePlayerMirror\(\)/, 'Premium TV reads the player through it')
+assert.match(freeWatch, /usePlayerMirror\(\)/, 'and so does Free TV')
 
 // …and some live HLS on Android plays with neither a size nor a moving clock, so
 // both pages sat on "Connecting" over a channel that was plainly on screen.
@@ -731,14 +735,14 @@ console.log('player: ok')
 // "Connecting", kept the chrome up and drew a Play button over a running
 // channel. Two values were lying.
 assert.match(
-  premiumWatch,
+  mirrorSrc,
   /playerPlaying\.value = picture && !asBool\(p\.paused\)/,
   'a picture that is not paused is playing — `started` is the page guessing',
 )
 assert.doesNotMatch(
-  premiumWatch,
+  mirrorSrc,
   /playerPlaying\.value = asBool\(p\.started\)/,
-  'the Free TV page dropped `started` in v0.6.39; Premium must not keep it',
+  'the Free TV page dropped `started` in v0.6.39; the shared rule must not bring it back',
 )
 // mpv's `pause` means paused. libVLC's isPlaying is also false while opening
 // and while starved, and the page renders either as a pause.
@@ -757,4 +761,4 @@ assert.match(
   /async function onPlaybackFailed\([\s\S]{0,700}?if \(hasPicture\.value\)\r?\n {4}return/,
   'a premium failure with a picture on screen is ignored',
 )
-assert.match(premiumWatch, /hasPicture\.value = picture/, 'and the page keeps the picture where the handler can see it')
+assert.match(mirrorSrc, /hasPicture\.value = picture/, 'and the shared mirror keeps the picture where the handler can see it')

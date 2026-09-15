@@ -41,41 +41,28 @@ const playerRef = ref<{
   ipc: (command: unknown[]) => Promise<unknown>
 } | null>(null)
 
-/** Not `flag` — that name is already `app/utils/flag.ts` and auto-import
- *  colliding with it crashed this page's setup, so Free TV never mounted. */
-function asBool(v: boolean | { value?: boolean } | undefined): boolean {
-  if (v && typeof v === 'object' && 'value' in v)
-    return !!v.value
-  return !!v
-}
-
-function asText(v: string | { value?: string } | undefined): string {
-  if (typeof v === 'string')
-    return v
-  if (v && typeof v === 'object' && 'value' in v)
-    return v.value ?? ''
-  return ''
-}
-
 /** Ref to <live-tv-live-player-overlay> for `show()` on activity. */
 const overlayRef = ref<{ show: () => void } | null>(null)
-
-/** Reactive mirror of the player's state, polled every 500ms while mounted. */
-const playerPlaying = ref(false)
-const hasPicture = ref(false)
-const playerBehindLive = ref(false)
-const playerVolume = ref(100)
-const playerMuted = ref(false)
 /**
- * Mirrored from the player rather than sensed here: on X11 and Win32 mpv's
- * window is in front of the page and swallows every mousemove, so the HUD's own
- * DOM events go quiet the moment the cursor is over the picture.
+ * The player's state, read by the shared mirror both live pages use.
+ *
+ * `playerChrome` is mirrored rather than sensed here: on X11 and Win32 mpv's
+ * window is in front of the page and swallows every mousemove, so the HUD's
+ * own DOM events go quiet the moment the cursor is over the picture. And
+ * `playerCatchError` is deliberately not merged into the explicit error refs —
+ * it can be transient, a brief open-failure the player recovers from on its
+ * own. It is aggregated in `overlayError` below.
  */
-const playerChrome = ref(false)
-/** Live mirror of MpvPlayer's own catchError — NOT merged into the explicit
- *  error refs, because catchError can be transient (a brief open-failure that
- *  mpv itself recovers from). Aggregated in overlayError below. */
-const playerCatchError = ref('')
+const {
+  hasPicture,
+  playerPlaying,
+  playerBehindLive,
+  playerVolume,
+  playerMuted,
+  playerChrome,
+  playerCatchError,
+  mirror,
+} = usePlayerMirror()
 
 let pollHandle: ReturnType<typeof setInterval> | null = null
 
@@ -87,19 +74,7 @@ function syncPlayerState() {
   const p = playerRef.value
   if (!p)
     return
-  const hadPicture = hasPicture.value
-  // A size, or a clock that is moving — see `moving` in MpvPlayer. libVLC often
-  // reports no size at all for a live channel on Android.
-  hasPicture.value = (typeof p.videoWidth === 'number' && p.videoWidth > 0) || asBool(p.moving)
-  // The picture decides. Requiring `started` as well meant a channel could play
-  // while the page still called it not-playing, which is what kept the
-  // connecting panel up and stopped the controls ever auto-hiding.
-  playerPlaying.value = hasPicture.value && !asBool(p.paused)
-  playerBehindLive.value = asBool(p.behindLive)
-  playerVolume.value = typeof p.volume === 'number' ? p.volume : 100
-  playerMuted.value = asBool(p.muted)
-  playerChrome.value = asBool(p.ui)
-  playerCatchError.value = asText(p.errorMsg ?? p.catchError)
+  const { gainedPicture } = mirror(p)
 
   // Frames on screen clear the last attempt's errors — not `playerPlaying`,
   // which carries `paused` with it, and live backends get `paused` wrong (the
@@ -107,7 +82,7 @@ function syncPlayerState() {
   // also pins on `error`: a start-up line from the previous channel sat in
   // `overlayError` over a picture, holding the chrome open and painting an
   // error card on a stream the viewer was watching.
-  if (hasPicture.value && !hadPicture) {
+  if (gainedPicture) {
     errorMsg.value = ''
     resolveError.value = ''
     playerCatchError.value = ''

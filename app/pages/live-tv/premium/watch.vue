@@ -89,36 +89,27 @@ const playerRef = ref<{
   ensureStarted: () => void | Promise<void>
 } | null>(null)
 
-function asBool(v: boolean | { value?: boolean } | undefined): boolean {
-  if (v && typeof v === 'object' && 'value' in v)
-    return !!v.value
-  return !!v
-}
-
-function asText(v: string | { value?: string } | undefined): string {
-  if (typeof v === 'string')
-    return v
-  if (v && typeof v === 'object' && 'value' in v)
-    return v.value ?? ''
-  return ''
-}
 const overlayRef = ref<{ show: () => void, hide: () => void, visible: boolean } | null>(null)
 
-const playerPlaying = ref(false)
-/** Frames on screen. Hoisted so the failure handler can defer to it too. */
-const hasPicture = ref(false)
-const playerBehindLive = ref(false)
-const playerVolume = ref(100)
-const playerMuted = ref(false)
-const playerCatchError = ref('')
-const playerPosition = ref(0)
-const playerDuration = ref(0)
 /**
- * Mirrored from the player rather than sensed here: on X11 and Win32 mpv's
+ * The player's state, read by the shared mirror both live pages use.
+ *
+ * `playerChrome` is mirrored rather than sensed here: on X11 and Win32 mpv's
  * window is in front of the page and swallows every mousemove, so the HUD's
  * own DOM events go quiet the moment the cursor is over the picture.
  */
-const playerChrome = ref(false)
+const {
+  hasPicture,
+  playerPlaying,
+  playerBehindLive,
+  playerVolume,
+  playerMuted,
+  playerChrome,
+  playerPosition,
+  playerDuration,
+  playerCatchError,
+  mirror,
+} = usePlayerMirror()
 
 const aspectRatio = ref<'contain' | 'cover' | 'fill'>('contain')
 const guideLoading = ref(false)
@@ -444,52 +435,19 @@ function syncPlayerState(): void {
   const p = playerRef.value
   if (!p)
     return
-  const wasPlaying = playerPlaying.value
-  // A size, or a clock that is moving. libVLC often never reports a live
-  // channel's size on Android, and on that test alone a channel could play for
-  // minutes as "opening" while every ordinary drop counted towards the four
-  // reconnects — see `moving` in MpvPlayer.
-  const picture = (typeof p.videoWidth === 'number' && p.videoWidth > 0) || asBool(p.moving)
-  hasPicture.value = picture
-  // A picture that is not paused is playing. `started` is the page's own
-  // bookkeeping and was in this test until now — the same mistake the Free TV
-  // page had until v0.6.39, fixed there and left here, which is why that page
-  // came right and this one did not. A channel whose picture is on screen is
-  // playing whatever the flag says.
-  playerPlaying.value = picture && !asBool(p.paused)
-  // Why the HUD disagrees with the player, in one line a second.
-  //
-  // The device settled the first half of this: libVLC reaches Vout in under
-  // two seconds and the clock runs, and MpvPlayer's own "no picture yet" line
-  // stops at exactly that moment — so the player knows it has a picture. The
-  // page went on printing "Connecting to live stream…" over it, and Retry,
-  // which changes nothing about the stream, cleared it. So one of the values
-  // below is not what the player thinks it is, and none of them can be seen
-  // from outside. A release WebView has no devtools and no console; this is
-  // the only way to read them.
+  const { picture, gainedPicture } = mirror(p)
+
+  // Why the HUD disagrees with the player, in one line a second. A release
+  // WebView has no devtools and no console, so this is the only way to read
+  // these from outside.
   if (premium.player !== 'playing' && Date.now() - lastStateLog > 1000) {
     lastStateLog = Date.now()
-    androidLog(`premium hud=${premium.player} playing=${playerPlaying.value} started=${asBool(p.started)} paused=${asBool(p.paused)} moving=${asBool(p.moving)} buffering=${asBool(p.buffering)} w=${typeof p.videoWidth === 'number' ? p.videoWidth : 'n/a'} picture=${picture} pos=${playerPosition.value}`)
+    androidLog(`premium hud=${premium.player} playing=${playerPlaying.value} paused=${asBool(p.paused)} moving=${asBool(p.moving)} buffering=${asBool(p.buffering)} w=${typeof p.videoWidth === 'number' ? p.videoWidth : 'n/a'} picture=${picture} pos=${playerPosition.value}`)
   }
 
-  playerBehindLive.value = asBool(p.behindLive)
-  playerVolume.value = typeof p.volume === 'number' ? p.volume : 100
-  playerMuted.value = asBool(p.muted)
-  playerChrome.value = asBool(p.ui)
-  playerPosition.value = typeof p.position === 'number' ? p.position : 0
-  playerDuration.value = typeof p.duration === 'number' ? p.duration : 0
-
-  // Drop stale player errors while the clock is moving — a log line from
-  // startup must not cover a title that is already playing.
-  if (playerPlaying.value || playerPosition.value > 0.5)
-    playerCatchError.value = ''
-  else
-    playerCatchError.value = asText(p.errorMsg ?? p.catchError)
-
-  // Successful start → clear any stale errors from the previous load or
-  // reconnect attempt. Otherwise a dead-token error sits forever under a
-  // perfectly good picture.
-  if (playerPlaying.value && !wasPlaying) {
+  // A picture arriving clears the last attempt's errors. Otherwise a
+  // dead-token line from the previous load sits under a good one.
+  if (gainedPicture) {
     premium.resetPlayer()
     premium.setPlayer('playing')
     playerCatchError.value = ''
