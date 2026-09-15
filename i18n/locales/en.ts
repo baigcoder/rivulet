@@ -721,6 +721,7 @@ export default {
   "This provider returned no channels for that filter.": "This provider returned no channels for that filter.",
   "This provider returned nothing for that category.": "This provider returned nothing for that category.",
   "This release has no torrent to download — Play it instead.": "This release has no torrent to download — Play it instead.",
+  "This release stopped downloading before it could start — it may have no seeders left. Try another one.": "This release stopped downloading before it could start — it may have no seeders left. Try another one.",
   "This runs once and is then cached on this device.": "This runs once and is then cached on this device.",
   "This source answered with an error clip instead of the title — its debrid quota is exhausted or its key was rejected.": "This source answered with an error clip instead of the title — its debrid quota is exhausted or its key was rejected.",
   "This source excludes both 3D and non-3D releases, so it will never return anything. Reconfigure it and leave one of those filters off.": "This source excludes both 3D and non-3D releases, so it will never return anything. Reconfigure it and leave one of those filters off.",

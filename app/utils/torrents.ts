@@ -1016,6 +1016,84 @@ export function streamUrl(id: number, index: number) {
 }
 
 /**
+ * How much of a file counts as "enough to open it": mpv probes 512 KiB before
+ * it will name a format, then wants a keyframe and a little audio. Four
+ * mebibytes covers that on anything we stream, and is the slice `primeTail`
+ * fetches from the other end.
+ */
+export const PRIME_BYTES = 4 * 1024 ** 2
+
+/**
+ * A reader held open on the engine: `ready` settles once the bytes asked for
+ * are on disk, `abort` lets the reader go.
+ */
+export interface Priming {
+  ready: Promise<boolean>
+  abort: () => void
+}
+
+/**
+ * Hold a reader on the *first* bytes of the file from the moment the torrent
+ * has an id.
+ *
+ * The engine already queues a file's own pieces first-then-last-then-in-order,
+ * but a registered reader's pieces jump that queue: the picker walks every open
+ * reader's pieces before it walks the natural order. That is the whole
+ * mechanism — and the only reader open before mpv connected was `primeTail`'s,
+ * so for the mount, the layout wait and the readiness probe the *end* of the
+ * film was the entire priority list while the player sat on "Buffering" waiting
+ * for byte zero. This puts a reader on the head across that window and keeps it
+ * there while mpv seeks off to the index and back.
+ *
+ * The range is open-ended and the *pull* stops at `bytes` rather than the
+ * request ending there: a reader that reached the end of its range is a reader
+ * the engine stops queueing for, and the point is to still be holding the head
+ * when mpv arrives.
+ */
+export function primeHead(id: number, index: number, bytes = PRIME_BYTES): Priming {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 120_000)
+  // Kept past the read loop deliberately: a collected reader is a dropped one,
+  // and a dropped one stops counting towards what the engine fetches next.
+  let held: ReadableStreamDefaultReader<Uint8Array> | null = null
+
+  const ready = (async () => {
+    try {
+      const res = await fetch(streamUrl(id, index), {
+        signal: ctrl.signal,
+        cache: 'no-store',
+        headers: { Range: 'bytes=0-' },
+      })
+      const reader = res.body?.getReader()
+      if (!reader)
+        return false
+      held = reader
+      let got = 0
+      while (got < bytes) {
+        const { done, value } = await reader.read()
+        if (done)
+          break
+        got += value?.byteLength ?? 0
+      }
+      return got > 0
+    }
+    catch {
+      return false // best effort: without it the head still arrives, only later
+    }
+  })()
+
+  return {
+    ready,
+    abort: () => {
+      clearTimeout(timer)
+      ctrl.abort()
+      void held?.cancel().catch(() => {})
+      held = null
+    },
+  }
+}
+
+/**
  * Download the end of a file while the player is still reading its start.
  *
  * An MP4 muxed for download keeps its index (`moov`) after the video and an MKV
@@ -1024,13 +1102,21 @@ export function streamUrl(id: number, index: number) {
  * queues pieces ahead of every open reader, so a reader parked on the tail puts
  * that piece in the queue beside the head's. It reads to the end on purpose: a
  * cancelled reader stops being queued for.
+ *
+ * It belongs *behind* the head, never beside it: the picker takes one piece per
+ * open reader in turn, so a tail opened alongside the head halves the rate of
+ * the only bytes that can start the film. Hence `signal` — how the caller both
+ * sequences it and lets go of it on the way out.
  */
-export async function primeTail(id: number, index: number, bytes = 4 * 1024 ** 2) {
+export async function primeTail(id: number, index: number, signal?: AbortSignal, bytes = PRIME_BYTES) {
+  if (signal?.aborted)
+    return
   const file = (await torrentDetails(id))?.files?.[index]
   if (!file || file.length <= bytes * 2)
     return
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), 120_000)
+  signal?.addEventListener('abort', () => ctrl.abort())
   try {
     const res = await fetch(streamUrl(id, index), {
       signal: ctrl.signal,
@@ -1110,6 +1196,31 @@ export function haveAt(map: PieceMap, haves: Uint8Array, fraction: number) {
   // the file's own bytes, and another file may not even be selected.
   const has = (i: number) => i < first || i > last || !!(haves[i >> 3]! & (0x80 >> (i & 7)))
   return has(piece - 1) && has(piece) && has(piece + 1)
+}
+
+/**
+ * How much of the opening slice is on disk, 0-100.
+ *
+ * The one number worth showing while the player has none of its own. mpv
+ * reports no cache state and no duration until its demuxer opens, so between
+ * being handed the URL and the first frame every other measure of progress is
+ * null — which is what left a torrent on an indeterminate spinner beside a
+ * swarm figure that climbed whether or not the bytes arriving were the ones
+ * being waited on.
+ *
+ * Counted in pieces rather than bytes because pieces are what the engine has or
+ * has not got; a slice smaller than one piece is 0% until that piece lands.
+ */
+export function headFill(map: PieceMap, haves: Uint8Array, bytes = PRIME_BYTES) {
+  const at = (byte: number) => Math.min(map.pieces - 1, Math.floor((byte / map.total) * map.pieces))
+  const first = at(map.start)
+  const last = at(map.start + Math.min(bytes, map.length))
+  let have = 0
+  for (let i = first; i <= last; i++) {
+    if (haves[i >> 3]! & (0x80 >> (i & 7)))
+      have++
+  }
+  return Math.round((have / (last - first + 1)) * 100)
 }
 
 /** Everything the engine holds, stats included — one request per poll. */

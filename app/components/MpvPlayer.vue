@@ -332,6 +332,16 @@ const started = ref(false)
  */
 const moving = ref(false)
 /**
+ * This stream has shown a picture at some point since it started.
+ *
+ * `moving` and `videoWidth` are both readings of *now*, and a stall is
+ * precisely the moment they go false — so neither can be asked "was this ever
+ * playing?", which is the question the live recovery below has to answer
+ * before it reopens a channel. Cleared by every start, so it can never carry
+ * an answer over from the last one.
+ */
+const sawPicture = ref(false)
+/**
  * A live backend has reported "not running" once already. Live is given a
  * second reading before the player is torn down — see the poll.
  */
@@ -351,6 +361,25 @@ let confirmedStopped = false
  * that has not started in twelve seconds is not going to.
  */
 const LIVE_START_GRACE_MS = 30_000
+
+/**
+ * How long a torrent stream may take to hand over its opening bytes, and how
+ * long it may then go without handing over any more.
+ *
+ * A torrent is allowed to be slow. It is not allowed to be silent. The deadline
+ * above is for a server that either answers or does not; a cold swarm can
+ * legitimately spend most of a minute finding peers, so a deadline here would
+ * fail films that were about to play. What is not legitimate is a head that has
+ * stopped filling — nothing is going to open that stream, and it used to sit on
+ * an indeterminate spinner for ever with no error, no failover and no way out
+ * but Back.
+ *
+ * The stall window is deliberately wider than the grace: a piece is megabytes,
+ * so on a thin line one arriving is a minute of nothing followed by a jump, and
+ * that is a stream that is working.
+ */
+const ENGINE_START_GRACE_MS = 45_000
+const ENGINE_STALL_MS = 60_000
 
 /** When the current stream was handed to the backend. See `streamDied`. */
 let startedAt = 0
@@ -376,6 +405,17 @@ const position = ref(0)
 const cacheEnd = ref(0)
 /** 0–100 fill of the startup buffer, from mpv / <video> / libVLC. */
 const cacheFill = ref<number | null>(null)
+/**
+ * How much of the opening slice the engine holds, 0-100, for the window where
+ * mpv has nothing to report. Null until the first bitfield is read — which is
+ * also what arms the watchdog, so an engine that cannot be asked at all is
+ * `waitForStream`'s to fail rather than this.
+ */
+const headPct = ref<number | null>(null)
+/** When `headPct` last went *up*. A slow head is fine; a stopped one is not. */
+let headMovedAt = 0
+/** The file's place in the torrent's pieces. Cheap, and it never changes. */
+let headMap: PieceMap | null = null
 /** High-water while the loader is up, so a jittery cache doesn't flicker 40→28. */
 const loadPeak = ref(0)
 const volume = ref(100)
@@ -2144,6 +2184,9 @@ async function startPlayer() {
     cacheEnd.value = 0
     cacheFill.value = null
     loadPeak.value = 0
+    headPct.value = null
+    headMap = null
+    headMovedAt = 0
     paused.value = false
     silentSaid = false
     started.value = true
@@ -2162,6 +2205,7 @@ async function startPlayer() {
     videoWidth.value = 0
     videoHeight.value = 0
     moving.value = false
+    sawPicture.value = false
     confirmedStopped = false
     lastClock = -1
     lastClockAt = 0
@@ -2526,7 +2570,13 @@ async function poll() {
   if (typeof p.pause === 'boolean')
     paused.value = p.pause
   buffering.value = p['paused-for-cache'] === true
-  if (isLive.value && started.value && videoWidth.value > 0 && buffering.value && !behindLive.value) {
+  // `videoWidth > 0` was the test, and on Android it is false for most live
+  // channels for the whole of playback — libVLC reports no size for a live
+  // track, which is the reason `moving` exists at all. So the one thing that
+  // recovers a stalled channel never ran on the platform that stalls most, and
+  // a drop mid-programme sat on "Reconnecting" until the viewer pressed Back.
+  // `sawPicture` is the same question asked in a way both backends can answer.
+  if (isLive.value && started.value && sawPicture.value && buffering.value && !behindLive.value) {
     if (!liveStallSince) {
       liveStallSince = Date.now()
     }
@@ -2612,6 +2662,8 @@ async function poll() {
   // stale one cannot survive into the next stream.
   moving.value = (lastClockAt > 0 && Date.now() - lastClockAt < 2000)
     || p['vo-configured'] === true
+  if (moving.value || videoWidth.value > 0)
+    sawPicture.value = true
 
   // While there is still no picture the HUD is saying "Connecting", and on a
   // phone that is all anyone can see. libVLC's own trace proved it was playing
@@ -2744,6 +2796,16 @@ function togglePlay() {
     return
   }
   const willPause = !paused.value
+  // Play on a live channel is not the opposite of pause. The live edge moved
+  // on while it was held, and what is behind the demuxer is twenty seconds of
+  // stale cache with no connection behind it: clearing `pause` plays that out
+  // and then stalls for good, which is the "press play, sit on Reconnecting,
+  // channel never arrives" report. Reopening the URL is what live means —
+  // `goLive` already says so, and this is the button people actually press.
+  if (isLive.value && !willPause) {
+    void goLive()
+    return
+  }
   paused.value = !paused.value
   ipc(['set_property', 'pause', paused.value])
   // The LIVE jump has to appear on pause, not only after resume: the
@@ -2771,11 +2833,24 @@ async function goLive() {
 }
 
 function seekTo(t: number) {
+  // A live stream has no timeline to move along, and asking one to move
+  // anyway is not a no-op: libVLC takes `time-pos` as `setTime` and answers a
+  // live channel by tearing its output down, which is a black picture that
+  // never comes back. The buttons and the seek bar are already hidden for
+  // live; the double-tap thirds and the keyboard/remote keys were not, so a
+  // tap on the side of the picture killed the channel. Guarded here rather
+  // than at the five call sites, because the next path added would miss it.
+  if (isLive.value)
+    return
   position.value = Math.max(0, Math.min(duration.value || t, t))
   ipc(['set_property', 'time-pos', position.value])
 }
 
 function seekBy(delta: number) {
+  // `seekTo` would refuse anyway; returning here is what keeps the OSD from
+  // announcing a jump to 0:00 / 0:00 on a channel that cannot be jumped.
+  if (isLive.value)
+    return
   seekTo(position.value + delta)
   osd(`${fmt(position.value)} / ${fmt(duration.value)}`)
 }
@@ -3191,7 +3266,9 @@ const loadPercent = computed(() => {
     return null
   if (loadPeak.value > 0)
     return loadPeak.value
-  return cacheFill.value
+  // Before mpv opens the file it answers no cache state at all, so the engine's
+  // own bitfield is the only thing that can say whether the wait is working.
+  return cacheFill.value ?? headPct.value
 })
 
 watch(centre, c => {
@@ -3200,6 +3277,64 @@ watch(centre, c => {
     cacheFill.value = null
   }
 })
+
+/**
+ * Is the opening of the film arriving?
+ *
+ * Runs only while the player itself has nothing to say — from the moment there
+ * is a URL until mpv reports a duration — and only for a torrent, where the
+ * bytes are the engine's to fetch. One request a second, against the same
+ * bitfield the seek previews read.
+ */
+function needsHead() {
+  if (!fromEngine.value || !props.src || ended.value || errorMsg.value)
+    return false
+  // A clock that is moving, or a picture with a size, is a stream that has
+  // started whatever else it has failed to report — the same reading the
+  // deadline above takes, and for the same reason.
+  return !duration.value && !moving.value && !videoWidth.value
+}
+
+async function readHead() {
+  const parts = streamParts(props.src)
+  if (!parts || !needsHead())
+    return
+  headMap ??= await pieceMap(parts.id, parts.index)
+  const bits = await torrentHaves(parts.id)
+  if (!headMap || !bits || !needsHead())
+    return
+
+  const pct = headFill(headMap, bits)
+  // The first reading is progress by definition: it is the point from which
+  // "nothing since" can be measured at all.
+  if (headPct.value == null || pct > headPct.value)
+    headMovedAt = Date.now()
+  headPct.value = pct
+
+  // Neither clock starts before mpv has actually been handed the stream.
+  const since = started.value && startedAt ? Date.now() - startedAt : 0
+
+  // The opening is on the disk and the player still has not opened it. That is
+  // the failure a Direct link gets a twelve-second deadline for; here it waits
+  // out both windows, because mpv reads the tail of a large file before it will
+  // name a duration and that seek is the swarm's to answer too.
+  if (pct >= 100) {
+    if (since > ENGINE_START_GRACE_MS + ENGINE_STALL_MS && !streamDied())
+      errorMsg.value = $t('This stream did not start. Try another quality, or change How Play works in Settings → Sources.')
+    return
+  }
+
+  // Slow is not a failure; stopped is.
+  if (since < ENGINE_START_GRACE_MS || Date.now() - headMovedAt < ENGINE_STALL_MS)
+    return
+  if (!streamDied())
+    errorMsg.value = $t('This release stopped downloading before it could start — it may have no seeders left. Try another one.')
+}
+
+// `readHead` is a hoisted function declaration, so wiring the interval up beside
+// the computed it feeds is safe.
+const { pause: stopHead, resume: startHead } = useIntervalFn(readHead, 1000, { immediate: false, immediateCallback: true })
+watch(needsHead, on => (on ? startHead() : stopHead()), { immediate: true })
 
 // ---------------------------------------------------------------------------
 // Keyboard shortcuts (ignored while typing in a field).
@@ -3462,6 +3597,14 @@ function tapVideo(e: PointerEvent) {
 
   if (!started.value)
     return
+
+  // A live channel has no timeline to divide into thirds, so the whole picture
+  // is the play/pause target. Left as thirds it flashed a seek arrow over a
+  // stream that had just been killed by the seek behind it.
+  if (isLive.value) {
+    togglePlay()
+    return
+  }
 
   // Which third of the picture was hit. The middle stays neutral so a tap aimed
   // at the centre of the frame never scrubs it by accident.
@@ -3872,7 +4015,7 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
           <span v-if="loadPercent != null" class="text-label-small font-medium tabular-nums">{{ loadPercent }}</span>
         </v-progress-circular>
         <span>
-          {{ $t('Buffering') }}<template v-if="loadPercent != null"> · {{ loadPercent }}%</template><template v-else-if="status && !isLive"> · {{ status }}</template>
+          {{ $t('Buffering') }}<template v-if="status && !isLive"> · {{ status }}</template><template v-else-if="loadPercent != null"> · {{ loadPercent }}%</template>
         </span>
       </template>
     </div>

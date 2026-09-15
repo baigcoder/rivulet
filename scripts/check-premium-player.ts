@@ -51,6 +51,7 @@ const HEADER = `${ROOT}app/components/live-tv/LiveBrowseHeader.vue`
 const SIDEBAR = `${ROOT}app/components/premium-tv/PremiumSidebar.vue`
 const ACCOUNT = `${ROOT}app/components/premium-tv/PremiumAccountCard.vue`
 const CONNECT = `${ROOT}app/components/premium-tv/PremiumConnectForm.vue`
+const MIRROR = `${ROOT}app/composables/usePlayerMirror.ts`
 
 /** Everything the Premium TV front end is made of, for the sweeps below. */
 const FRONTEND = [STORE, COMPOSABLE, UTILS, WATCH, GRID, VOD_GRID, VOD_SIDEBAR, MOVIE_PAGE, SERIES_PAGE, DETAIL, CARD, EPG, BROWSER, HEADER, SIDEBAR, ACCOUNT, CONNECT]
@@ -81,6 +82,8 @@ const read = (f: string) => src.get(f) ?? readFileSync(f, 'utf8')
 const shimSrc = readFileSync(SHIM, 'utf8')
 const storeSrc = read(STORE)
 const watchSrc = read(WATCH)
+/** Both live pages read the player through this now; the tests follow it. */
+const mirrorSrc = readFileSync(MIRROR, 'utf8')
 
 // ── Reconnect: bounded, and backing off ──────────────────────────
 
@@ -473,8 +476,14 @@ check('a live channel shows a loader until the first frame', () => {
     'the watch page must treat buffering as busy',
   )
   assert.ok(
-    /videoWidth === 'number' && p\.videoWidth > 0/.test(watchSrc),
+    /videoWidth === 'number' && p\.videoWidth > 0/.test(mirrorSrc),
     'playing must wait for a decoded frame, not just mpv having started',
+  )
+  // Read off the mirror because that is where the reading moved. Left pointing
+  // at the page, this went red the day of the refactor and stayed red.
+  assert.ok(
+    /playerPaused\.value = asBool\(p\.paused\)/.test(mirrorSrc),
+    'and a pause is read on its own, so it is not mistaken for a channel that never opened',
   )
 })
 

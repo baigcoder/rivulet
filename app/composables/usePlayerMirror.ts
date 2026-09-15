@@ -51,6 +51,16 @@ export function usePlayerMirror() {
   /** Frames on screen. The ground truth every other decision defers to. */
   const hasPicture = ref(false)
   const playerPlaying = ref(false)
+  /**
+   * The viewer asked for this stop.
+   *
+   * Kept apart from `playerPlaying`, which carries the pause inside it and so
+   * reads the same for a channel someone stopped and one that never opened.
+   * Both pages then said "connecting" over a deliberate pause — and on Android
+   * within two seconds of it, because libVLC reports no size for a live track
+   * and the only reading left is a clock that a pause stops.
+   */
+  const playerPaused = ref(false)
   const playerBehindLive = ref(false)
   const playerVolume = ref(100)
   const playerMuted = ref(false)
@@ -75,7 +85,8 @@ export function usePlayerMirror() {
     // A picture that is not paused is playing. `started` was in this test on
     // the Premium page until v0.6.47 and is the page's own bookkeeping, not a
     // fact about the stream.
-    playerPlaying.value = picture && !asBool(p.paused)
+    playerPaused.value = asBool(p.paused)
+    playerPlaying.value = picture && !playerPaused.value
     playerBehindLive.value = asBool(p.behindLive)
     playerVolume.value = typeof p.volume === 'number' ? p.volume : 100
     playerMuted.value = asBool(p.muted)
@@ -98,6 +109,7 @@ export function usePlayerMirror() {
   return {
     hasPicture,
     playerPlaying,
+    playerPaused,
     playerBehindLive,
     playerVolume,
     playerMuted,

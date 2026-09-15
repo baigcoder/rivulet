@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import process from 'node:process'
-import { diskBudget, ENGINE, findReleases, haveAt, isAwkward, normalizeSource, NoServerStream, parseRelease, pickBest, pickPlay, pickSubtitleFiles, pickVideoFile, planEviction, planNetwork, ranked, releaseFileName, releaseKey, releaseLangs, releaseQuality, serverCandidates, setSources, startTorrent, streamParts, toRelease, uploadLimit, usedBytes, withoutUhd } from '../app/utils/torrents'
+import { diskBudget, ENGINE, findReleases, haveAt, headFill, isAwkward, normalizeSource, NoServerStream, parseRelease, pickBest, pickPlay, pickSubtitleFiles, pickVideoFile, planEviction, planNetwork, PRIME_BYTES, primeHead, primeTail, ranked, releaseFileName, releaseKey, releaseLangs, releaseQuality, serverCandidates, setSources, startTorrent, streamParts, toRelease, uploadLimit, usedBytes, withoutUhd } from '../app/utils/torrents'
 // Self-check for the torrent parser/ranker: `bun scripts/check-torrents.ts`.
 // The fixture is the response shape a source answers with, filled in with a
 // public-domain film. `--live <source-url> <imdb-id>` also searches for real.
@@ -468,6 +468,21 @@ assert.ok(!haveAt(map, half, 0.4), 'the edge is not previewed, only the middle')
 assert.ok(haveAt(map, half, 0), 'the very start needs nothing before it')
 assert.ok(haveAt(map, bits(15, 16, 17, 18, 19), 1), 'and the end nothing after it')
 
+// What the player shows while mpv is still silent — counted in pieces, because
+// the engine has a piece or it has not and a bitfield is all it will say.
+// `map`'s file starts at piece 10, so its opening 400 bytes are pieces 10-14.
+assert.equal(headFill(map, bits(), 400), 0, 'nothing on disk is nothing to show')
+assert.equal(headFill(map, half, 400), 100, 'the opening slice is five pieces, and all five are in')
+assert.equal(headFill(map, bits(10, 11, 12), 400), 60, 'three of the five')
+assert.equal(headFill(map, bits(15, 16, 17, 18, 19), 400), 0, 'the far end of the film counts for nothing here')
+// The pack's own first pieces belong to another episode, and answering with
+// them would report an opening that is not this file's.
+assert.equal(headFill(map, bits(0, 1, 2, 3, 4), 400), 0, 'measured from the file, not the torrent')
+// A slice longer than the file is the whole file, not an index past the end.
+assert.equal(headFill(map, all, 10 * 1024 ** 2), 100, 'a slice bigger than the file is the file')
+assert.equal(headFill(map, bits(10, 11, 12, 13, 14), 10 * 1024 ** 2), 50, 'and is still measured across all of it')
+assert.ok(PRIME_BYTES > 0, 'the default slice is the one the player asks for')
+
 // A hole left by seeking forward is not "downloaded up to here".
 assert.ok(!haveAt(map, bits(10, 11, 15, 16, 17, 18, 19), 0.35), 'a gap reads as missing')
 
@@ -492,12 +507,17 @@ assert.equal(uploadLimit(100 * 1024, false, false), 64 * 1024)
 assert.equal(uploadLimit(0, true, false), 256 * 1024)
 assert.equal(uploadLimit(100 * 1024, true, false), 256 * 1024)
 
-// The engine accepts incoming peers, and a stream fetches its tail with its head.
+// The engine accepts incoming peers, and a stream primes its head before its tail.
 const libRs = await Bun.file(new URL('../src-tauri/src/lib.rs', import.meta.url)).text()
 assert.match(libRs, /listen: with_listen\.then\(\|\| ListenerOptions \{[^}]*enable_upnp_port_forwarding: true/, 'the engine listens for incoming peers')
 assert.match(libRs, /new_with_opts\(download_dir\.clone\(\), opts\(true, true\)\)/, 'listening is the first try')
 const watchVue = await Bun.file(new URL('../app/pages/watch.vue', import.meta.url)).text()
-assert.match(watchVue, /void downloads\.focus\(started\.id\)\s+\/\/[^\n]*\n\s+if \(!started\.url && started\.id >= 0\)\s+void primeTail\(started\.id, started\.index\)/, 'the tail is primed as the stream starts')
+assert.match(watchVue, /void downloads\.focus\(started\.id\)\s+\/\/[^\n]*\n\s+if \(!started\.url && started\.id >= 0\)\s+prime\(started\.id, started\.index\)/, 'the stream is primed as it starts')
+// The order is the fix: a tail opened beside the head takes half the pieces the
+// player is waiting on, and opened before mpv connects it takes all of them.
+assert.match(watchVue, /const reader = primeHead\(id, index\)/, 'the head reader goes first')
+assert.match(watchVue, /void reader\.ready\.then\(async ok => \{[\s\S]*await primeTail\(id, index, stop\.signal\)/, 'and the tail waits for it')
+assert.match(watchVue, /onBeforeUnmount\(\(\) => \{\s+generation\+\+\s+releasePriming\(\)/, 'leaving the page lets both readers go')
 // A limit set in settings wins over all of it — that is what "override" means.
 assert.equal(uploadLimit(4 * MBPS, false, false, MBPS), MBPS)
 assert.equal(uploadLimit(4 * MBPS, true, false, 8 * MBPS), 8 * MBPS, 'even where the app would back off')
@@ -845,6 +865,75 @@ const promise = startTorrent({
 })
 assert.equal((await promise).id, 7, 'the name arrived with the lookup, and still adopted')
 assert.ok(!requests.some(u => u.startsWith('https://a.example')), 'and the sources were never asked')
+
+// --- Priming the stream -------------------------------------------------------
+// The engine fetches the pieces of every open reader before it fetches anything
+// else, so which readers are open — and in which order — is the whole of how
+// fast a film starts. The head has to be one of them from the moment the
+// torrent has an id; the tail must never be the only one.
+
+const FILM = { length: 2 * 1024 ** 3, name: 'Sintel.mkv' }
+let ranges: string[] = []
+let cancelled = false
+
+globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+  const url = String(input)
+  if (url === `${ENGINE}/torrents/7`)
+    return Response.json({ id: 7, info_hash: 'bbb', files: [FILM] })
+  const range = String(new Headers(init?.headers).get('range'))
+  ranges.push(range)
+  // The engine ends a closed range and keeps going on an open one, which is the
+  // difference the head reader depends on. A megabyte per pull, so the loop in
+  // `primeHead` has to count rather than take the first answer — that is what a
+  // half-downloaded file hands back.
+  const [, , end] = /bytes=(d+)-(d*)/.exec(range) ?? []
+  const limit = end ? Number(end) + 1 - Number(/bytes=(d+)/.exec(range)![1]) : Number.POSITIVE_INFINITY
+  let sent = 0
+  return new Response(new ReadableStream({
+    pull(c) {
+      const chunk = Math.min(1024 ** 2, limit - sent)
+      sent += chunk
+      c.enqueue(new Uint8Array(chunk))
+      if (sent >= limit)
+        c.close()
+    },
+    cancel() {
+      cancelled = true
+    },
+  }), { status: 206 })
+}) as typeof fetch
+
+ranges = []
+const primed = primeHead(7, 0)
+assert.equal(await primed.ready, true, 'the head is primed once enough bytes are in')
+assert.deepEqual(ranges, ['bytes=0-'], 'the head reader is open-ended: a range that ends releases the reader')
+assert.equal(cancelled, false, 'and is still held, so the engine keeps fetching the head while mpv connects')
+primed.abort()
+await Promise.resolve()
+assert.equal(cancelled, true, 'leaving the page lets it go')
+
+// The tail is sequenced behind the head by an AbortSignal — the same signal
+// that drops it on the way out. Aborted already means the page has moved on.
+ranges = []
+const stop = new AbortController()
+stop.abort()
+await primeTail(7, 0, stop.signal)
+assert.deepEqual(ranges, [], 'a tail whose signal is already spent asks the engine for nothing')
+
+ranges = []
+await primeTail(7, 0, new AbortController().signal)
+assert.deepEqual(
+  ranges,
+  [`bytes=${FILM.length - PRIME_BYTES}-${FILM.length - 1}`],
+  'and otherwise fetches exactly the last slice, where an MP4 keeps its index',
+)
+
+// A file smaller than two slices is all head — priming its tail would only
+// fetch what the head reader is already pulling.
+ranges = []
+FILM.length = PRIME_BYTES
+await primeTail(7, 0, new AbortController().signal)
+assert.deepEqual(ranges, [], 'nothing to prime on a file that is shorter than the slice')
 
 globalThis.fetch = realFetch
 setSources([])

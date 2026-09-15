@@ -173,6 +173,64 @@ assert.match(
   /hasPicture/,
   'the free HUD must not call a black screen "playing"',
 )
+
+// --- Pause is not a connection problem ----------------------------------------
+// Every reading of "there is a picture" is a reading of *now*, and on Android
+// the only one left for a live channel is the clock — libVLC reports no size
+// for a live track. A paused clock does not move, so within two seconds of a
+// pause the page could not tell a channel the viewer stopped from one that
+// never opened, and put the connecting panel over the first. It stayed up
+// through the resume, which is the whole "pause, play, Reconnecting for ever"
+// report.
+assert.match(
+  watchPage,
+  /!hasPicture\.value\s+&& !playerPaused\.value/,
+  'a channel the viewer paused is not still connecting',
+)
+// The reading itself belongs to the shared mirror — see the assertions on
+// usePlayerMirror below, where the rest of it is pinned.
+const premiumWatch = readFileSync(new URL('../app/pages/live-tv/premium/watch.vue', import.meta.url), 'utf8')
+assert.match(
+  premiumWatch,
+  /if \(asBool\(p\.paused\)\)\s+premium\.setPlayer\('paused'\)\s+else if \(asBool\(p\.buffering\) \|\| !picture\)/,
+  'Premium reads paused before buffering, for the same reason',
+)
+
+// --- A live stream has no timeline --------------------------------------------
+// The seek buttons and the bar are hidden for live. The double-tap thirds and
+// the keyboard keys were not, and libVLC answers `time-pos` on a live channel
+// by tearing its output down — a tap on the side of the picture went black and
+// stayed black.
+assert.match(
+  playerSrc,
+  /function seekTo\(t: number\) \{[\s\S]{0,700}?if \(isLive\.value\)\s+return/,
+  'seekTo refuses on live, at the one point every seek path goes through',
+)
+
+// --- Play on a live channel means the live edge -------------------------------
+// What is behind a paused live demuxer is twenty seconds of stale cache with no
+// connection behind it. Clearing `pause` plays that out and then stalls for
+// good; reopening the URL is what live means.
+assert.match(
+  playerSrc,
+  /if \(isLive\.value && !willPause\) \{\s+void goLive\(\)/,
+  'resuming a live channel reopens it rather than unpausing a dead buffer',
+)
+
+// --- The stall recovery has to run where the stalls are ------------------------
+// `videoWidth > 0` is false for most live channels on Android for the whole of
+// playback, so the one thing that recovers a stalled channel never ran on the
+// platform that stalls most.
+assert.match(
+  playerSrc,
+  /isLive\.value && started\.value && sawPicture\.value && buffering\.value/,
+  'the live recovery asks whether this stream ever had a picture, not whether it has one now',
+)
+assert.doesNotMatch(
+  playerSrc,
+  /isLive\.value && started\.value && videoWidth\.value > 0 && buffering\.value/,
+  'and never goes back to the reading libVLC cannot answer',
+)
 assert.match(
   readFileSync(new URL('../app/components/live-tv/LivePlayerOverlay.vue', import.meta.url), 'utf8'),
   /<footer[\s\S]{0,120}data-cut/,
@@ -543,7 +601,12 @@ assert.match(
 // and not the other. Each reached a viewer as the same complaint.
 const mirrorTs = readFileSync(new URL('../app/composables/usePlayerMirror.ts', import.meta.url), 'utf8')
 assert.match(mirrorTs, /export function usePlayerMirror\(\)/, 'the shared reading exists')
-assert.match(mirrorTs, /playerPlaying\.value = picture && !asBool\(p\.paused\)/, 'and it is the one that defines playing')
+assert.match(mirrorTs, /playerPlaying\.value = picture && !playerPaused\.value/, 'and it is the one that defines playing')
+// A pause is read here too, and not folded into `playerPlaying`: that one is
+// false for a channel the viewer stopped and for one that never opened alike,
+// so neither page could tell the connecting panel which it was looking at.
+assert.match(mirrorTs, /playerPaused\.value = asBool\(p\.paused\)/, 'the pause is one reading, taken where both pages read everything else')
+assert.match(mirrorTs, /playerPaused,/, 'and is handed back with the rest of it')
 assert.match(mirrorTs, /if \(picture \|\| playerPosition\.value > 0\.5\)/, 'and the one that suppresses a stale player error')
 for (const [name, page] of [['free', liveWatch], ['premium', premiumWatchSrc]] as const) {
   assert.match(page, /usePlayerMirror\(\)/, `the ${name} page reads the player through it`)

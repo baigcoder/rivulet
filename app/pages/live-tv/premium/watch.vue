@@ -478,10 +478,17 @@ function syncPlayerState(): void {
   // what printed "Connecting to live stream…" over a channel that was playing.
   if (!asBool(p.started) && !picture)
     return
-  if (asBool(p.buffering) || !picture)
-    premium.setPlayer('buffering')
-  else if (asBool(p.paused))
+  // Paused is read first, and not only when there is a picture to pause.
+  // "No picture" is as true of a channel the viewer stopped as of one that is
+  // starved, and on Android it becomes true within two seconds of the pause —
+  // libVLC reports no size for a live track, so the only reading left is the
+  // clock and a paused clock does not move. Tested the other way round, every
+  // pause turned into `buffering` and the HUD said the channel was still
+  // coming, through the pause and through the resume after it.
+  if (asBool(p.paused))
     premium.setPlayer('paused')
+  else if (asBool(p.buffering) || !picture)
+    premium.setPlayer('buffering')
   else
     premium.setPlayer('playing')
 }

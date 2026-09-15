@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import type { MediaType } from '~/utils/tmdb'
-import type { Release } from '~/utils/torrents'
+import type { Priming, Release } from '~/utils/torrents'
 import {
   mdiAccountGroup,
   mdiAlertCircleOutline,
@@ -117,6 +117,50 @@ function startedOnce() {
   return !!(src.value || errorMsg.value || noServerStream.value)
 }
 
+/** The engine readers this page is holding, so that leaving lets go of them. */
+let head: Priming | null = null
+let tail: AbortController | null = null
+
+/**
+ * Tell the engine which bytes the player is about to want, in the order it
+ * wants them.
+ *
+ * Both readers exist to make the engine's picker prefer the pieces mpv is
+ * about to ask for, and they are deliberately not concurrent: the picker takes
+ * one piece per open reader in turn, so a tail opened beside the head halves
+ * the rate of the only bytes that can start the film. Worse, the tail used to
+ * be opened *here* — before the component had mounted, before the layout wait
+ * and before the readiness probe — which left the end of the film as the whole
+ * priority list for several seconds while the player waited on byte zero. That
+ * is the download that reached two percent with nothing to show for it.
+ *
+ * So: the head first, the tail once there is enough to open the file with, and
+ * the head let go once the index is in — by then mpv's own reader is the one
+ * the engine should be following.
+ */
+function prime(id: number, index: number) {
+  releasePriming()
+  const reader = primeHead(id, index)
+  const stop = new AbortController()
+  head = reader
+  tail = stop
+  void reader.ready.then(async ok => {
+    if (!ok || stop.signal.aborted)
+      return
+    await primeTail(id, index, stop.signal)
+    if (head === reader)
+      reader.abort()
+  })
+}
+
+/** Let go of both readers: another start, or leaving the page. */
+function releasePriming() {
+  head?.abort()
+  head = null
+  tail?.abort()
+  tail = null
+}
+
 // The downloads store already polls every torrent's stats for the whole app, so
 // a second poll of this one would only ask the engine the same question twice.
 const stats = computed(() => downloads.torrents.find(t => t.id === torrentId.value)?.stats ?? null)
@@ -129,6 +173,7 @@ let generation = 0
 async function start() {
   const mine = ++generation
   const startedAt = Date.now()
+  releasePriming()
   errorMsg.value = ''
   noServerStream.value = false
   src.value = ''
@@ -191,9 +236,9 @@ async function start() {
     // the whole connection. Nothing to pause for a finished torrent — see `focus`.
     // Non-blocking: the player starts immediately while focus catches up.
     void downloads.focus(started.id)
-    // The tail starts downloading alongside the head — see `primeTail`.
+    // Point the swarm at the opening bytes, then at the index — see `prime`.
     if (!started.url && started.id >= 0)
-      void primeTail(started.id, started.index)
+      prime(started.id, started.index)
 
     resolving.value = false
     step.value = $t('Buffering…')
@@ -400,6 +445,7 @@ watch(
 // history, switching to another title — so this is the one place it belongs.
 onBeforeUnmount(() => {
   generation++
+  releasePriming()
   downloads.release()
 })
 

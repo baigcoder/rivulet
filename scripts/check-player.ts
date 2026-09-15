@@ -342,6 +342,33 @@ assert.ok(!mpv.includes('rootEl.value?.querySelectorAll'), 'scoped to the player
 assert.match(mpv, /live: isLive\.value/, 'mpv must know live from VOD so 4K HEVC gets a real probe')
 assert.match(mpv, /isLive\.value \? 'sdr'/, 'live HDR passthrough on SDR is a black picture with sound')
 
+// --- A torrent stream that never opens ----------------------------------------
+// mpv answers no cache state and no duration until its demuxer opens, so for the
+// whole of the opening wait the overlay had an indeterminate spinner and nothing
+// else: a film that was arriving and one that never would looked identical, and
+// the second sat there for ever with no error and no way out but Back. The
+// engine's own bitfield is what tells them apart, so it is what the ring shows
+// and what the watchdog reads.
+assert.match(mpv, /return cacheFill\.value \?\? headPct\.value/, 'the ring falls back to how much of the opening is on disk')
+assert.match(mpv, /const ENGINE_START_GRACE_MS = \d/, 'a torrent is given time to find peers at all')
+assert.match(mpv, /const ENGINE_STALL_MS = \d/, 'and then has to keep delivering')
+// The order matters: a deadline would fail a cold swarm that was about to play.
+// Only a head that has stopped filling is a failure.
+assert.match(
+  mpv,
+  /if \(headPct\.value == null \|\| pct > headPct\.value\)\s+headMovedAt = Date\.now\(\)/,
+  'the stall clock is reset by progress, not by the passage of time',
+)
+assert.match(
+  mpv,
+  /if \(since < ENGINE_START_GRACE_MS \|\| Date\.now\(\) - headMovedAt < ENGINE_STALL_MS\)\s+return/,
+  'and both windows have to run out before anything fails',
+)
+assert.doesNotMatch(mpv, /setTimeout\([^)]*ENGINE_START_GRACE_MS/, 'a torrent gets no deadline — slow is not dead')
+// The swarm figures are the diagnostic and the ring carries the percentage, so
+// the line must not trade one for the other.
+assert.match(mpv, /\{\{ \$t\('Buffering'\) \}\}<template v-if="status && !isLive">/, 'the buffering line keeps the swarm figures')
+
 // --- HLS: the one thing a live channel needs and a torrent stream never does ---
 // Chromium hands `<video>` an `.m3u8` and reports a corrupt file, so every live
 // playlist has to go through hls.js there — and must NOT on Safari, which plays
@@ -533,7 +560,7 @@ assert.doesNotMatch(exoKt, /vw = 1280/, 'and invents no resolution to report to 
 assert.match(
   mpv,
   /const wantExo = isLive\.value && !exoRefused\s+engine \?\?= \(wantExo \? exoEngine\(\) : null\) \?\? vlcEngine\(\)/,
-  'live channels take Media3 first, so Free TV shares Premium's surface-ready start, and an absent Media3 still falls back',
+  'live channels take Media3 first, so Free TV shares the surface-ready start Premium uses, and an absent Media3 still falls back',
 )
 assert.match(
   mpv,
@@ -547,7 +574,7 @@ assert.match(
 // Without it, v0.6.44's misroute made every retry repeat the same parse.
 assert.match(mpv, /let exoRefused = false/, 'a refusal by Media3 is remembered')
 assert.match(mpv, /if \(engineIsExo && tail\) \{[\s\S]{0,200}exoRefused = true/, 'and retires it on a source error')
-assert.match(mpv, /\(exoRefused \? null : exoEngine\(\)\)/, 'so a refusal takes it out of the next selection')
+assert.match(mpv, /wantExo = isLive\.value && !exoRefused/, 'so a refusal takes it out of the next selection')
 // The safety net, for a source that reaches Media3 anyway: it must decide from
 // the stream rather than assume, or the misroute is fatal instead of merely wrong.
 assert.doesNotMatch(
@@ -736,8 +763,17 @@ console.log('player: ok')
 // channel. Two values were lying.
 assert.match(
   mirrorSrc,
-  /playerPlaying\.value = picture && !asBool\(p\.paused\)/,
+  /playerPlaying\.value = picture && !playerPaused\.value/,
   'a picture that is not paused is playing — `started` is the page guessing',
+)
+// And the pause is read on its own rather than only folded into the line above.
+// `playerPlaying` is false for a channel someone stopped and for one that never
+// opened alike, so on that value alone neither page could tell the connecting
+// panel which of the two it was covering.
+assert.match(
+  mirrorSrc,
+  /playerPaused\.value = asBool\(p\.paused\)/,
+  'a deliberate pause is a reading of its own',
 )
 assert.doesNotMatch(
   mirrorSrc,

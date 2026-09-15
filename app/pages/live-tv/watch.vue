@@ -55,6 +55,7 @@ const overlayRef = ref<{ show: () => void } | null>(null)
  */
 const {
   hasPicture,
+  playerPaused,
   playerPlaying,
   playerBehindLive,
   playerVolume,
@@ -228,9 +229,17 @@ const connectDetail = computed(() => autoSkipping.value
  * the counter resets on a picture, and the picture is exactly what this was
  * hiding. The Premium page had the same shape — a reconnect state that refused
  * to yield to frames — and this is that fix in this page's idiom.
+ *
+ * A pause is the other way the same mistake is made. "No picture" is every bit
+ * as true of a channel the viewer stopped on purpose as of one that never
+ * opened, and on Android it is true within two seconds of the pause: libVLC
+ * reports no size for a live track, so the only reading left is the clock and
+ * a paused clock does not move. Pausing put "Connecting…" over a channel that
+ * was sitting there perfectly well, and it stayed up through the resume.
  */
 const waiting = computed(() =>
   !hasPicture.value
+  && !playerPaused.value
   && (resolving.value || autoSkipping.value || (!!streamUrl.value && !overlayError.value)))
 
 /**
