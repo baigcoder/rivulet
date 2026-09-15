@@ -105,6 +105,8 @@ function asText(v: string | { value?: string } | undefined): string {
 const overlayRef = ref<{ show: () => void, hide: () => void, visible: boolean } | null>(null)
 
 const playerPlaying = ref(false)
+/** Frames on screen. Hoisted so the failure handler can defer to it too. */
+const hasPicture = ref(false)
 const playerBehindLive = ref(false)
 const playerVolume = ref(100)
 const playerMuted = ref(false)
@@ -371,6 +373,15 @@ async function load({ fresh } = { fresh: true }): Promise<void> {
  * and the panel is the only thing that knows how many are in use.
  */
 async function onPlaybackFailed(reason?: 'stub' | 'dead' | 'refused'): Promise<void> {
+  // Frames on screen are not a failure. The VOD branch below has always made
+  // this judgement; the live path did not, and there it costs more — a live
+  // failure schedules a reconnect, which tears down a channel that is playing
+  // and takes a fresh upstream slot to start it again. On a one-connection
+  // account that is the "your provider is at its limit" card, caused by us.
+  // libVLC raises EndReached on an ordinary HLS discontinuity and recovers by
+  // itself, which is exactly the event that arrives here.
+  if (hasPicture.value)
+    return
   clearReconnect()
   if (isVod.value) {
     // mpv can log a failed sub-stream while the main file keeps playing —
@@ -439,6 +450,7 @@ function syncPlayerState(): void {
   // minutes as "opening" while every ordinary drop counted towards the four
   // reconnects — see `moving` in MpvPlayer.
   const picture = (typeof p.videoWidth === 'number' && p.videoWidth > 0) || asBool(p.moving)
+  hasPicture.value = picture
   // A picture that is not paused is playing. `started` is the page's own
   // bookkeeping and was in this test until now — the same mistake the Free TV
   // page had until v0.6.39, fixed there and left here, which is why that page

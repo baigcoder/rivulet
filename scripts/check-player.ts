@@ -738,3 +738,13 @@ assert.doesNotMatch(vlcKt, /\.put\("pause", !p\.isPlaying\)/, 'not merely "not r
 // every rebuffer — which for a live channel is several times a minute.
 assert.match(exoKt, /\.put\("pause", !p\.playWhenReady\)/, 'Media3 reports intent, not the current frame')
 assert.doesNotMatch(exoKt, /\.put\("pause", !p\.isPlaying\)/, 'rebuffering is not a pause')
+// The Premium live path makes the same judgement as Free TV: a failure with
+// frames on screen is not acted on. It costs more here — a live failure
+// schedules a reconnect, and restarting takes a fresh upstream slot, which on
+// a one-connection account produces the provider's own limit error.
+assert.match(
+  premiumWatch,
+  /async function onPlaybackFailed\([\s\S]{0,700}?if \(hasPicture\.value\)\r?\n {4}return/,
+  'a premium failure with a picture on screen is ignored',
+)
+assert.match(premiumWatch, /hasPicture\.value = picture/, 'and the page keeps the picture where the handler can see it')
