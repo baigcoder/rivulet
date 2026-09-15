@@ -485,3 +485,33 @@ assert.match(
 )
 
 console.info('free tv health: ok')
+
+// --- Free TV: a picture ends the notice --------------------------------------
+// `LivePlayerOverlay` pins its chrome while `connecting` is true, so one stuck
+// flag was both complaints at once: the connecting panel sat over a channel
+// that was playing, and the controls never auto-hid. `autoSkipping` is the one
+// that stuck — it clears when the skip counter resets, the counter reset on
+// `playerPlaying` (which is `hasPicture && !paused`), and live backends get
+// `paused` wrong. Same shape as the Premium reconnect guard, same fix.
+const liveWatch = readFileSync(new URL('../app/pages/live-tv/watch.vue', import.meta.url), 'utf8')
+assert.match(
+  liveWatch,
+  /const waiting = computed\(\(\) => *\r?\n *!hasPicture\.value/,
+  'a picture ends the connecting notice whatever else the page believes',
+)
+assert.match(
+  liveWatch,
+  /watch\(hasPicture, picture => \{[\s\S]{0,120}autoSkips\.value = 0/,
+  'and the skip counter resets on the picture, not on a pause flag',
+)
+assert.doesNotMatch(
+  liveWatch,
+  /watch\(playerPlaying, playing => \{[\s\S]{0,120}autoSkips\.value = 0/,
+  'never again on playerPlaying — that is what pinned the panel open',
+)
+// The automatic Retry: once per channel, only where no frame ever arrived. A
+// second start costs an upstream connection, so it must not be a loop.
+assert.match(liveWatch, /const AUTO_RETRY_MS = 8000/, 'a channel with no picture gets one automatic retry')
+assert.match(liveWatch, /if \(hasPicture\.value \|\| autoRetried \|\| overlayError\.value\)/, 'which is skipped once a picture or an error arrives')
+assert.match(liveWatch, /autoRetried = true/, 'and never fires twice for the same channel')
+assert.match(liveWatch, /clearAutoRetry\(\)/, 'and its timer is cleared on teardown')

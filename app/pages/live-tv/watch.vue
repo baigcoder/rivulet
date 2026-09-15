@@ -234,9 +234,24 @@ const connectDetail = computed(() => autoSkipping.value
   ? `${$t('Channel unavailable — trying the next one…')} ${$t('Attempt {current} of {total}', { current: autoSkips.value + 1, total: MAX_AUTO_SKIPS })}`
   : '')
 
-/** One notice. Passed as `resolving` so MpvPlayer does not draw a second spinner. */
+/**
+ * One notice. Passed as `resolving` so MpvPlayer does not draw a second spinner.
+ *
+ * A picture ends it, whatever else the page believes. The flags below are the
+ * page's own bookkeeping — `resolving` spans an IPC round trip, `autoSkipping`
+ * counts attempts — and both used to outrank the frames on screen. Once either
+ * stuck, the connecting panel sat over a channel that was playing, and because
+ * `LivePlayerOverlay` pins its chrome while `connecting` is true, the controls
+ * stopped auto-hiding with it. One flag, both complaints.
+ *
+ * `autoSkipping` is the one that stuck: it clears when the skip counter resets,
+ * the counter resets on a picture, and the picture is exactly what this was
+ * hiding. The Premium page had the same shape — a reconnect state that refused
+ * to yield to frames — and this is that fix in this page's idiom.
+ */
 const waiting = computed(() =>
-  resolving.value || autoSkipping.value || (!!streamUrl.value && !hasPicture.value && !overlayError.value))
+  !hasPicture.value
+  && (resolving.value || autoSkipping.value || (!!streamUrl.value && !overlayError.value)))
 
 /**
  * The player must get the loopback proxy URL, not the raw M3U link.
@@ -405,8 +420,13 @@ const attemptedFallback = ref(false)
  * dead, not this channel. The counter resets as soon as one plays.
  */
 
-watch(playerPlaying, playing => {
-  if (!playing)
+// A picture means this channel is alive, and that is the whole test. It used
+// to watch `playerPlaying`, which is `hasPicture && !paused` — so a backend
+// that misreports pause (the overlay's own comment above `pinned` says live
+// backends lie about it) left the counter high, `autoSkipping` true, and the
+// connecting panel pinned over a channel that was playing.
+watch(hasPicture, picture => {
+  if (!picture)
     return
   autoSkips.value = 0
   const id = channelId.value
@@ -508,6 +528,49 @@ async function onPlaybackFailed() {
   errorMsg.value = $t('Stream playback failed. The channel may be offline or temporarily unavailable.')
 }
 
+/**
+ * Press Retry once, automatically, when a channel opens and no picture comes.
+ *
+ * Retry has never changed the stream — the traces show libVLC and Media3 both
+ * reaching a first frame in one to four seconds on the very attempt the viewer
+ * gave up on — so what it actually did was reset the page's state and let the
+ * HUD catch up. The fixes above mean it should no longer be needed. This is
+ * the belt: if eight seconds pass with nothing on screen, do the one thing the
+ * viewer would have done, once per channel, and say nothing about it.
+ *
+ * Once, and only on a channel that has never shown a frame. A second start
+ * costs an upstream connection, and a provider counting slots will refuse it —
+ * which is why this is a one-shot and not a loop. Auto-skip still owns the
+ * case where the channel is genuinely dead; this runs first so a channel that
+ * only needed a kick is not skipped past.
+ */
+const AUTO_RETRY_MS = 8000
+let autoRetried = false
+let autoRetryTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearAutoRetry() {
+  if (autoRetryTimer)
+    clearTimeout(autoRetryTimer)
+  autoRetryTimer = null
+}
+
+watch([streamUrl, channelId], () => {
+  clearAutoRetry()
+  autoRetried = false
+})
+
+watch([hasPicture, streamUrl], () => {
+  clearAutoRetry()
+  if (hasPicture.value || !streamUrl.value || autoRetried)
+    return
+  autoRetryTimer = setTimeout(() => {
+    if (hasPicture.value || autoRetried || overlayError.value)
+      return
+    autoRetried = true
+    void onRetry()
+  }, AUTO_RETRY_MS)
+}, { immediate: true })
+
 async function onRetry() {
   errorMsg.value = ''
   resolveError.value = ''
@@ -582,6 +645,7 @@ onUnmounted(() => {
   window.removeEventListener('pointermove', onActivity)
   if (pollHandle)
     clearInterval(pollHandle)
+  clearAutoRetry()
   if (isAndroid())
     setAndroidPlayerMode(false)
 })
