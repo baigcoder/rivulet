@@ -510,35 +510,35 @@ assert.match(vlcKt, /private val snapshotMs = 200L/, 'the snapshot is rebuilt at
 // read as a hang, and answered with Retry. A pause is a pause.
 assert.match(vlcKt, /val reallyPaused = p\.playerState == 4/, 'a genuine pause is recognised')
 
-// --- Two engines, split on what each is good at -------------------------------
-// Not "live vs film", which is what v0.6.44 made it and what broke Free TV: the
-// line is HLS vs everything else. Media3's HLS implementation is its strength;
-// a raw MPEG-TS stream is libVLC's, and a Free TV channel is almost always raw
-// MPEG-TS behind the loopback proxy. Handing one of those to the HLS parser
-// fails on the first bytes and reaches the page as a channel that never opens.
-// Films stay on libVLC either way: Dolby and DTS go to platform decoders Media3
-// cannot supply, and libVLC's own FFmpeg is why it was bundled. Both answer the
-// same protocol, so nothing downstream knows which replied.
+// --- Two engines, split by live playback lifecycle ----------------------------
+// Premium TV's Media3 path waits for Android's TextureView surface before it
+// starts. Free TV must use that same first-load path, whether the provider gives
+// HLS or raw MPEG-TS; Media3 selects its source from the URL. Films remain on
+// libVLC for its broader audio codec support. A Media3 refusal still falls back
+// to libVLC on the existing reconnect.
 const exoKt = readFileSync(new URL('../src-tauri/gen/android/app/src/main/java/io/github/rivulet/rivulet/RivuletPremiumPlayer.kt', import.meta.url), 'utf8')
 assert.match(exoKt, /override fun onRenderedFirstFrame\(\)/, 'Media3 reports its first frame')
 assert.match(exoKt, /\.put\("vo-configured", firstFrame\)/, 'under the name the page already reads')
 assert.match(exoKt, /\.put\("paused-for-cache", buffering\)/, 'and starvation is Media3\'s own state, not a duration test live can never satisfy')
 assert.match(exoKt, /fun log\(line: String\)/, 'it can speak into logcat too')
 assert.doesNotMatch(exoKt, /vw = 1280/, 'and invents no resolution to report to the viewer')
-// One engine for both live pages. Media3 was brought in for HLS and the device
-// disagreed: Premium is MPEG-TS behind an opaque redirector, so it always took
-// libVLC and always worked; Free TV is HLS, so it took Media3 and did not.
-// Same page, same HUD logic, same fixes — the backend was the only difference
-// left. libVLC plays HLS perfectly well and is the one with evidence behind it.
+// One engine for live, and an engine that is actually started.
+//
+// Media3 was blamed for Free TV and libVLC made the default for everything,
+// but the same change dropped the start call below — so the build that
+// comparison was drawn on never started an engine on either backend, and
+// every Android channel failed whichever one was chosen. What Premium runs is
+// RivuletPremiumPlayer, which waits for the TextureView's surface before it
+// plays, and that sequence is what gets a first frame out of a cold phone.
 assert.match(
   mpv,
-  /engine \?\?= vlcEngine\(\) \?\? \(exoRefused \? null : exoEngine\(\)\) \?\? videoEngine\(videoEl\.value!\)/,
-  'libVLC answers first; Media3 is the fallback for a build without it',
+  /const wantExo = isLive\.value && !exoRefused\s+engine \?\?= \(wantExo \? exoEngine\(\) : null\) \?\? vlcEngine\(\)/,
+  'live channels take Media3 first, so Free TV shares Premium's surface-ready start, and an absent Media3 still falls back',
 )
-assert.doesNotMatch(
+assert.match(
   mpv,
-  /isHlsSource\(props\.src\) \? exoEngine\(\)/,
-  'no source picks Media3 over libVLC any more',
+  /engineIsExo = wantExo && !!exoEngine\(\)[\s\S]{0,600}?await engine\.start\(props\.src\)/,
+  'and the engine that was chosen is then told to play - three releases shipped without this line',
 )
 // A wrong engine must cost one attempt, not the feature. Media3's "Input does
 // not start with the #EXTM3U header" is fatal to Media3 and says nothing about

@@ -301,18 +301,15 @@ let engine: PlayerEngine | null = null
 /**
  * Is the engine above Media3, and has Media3 already refused this source?
  *
- * The engine is picked once and then trusted, which is fine until the choice
- * is wrong: v0.6.44 sent MPEG-TS live channels to Media3's HLS parser, which
- * rejected every one with "Input does not start with the #EXTM3U header" —
- * and the page answered by reconnecting, with backoff, into exactly the same
- * parser. Bounded, so it stopped; useless, because nothing about the retry
- * differed from the attempt before it.
+ * Android live playback uses Media3 for both Premium and Free TV. Media3 now
+ * chooses the media source itself (HLS versus raw MPEG-TS), and, crucially,
+ * starts only after the TextureView has its video surface. That is the path
+ * that reliably produces a first frame on a cold phone start.
  *
- * A source error from Media3 is fatal to Media3 and says nothing about
- * libVLC, which reads transport streams perfectly well. So the refusal
- * retires the engine instead of the stream, and the reconnect the page was
- * already going to make picks the other one. A routing mistake then costs a
- * few seconds rather than the whole feature until the next release.
+ * A source error still retires Media3 for this component and lets the existing
+ * reconnect use libVLC. A genuinely unsupported channel therefore costs one
+ * attempt, while normal Free and Premium channels get the reliable first-load
+ * path.
  */
 let engineIsExo = false
 let exoRefused = false
@@ -2114,24 +2111,32 @@ async function startPlayer() {
       })
     }
     else {
-      // libVLC first, for everything.
+      // Media3 first for a live channel, libVLC for everything else.
       //
-      // Media3 was brought in for HLS, on the reasoning that HLS is what it is
-      // best at. The device disagreed. Premium channels are MPEG-TS behind an
-      // opaque redirector, so they have always taken the libVLC path — and
-      // Premium is the one that works. Free TV channels are HLS, so they took
-      // the Media3 path, and Free TV is the one that does not: same page, same
-      // HUD logic, same fixes applied to both, and the only thing left that
-      // differs between them is which backend answered.
+      // The split was "HLS vs the rest" and then, briefly, "libVLC for
+      // everything" — the reasoning there being that Premium worked and Free
+      // TV did not, so Free TV should have Premium's backend. But that change
+      // also dropped the `engine.start` below, so the build it was judged on
+      // never started an engine at all: every Android channel failed, on
+      // either backend, and the comparison it drew its conclusion from could
+      // not have happened. What Premium actually runs is
+      // RivuletPremiumPlayer, which picks HLS or raw MPEG-TS off the URL
+      // itself and — the part that matters on a cold phone — starts only once
+      // the TextureView has handed it a surface. That is the sequence that
+      // reliably produces a first frame, so live gets it and films stay on
+      // libVLC for its own FFmpeg's Dolby and DTS.
       //
-      // So the split goes. libVLC plays HLS perfectly well, it is the engine
-      // with the evidence behind it, and giving Free TV the same backend as
-      // Premium gives it the same behaviour rather than an argument about why
-      // it should be equivalent. Media3 stays registered and stays the
-      // fallback for a build where libVLC is missing; nothing below this line
-      // knows which replied.
-      engine ??= vlcEngine() ?? (exoRefused ? null : exoEngine()) ?? videoEngine(videoEl.value!)
-      engineIsExo = !!exoEngine() && engine === exoEngine()
+      // A source error still retires Media3 for this component, so one
+      // unsupported channel costs a single attempt and the reconnect after it
+      // lands on libVLC.
+      const wantExo = isLive.value && !exoRefused
+      engine ??= (wantExo ? exoEngine() : null) ?? vlcEngine() ?? videoEngine(videoEl.value!)
+      engineIsExo = wantExo && !!exoEngine() && engine === exoEngine()
+      // Choosing an engine is not starting one. This line went missing with
+      // the rewrite above and stayed missing through three releases, and the
+      // whole of Android — live and film — was a player that picked a backend
+      // and never asked it to play.
+      await engine.start(props.src)
     }
 
     position.value = 0
