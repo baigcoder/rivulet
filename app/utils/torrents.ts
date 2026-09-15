@@ -770,13 +770,49 @@ export function setDownloadDir(path: string) {
   downloadDir = path.trim()
 }
 
-export async function addTorrent(magnet: string) {
+/**
+ * What is inside a magnet, without starting it.
+ *
+ * `list_only` resolves the metadata from peers and stops there: no files
+ * created, no pieces asked for, nothing written. That matters because an
+ * ordinary add *starts* — and until the selection below reaches the engine it
+ * is downloading the whole torrent. On a season pack that is every episode at
+ * once: peers answer in well under a second, and what arrives is whatever the
+ * swarm offers, so playing episode 1 wrote pieces of episode 353 to the disk.
+ * With a nearly-full drive that is where it stopped, having fetched gigabytes
+ * of a programme nobody asked for and none of the one they did.
+ *
+ * The cost is resolving the metadata twice, which is the wait the UI already
+ * calls "Fetching metadata from peers…".
+ */
+export async function listTorrentFiles(magnet: string): Promise<EngineFile[]> {
+  let res: Response
+  try {
+    res = await fetch(`${ENGINE}/torrents?list_only=true`, { method: 'POST', body: magnet })
+  }
+  catch {
+    throw new Error($t('Torrent engine offline. Launch the native desktop or Android app to play torrents.'))
+  }
+  if (!res.ok)
+    throw new Error($t('Torrent engine said {status}: {reason}', { status: res.status, reason: await res.text() }))
+  const listed = await res.json() as { details?: { files?: EngineFile[] | null } }
+  return listed.details?.files ?? []
+}
+
+/**
+ * Hand a magnet to the engine. `onlyFiles` is the selection, and it belongs
+ * here* rather than in an `update_only_files` a moment later: the engine
+ * starts fetching the instant it is added, and a selection that arrives after
+ * that is a selection for the pieces it has not written yet.
+ */
+export async function addTorrent(magnet: string, onlyFiles?: number[]) {
   // Only new torrents move: the engine remembers an existing one's folder, and
   // its data is already sitting in it.
   const folder = downloadDir ? `&output_folder=${encodeURIComponent(downloadDir)}` : ''
+  const only = onlyFiles?.length ? `&only_files=${onlyFiles.join(',')}` : ''
   let res: Response
   try {
-    res = await fetch(`${ENGINE}/torrents?overwrite=true${folder}`, { method: 'POST', body: magnet })
+    res = await fetch(`${ENGINE}/torrents?overwrite=true${folder}${only}`, { method: 'POST', body: magnet })
   }
   catch {
     throw new Error($t('Torrent engine offline. Launch the native desktop or Android app to play torrents.'))
@@ -1662,9 +1698,20 @@ export async function startTorrent(options: {
   }
 
   step($t('Fetching metadata from peers…'))
-  let added
+
+  // Look before adding.
+  //
+  // An add *starts* the torrent, and until a selection reaches the engine it is
+  // fetching all of it. Peers answer in well under a second, so on a season
+  // pack the round trip that used to narrow it afterwards was long enough to
+  // write pieces of episodes nobody asked for — "play S01E01" downloading parts
+  // of episode 353, and on a nearly-full disk stopping there. So the file list
+  // is fetched on its own first (`list_only`: metadata, nothing created,
+  // nothing requested), the choice is made against it, and the add that follows
+  // carries the selection with it.
+  let files: EngineFile[]
   try {
-    added = await addTorrent(magnet)
+    files = await listTorrentFiles(magnet)
   }
   catch (engineError) {
     // Engine offline (browser mode) — fall back to the direct URL if available.
@@ -1673,21 +1720,26 @@ export async function startTorrent(options: {
       return { id: -1, index: -1, hash: '', url: directFallback, torrent: picked }
     throw engineError
   }
-  const files = added.details.files ?? []
+
   const index = options.fileIndex ?? pickVideoFile(files, hint, options)
   if (index == null)
     throw new Error($t('That torrent holds no video file.'))
-
-  // Adding a magnet the engine already holds hands back its current selection,
-  // so a pack you're part-way through keeps downloading what it was told to and
-  // gains this file — rather than being reset to it.
-  const included = files.flatMap((f, i) => f.included ? [i] : [])
-  const narrowed = included.length < files.length
   // The subtitles this release ships come down with the video: a few hundred KB
   // each, and the engine only serves a file it was told to download.
   const wanted = [index, ...pickSubtitleFiles(files, index)]
-  const only = narrowed ? [...new Set([...included, ...wanted])] : wanted
-  await limitToFiles(added.id, only)
+
+  const added = await addTorrent(magnet, wanted)
+  // Adding a magnet the engine already holds hands back its current selection,
+  // so a pack you're part-way through keeps downloading what it was told to and
+  // gains this file — rather than being reset to it. `only_files` on the add
+  // above cannot know about that, so it is reconciled here, where the answer
+  // says what the engine actually holds.
+  const held = added.details.files ?? files
+  const included = held.flatMap((f, i) => f.included ? [i] : [])
+  const narrowed = included.length > 0 && included.length < held.length
+  const only = [...new Set([...included, ...wanted])]
+  if (narrowed && only.length !== included.length)
+    await limitToFiles(added.id, only)
   return { id: added.id, index, hash: added.details.info_hash, url: '', torrent: picked }
 }
 

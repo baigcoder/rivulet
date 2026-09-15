@@ -645,6 +645,8 @@ globalThis.fetch = (async (input: string | URL | Request) => {
     return Response.json({ torrents: engine.held ? [listed] : [] })
   if (url === `${ENGINE}/torrents/7`)
     return Response.json({ ...listed, files: PACK })
+  if (url.startsWith(`${ENGINE}/torrents?list_only`))
+    return Response.json({ id: null, details: { name: 'pack', info_hash: 'bbb', files: PACK } })
   if (url.startsWith(`${ENGINE}/torrents?overwrite`))
     return Response.json({ id: 7, details: { name: 'pack', info_hash: 'bbb', files: PACK } })
   if (url.startsWith(ENGINE))
@@ -717,6 +719,8 @@ globalThis.fetch = (async (input: string | URL | Request) => {
     return Response.json({ torrents: engine.held ? [HELD] : [] })
   if (url === `${ENGINE}/torrents/7`)
     return Response.json({ ...HELD, files: PACK })
+  if (url.startsWith(`${ENGINE}/torrents?list_only`))
+    return Response.json({ id: null, details: { name: 'pack', info_hash: 'bbb', files: PACK } })
   if (url.startsWith(`${ENGINE}/torrents?overwrite`))
     return Response.json({ id: 7, details: { name: HELD.name, info_hash: 'bbb', files: PACK } })
   if (url.startsWith(ENGINE))
@@ -750,6 +754,8 @@ globalThis.fetch = (async (input: string | URL | Request) => {
   requests.push(url)
   if (url.startsWith(`${ENGINE}/torrents?with_stats`))
     return Response.json({ torrents: [] })
+  if (url.startsWith(`${ENGINE}/torrents?list_only`))
+    return Response.json({ id: null, details: { name: 'pack', info_hash: 'bbb', files: PACK } })
   if (url.startsWith(`${ENGINE}/torrents?overwrite`))
     return Response.json({ id: 7, details: { name: 'pack', info_hash: 'bbb', files: PACK } })
   if (url.startsWith(ENGINE))
@@ -785,6 +791,8 @@ globalThis.fetch = (async (input: string | URL | Request) => {
   requests.push(url)
   if (url.startsWith(`${ENGINE}/torrents?with_stats`))
     return Response.json({ torrents: [] })
+  if (url.startsWith(`${ENGINE}/torrents?list_only`))
+    return Response.json({ id: null, details: { name: 'pack', info_hash: 'bbb', files: PACK } })
   if (url.startsWith(`${ENGINE}/torrents?overwrite`))
     return Response.json({ id: 7, details: { name: 'pack', info_hash: HASH40, files: PACK } })
   if (url.startsWith(ENGINE))
@@ -823,6 +831,8 @@ globalThis.fetch = (async (input: string | URL | Request) => {
     return Response.json({ torrents: engine.held ? [HELD] : [] })
   if (url === `${ENGINE}/torrents/7`)
     return Response.json({ ...HELD, files: PACK })
+  if (url.startsWith(`${ENGINE}/torrents?list_only`))
+    return Response.json({ id: null, details: { name: 'pack', info_hash: 'bbb', files: PACK } })
   if (url.startsWith(`${ENGINE}/torrents?overwrite`))
     return Response.json({ id: 7, details: { name: HELD.name, info_hash: 'bbb', files: PACK } })
   if (url.startsWith(ENGINE))
@@ -865,6 +875,51 @@ const promise = startTorrent({
 })
 assert.equal((await promise).id, 7, 'the name arrived with the lookup, and still adopted')
 assert.ok(!requests.some(u => u.startsWith('https://a.example')), 'and the sources were never asked')
+
+// --- One episode means one episode --------------------------------------------
+// An add *starts* the torrent, so anything the engine is told afterwards is a
+// decision about the pieces it has not written yet. Peers answer in well under
+// a second, which on a season pack was long enough to fetch parts of episodes
+// nobody asked for — "play S01E01" writing into episode 353 — and on a
+// nearly-full disk that is where the whole download stopped. The list and the
+// choice now happen before anything is added.
+
+globalThis.fetch = (async (input: string | URL | Request) => {
+  const url = String(input)
+  requests.push(url)
+  if (url.startsWith(`${ENGINE}/torrents?with_stats`))
+    return Response.json({ torrents: [] })
+  if (url.startsWith(`${ENGINE}/torrents?list_only`))
+    return Response.json({ id: null, details: { name: 'pack', info_hash: 'bbb', files: PACK } })
+  if (url.startsWith(`${ENGINE}/torrents?overwrite`))
+    return Response.json({ id: 7, details: { name: 'pack', info_hash: 'bbb', files: PACK } })
+  if (url.startsWith(ENGINE))
+    return Response.json({})
+  return Response.json({ streams: [streams[1]] })
+}) as typeof fetch
+
+requests = []
+const oneEpisode = await startTorrent({ imdbId: 'tt0000001', season: 1, episode: 2 })
+assert.equal(oneEpisode.index, 1, 'the episode that was asked for')
+
+const listedAt = requests.findIndex(u => u.includes('list_only'))
+const addedAt = requests.findIndex(u => u.includes('overwrite=true'))
+assert.ok(listedAt >= 0, 'the files are listed on their own first — metadata, nothing created, nothing requested')
+assert.ok(addedAt >= 0, 'and then it is added')
+assert.ok(listedAt < addedAt, 'in that order: looking after adding is looking after downloading')
+
+const add = requests[addedAt]!
+assert.match(add, /[?&]only_files=/, 'the add carries the selection rather than following it with one')
+const chosen = new URL(add).searchParams.get('only_files')!.split(',').map(Number)
+assert.ok(chosen.includes(1), 'and the selection is the episode asked for')
+assert.ok(!chosen.includes(0), 'not the one before it')
+assert.ok(chosen.length < PACK.length, 'and never the whole pack')
+// update_only_files is for a torrent the engine already holds, where there is a
+// prior selection to reconcile with. A fresh add has none.
+assert.ok(
+  !requests.some(u => u.includes('update_only_files')),
+  'nothing is narrowed after the fact, because by then it is already downloading',
+)
 
 // --- What the engine already said ---------------------------------------------
 // A torrent the engine has given up on is not a slow one, and every reading the
