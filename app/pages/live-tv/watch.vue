@@ -87,7 +87,7 @@ function syncPlayerState() {
   const p = playerRef.value
   if (!p)
     return
-  const wasPlaying = playerPlaying.value
+  const hadPicture = hasPicture.value
   // A size, or a clock that is moving — see `moving` in MpvPlayer. libVLC often
   // reports no size at all for a live channel on Android.
   hasPicture.value = (typeof p.videoWidth === 'number' && p.videoWidth > 0) || asBool(p.moving)
@@ -101,11 +101,13 @@ function syncPlayerState() {
   playerChrome.value = asBool(p.ui)
   playerCatchError.value = asText(p.errorMsg ?? p.catchError)
 
-  // If the stream just crossed from not-playing to actually playing, clear
-  // any stale errors from the previous attempt. Without this an auto-skip
-  // loop's last dead-channel error would linger over a perfectly good picture
-  // until the user clicked something.
-  if (playerPlaying.value && !wasPlaying) {
+  // Frames on screen clear the last attempt's errors — not `playerPlaying`,
+  // which carries `paused` with it, and live backends get `paused` wrong (the
+  // overlay says so itself, beside `pinned`). That mattered because `pinned`
+  // also pins on `error`: a start-up line from the previous channel sat in
+  // `overlayError` over a picture, holding the chrome open and painting an
+  // error card on a stream the viewer was watching.
+  if (hasPicture.value && !hadPicture) {
     errorMsg.value = ''
     resolveError.value = ''
     playerCatchError.value = ''
@@ -211,12 +213,15 @@ const hasNext = computed(() => channelIndex.value >= 0 && channelIndex.value < c
 const overlayError = computed(() => {
   const raw = resolveError.value
     || errorMsg.value
-    || (!playerPlaying.value ? playerCatchError.value : '')
+    // A picture outranks a player log line, and `hasPicture` is the test —
+    // `playerPlaying` would carry `paused` into it, and that is the flag the
+    // live backends get wrong. `pinned` in the overlay keys on this too, so a
+    // stale line here holds the chrome open as well as painting a card.
+    || (!hasPicture.value ? playerCatchError.value : '')
   if (!raw)
     return ''
   return friendlyPlaybackError(raw)
 })
-
 const autoSkips = ref(0)
 /**
  * Auto-skip is in progress. While true, the HUD's connecting panel says
@@ -497,6 +502,16 @@ function onActivity() {
 }
 
 async function onPlaybackFailed() {
+  // Frames on screen are not a failure. Both branches below are destructive —
+  // the protocol fallback restarts the stream on a different URL, and
+  // `autoSkip` zaps to another channel entirely — so acting on a stray event
+  // while the viewer is watching takes away a channel that was working.
+  // libVLC raises EndReached on an ordinary HLS discontinuity and recovers by
+  // itself, which is exactly the event that would arrive here. MpvPlayer
+  // already waits for two readings before it calls a live stream dead; this is
+  // the same judgement at the page, where the consequence is a zap.
+  if (hasPicture.value)
+    return
   if (!attemptedFallback.value && rawUrl.value) {
     attemptedFallback.value = true
     if (streamUrl.value.includes('.m3u8') || /\.m3u8$/i.test(rawUrl.value)) {

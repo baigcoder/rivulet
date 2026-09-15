@@ -515,3 +515,24 @@ assert.match(liveWatch, /const AUTO_RETRY_MS = 8000/, 'a channel with no picture
 assert.match(liveWatch, /if \(hasPicture\.value \|\| autoRetried \|\| overlayError\.value\)/, 'which is skipped once a picture or an error arrives')
 assert.match(liveWatch, /autoRetried = true/, 'and never fires twice for the same channel')
 assert.match(liveWatch, /clearAutoRetry\(\)/, 'and its timer is cleared on teardown')
+
+// Everything on this page yields to the picture, because `LivePlayerOverlay`
+// pins its chrome on `error` as well as on `connecting` — so a stale line held
+// the chrome open and painted a card over a stream the viewer was watching.
+assert.match(
+  liveWatch,
+  /\|\| \(!hasPicture\.value \? playerCatchError\.value : ''\)/,
+  'a player log line is suppressed by frames on screen, not by playerPlaying',
+)
+assert.match(
+  liveWatch,
+  /if \(hasPicture\.value && !hadPicture\) \{/,
+  'and the last attempt\'s errors clear when the picture arrives',
+)
+// Acting on a stray failure while watching is a zap away from a working
+// channel — both branches of the handler are destructive.
+assert.match(
+  liveWatch,
+  /async function onPlaybackFailed\(\) \{[\s\S]{0,700}?if \(hasPicture\.value\)\r?\n {4}return/,
+  'a failure with frames on screen is not acted on',
+)
