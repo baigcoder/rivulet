@@ -521,10 +521,20 @@ assert.match(exoKt, /\.put\("vo-configured", firstFrame\)/, 'under the name the 
 assert.match(exoKt, /\.put\("paused-for-cache", buffering\)/, 'and starvation is Media3\'s own state, not a duration test live can never satisfy')
 assert.match(exoKt, /fun log\(line: String\)/, 'it can speak into logcat too')
 assert.doesNotMatch(exoKt, /vw = 1280/, 'and invents no resolution to report to the viewer')
+// One engine for both live pages. Media3 was brought in for HLS and the device
+// disagreed: Premium is MPEG-TS behind an opaque redirector, so it always took
+// libVLC and always worked; Free TV is HLS, so it took Media3 and did not.
+// Same page, same HUD logic, same fixes — the backend was the only difference
+// left. libVLC plays HLS perfectly well and is the one with evidence behind it.
 assert.match(
   mpv,
-  /const wantExo = isLive\.value && isHlsSource\(props\.src\) && !exoRefused\s+engine \?\?= \(wantExo \? exoEngine\(\) : null\) \?\? vlcEngine\(\)/,
-  'only an HLS live source picks Media3; everything else keeps libVLC, and a build without Media3 still falls back',
+  /engine \?\?= vlcEngine\(\) \?\? \(exoRefused \? null : exoEngine\(\)\) \?\? videoEngine\(videoEl\.value!\)/,
+  'libVLC answers first; Media3 is the fallback for a build without it',
+)
+assert.doesNotMatch(
+  mpv,
+  /isHlsSource\(props\.src\) \? exoEngine\(\)/,
+  'no source picks Media3 over libVLC any more',
 )
 // A wrong engine must cost one attempt, not the feature. Media3's "Input does
 // not start with the #EXTM3U header" is fatal to Media3 and says nothing about
@@ -533,7 +543,7 @@ assert.match(
 // Without it, v0.6.44's misroute made every retry repeat the same parse.
 assert.match(mpv, /let exoRefused = false/, 'a refusal by Media3 is remembered')
 assert.match(mpv, /if \(engineIsExo && tail\) \{[\s\S]{0,200}exoRefused = true/, 'and retires it on a source error')
-assert.match(mpv, /\(wantExo \? exoEngine\(\) : null\)/, 'so the next selection skips it')
+assert.match(mpv, /\(exoRefused \? null : exoEngine\(\)\)/, 'so a refusal takes it out of the next selection')
 // The safety net, for a source that reaches Media3 anyway: it must decide from
 // the stream rather than assume, or the misroute is fatal instead of merely wrong.
 assert.doesNotMatch(

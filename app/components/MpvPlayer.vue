@@ -2114,24 +2114,24 @@ async function startPlayer() {
       })
     }
     else {
-      // Media3 for HLS, libVLC for everything else.
+      // libVLC first, for everything.
       //
-      // The split was "live vs film" and that was wrong: what Media3 is good at
-      // is HLS, and a Free TV channel is almost always raw MPEG-TS behind the
-      // loopback proxy. Sending those to Media3 handed a transport stream to a
-      // playlist parser, which fails on the first bytes — a channel that never
-      // opened, and no reason given. Raw TS is libVLC's strength; so is a film,
-      // which may carry Dolby or DTS that Media3 hands to platform decoders a
-      // cheap device does not have, and libVLC's bundled FFmpeg is precisely
-      // why it is here.
+      // Media3 was brought in for HLS, on the reasoning that HLS is what it is
+      // best at. The device disagreed. Premium channels are MPEG-TS behind an
+      // opaque redirector, so they have always taken the libVLC path — and
+      // Premium is the one that works. Free TV channels are HLS, so they took
+      // the Media3 path, and Free TV is the one that does not: same page, same
+      // HUD logic, same fixes applied to both, and the only thing left that
+      // differs between them is which backend answered.
       //
-      // Both answer the same protocol, so nothing below this line knows which
-      // one replied. Falls back to libVLC where Media3 is absent — an older
-      // APK, or a build without it.
-      const wantExo = isLive.value && isHlsSource(props.src) && !exoRefused
-      engine ??= (wantExo ? exoEngine() : null) ?? vlcEngine() ?? videoEngine(videoEl.value!)
-      engineIsExo = wantExo && !!exoEngine() && engine === exoEngine()
-      await engine.start(props.src)
+      // So the split goes. libVLC plays HLS perfectly well, it is the engine
+      // with the evidence behind it, and giving Free TV the same backend as
+      // Premium gives it the same behaviour rather than an argument about why
+      // it should be equivalent. Media3 stays registered and stays the
+      // fallback for a build where libVLC is missing; nothing below this line
+      // knows which replied.
+      engine ??= vlcEngine() ?? (exoRefused ? null : exoEngine()) ?? videoEngine(videoEl.value!)
+      engineIsExo = !!exoEngine() && engine === exoEngine()
     }
 
     position.value = 0
