@@ -30,11 +30,14 @@ Nuxt and Tauri, driven as happily by a TV remote as by a mouse.
 
 <br/>
 
-https://github.com/user-attachments/assets/2d0bd58f-c838-43e2-a0ce-e503f9317aa8
+<a href="https://github.com/baigcoder/rivulet/blob/main/public/hero.mp4">
+  <img src="public/hero-poster.jpg" width="100%" alt="Rivulet — one minute, end to end">
+</a>
 
 <p align="center">
   <sub><b>One minute, end to end</b> &middot; browsing, themes and backgrounds, then a torrent
-  playing in the embedded mpv window with the subtitle menu open.</sub>
+  playing in the embedded mpv window with the subtitle menu open. &middot;
+  <a href="https://github.com/baigcoder/rivulet/blob/main/public/hero.mp4"><b>Play the tour &rarr;</b></a></sub>
 </p>
 
 > [!IMPORTANT]
@@ -528,15 +531,23 @@ that carry none, as every torrent client does.
 
 ## Install
 
-Grab the latest build from the [Releases page][releases], or download the [Android APK
-directly](https://github.com/baigcoder/rivulet/releases/latest/download/rivulet-universal.apk).
+Grab the latest build from the [Releases page][releases], or take a direct download below. Every
+link points at the newest release — the workflow publishes these names unchanged each time, so a
+bookmark keeps working.
 
-| Platform | Format | Notes |
+| Platform | Download | Notes |
 | --- | --- | --- |
-| **Linux** | `.deb`, `.rpm`, `.AppImage` | Needs `mpv` and `ffmpeg` from your package manager |
-| **Windows** | `.msi`, `.exe` (NSIS) | Ships its own mpv and ffmpeg; WebView2 comes with Windows 11 and updated Windows 10 |
-| **Android / Android TV** | [`.apk`](https://github.com/baigcoder/rivulet/releases/latest/download/rivulet-universal.apk) | Sideload; also the phone build |
-| **macOS** | `.app`, `.dmg` | Apple Silicon; carries its own libmpv, so nothing to install first. Unsigned — [one command before the first launch](#opening-it-on-macos) |
+| **Linux** | [`.AppImage`][dl-appimage] &middot; [`.deb`][dl-deb] &middot; [`.rpm`][dl-rpm] | Needs `mpv` and `ffmpeg` from your package manager |
+| **Windows** | [`.exe`][dl-exe] (NSIS) &middot; `.msi` | Ships its own mpv and ffmpeg; WebView2 comes with Windows 11 and updated Windows 10 |
+| **Android / Android TV** | [`.apk`][dl-apk] | Sideload; also the phone build |
+| **macOS** | [`.dmg`][dl-dmg] &middot; `.app` | Apple Silicon; carries its own libmpv, so nothing to install first. Unsigned — [one command before the first launch](#opening-it-on-macos) |
+
+[dl-appimage]: https://github.com/baigcoder/rivulet/releases/latest/download/Rivulet.AppImage
+[dl-deb]: https://github.com/baigcoder/rivulet/releases/latest/download/Rivulet.deb
+[dl-rpm]: https://github.com/baigcoder/rivulet/releases/latest/download/Rivulet.rpm
+[dl-exe]: https://github.com/baigcoder/rivulet/releases/latest/download/Rivulet_Setup.exe
+[dl-apk]: https://github.com/baigcoder/rivulet/releases/latest/download/Rivulet.apk
+[dl-dmg]: https://github.com/baigcoder/rivulet/releases/latest/download/Rivulet.dmg
 
 First run has no sources and searches nothing. Add one under *Settings → Sources*, or skip that
 entirely and use it as a torrent client — paste a magnet on the Downloads page and it plays.
