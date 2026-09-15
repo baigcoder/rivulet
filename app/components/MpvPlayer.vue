@@ -3271,8 +3271,17 @@ const centre = computed(() => {
   // frame. Live used to skip this so the watch page could draw its own
   // notice — that notice unmounts the moment the URL exists, so a live
   // channel sat on a black screen with a Pause button and no spinner.
-  if (!fromEngine.value && started.value && !ended.value && videoWidth.value === 0 && !moving.value)
+  //
+  // `sawPicture` is what keeps it to the opening. Both readings beside it are
+  // readings of *now*: libVLC and Media3 report no size for a live track, and
+  // a paused clock does not move — so on Android every pause satisfied this
+  // test and put "Opening the stream…" over a channel that had been playing
+  // for half an hour. A stream that has shown a frame is not opening; it is
+  // playing, paused or stalled, and the branches below say which.
+  if (!fromEngine.value && started.value && !ended.value && !sawPicture.value
+    && videoWidth.value === 0 && !moving.value) {
     return 'loading'
+  }
   if (started.value && (buffering.value || stalled.value))
     return 'stalled'
   return ''

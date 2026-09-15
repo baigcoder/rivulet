@@ -160,8 +160,18 @@ assert.match(
 )
 assert.match(
   playerSrc,
-  /!fromEngine\.value && started\.value && !ended\.value && videoWidth\.value === 0/,
+  /!fromEngine\.value && started\.value && !ended\.value && !sawPicture\.value/,
   'Loading stays up until a decoded frame — live HLS moves time-pos before the picture exists',
+)
+// And comes down once there has been one. Every other reading in that test is
+// a reading of *now*, and on Android a pause satisfies all of them: neither
+// backend reports a size for a live track and a paused clock does not move, so
+// "Opening the stream…" sat over a channel that had been playing for half an
+// hour. A stream that has shown a frame is not opening.
+assert.match(
+  playerSrc,
+  /const sawPicture = ref\(false\)/,
+  'and the player remembers that a frame arrived, which no reading of now can tell it',
 )
 assert.match(
   playerSrc,

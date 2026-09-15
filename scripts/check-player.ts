@@ -519,7 +519,12 @@ assert.doesNotMatch(vlcKt, /THREAD_PRIORITY_BACKGROUND/, 'the decoder scan must 
 // playing channel dead, and never let a real start reset the reconnect counter.
 assert.match(mpv, /const moving = ref\(false\)/, 'the player tracks whether the clock is moving')
 assert.match(mpv, /videoWidth\.value > 0 \|\| moving\.value \|\| duration\.value/, 'the start watchdog must not kill a channel whose clock is moving')
-assert.match(mpv, /videoWidth\.value === 0 && !moving\.value\)[\t\v\f\r \xA0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]*\n\s*return 'loading'/, 'the loader clears once the clock moves, size or no size')
+assert.match(mpv, /&& videoWidth\.value === 0 && !moving\.value\) \{\s+return 'loading'/, 'the loader clears once the clock moves, size or no size')
+// And once a frame has arrived at all. Every other reading in that test is a
+// reading of now, and a pause satisfies all of them on Android — no size for a
+// live track on either backend, and a paused clock that does not move. So every
+// pause put "Opening the stream…" back over a channel that was already playing.
+assert.match(mpv, /!ended\.value && !sawPicture\.value/, 'a stream that has shown a frame is not opening')
 assert.match(mpv, /defineExpose\(\{[\s\S]*?\bmoving,/, 'the watch pages can read it')
 const premiumWatch = readFileSync(new URL('../app/pages/live-tv/premium/watch.vue', import.meta.url), 'utf8')
 const freeWatch = readFileSync(new URL('../app/pages/live-tv/watch.vue', import.meta.url), 'utf8')
@@ -558,6 +563,28 @@ assert.match(exoKt, /\.put\("vo-configured", firstFrame\)/, 'under the name the 
 assert.match(exoKt, /\.put\("paused-for-cache", buffering\)/, 'and starvation is Media3\'s own state, not a duration test live can never satisfy')
 assert.match(exoKt, /fun log\(line: String\)/, 'it can speak into logcat too')
 assert.doesNotMatch(exoKt, /vw = 1280/, 'and invents no resolution to report to the viewer')
+
+// --- A rotation is a surface, not a stream ------------------------------------
+// Rotating destroys the surface the decoder was drawing into and builds another.
+// Handing it the replacement is not on its own enough to get it rendering again,
+// so the start goes pending exactly as a cold one does. VlcPlayer.kt has carried
+// this since live TV first worked; live TV then moved onto Media3 without it and
+// the symptom came back word for word — black on rotate, a HUD that says it is
+// connecting, and Retry that looks like the fix when all it does is run after the
+// rotation has finished.
+function onSurfaceDestroyed(kt: string) {
+  return kt.slice(kt.indexOf('onSurfaceTextureDestroyed'), kt.indexOf('onSurfaceTextureUpdated'))
+}
+for (const [name, kt] of [['libVLC', vlcKt], ['Media3', exoKt]] as const) {
+  assert.match(onSurfaceDestroyed(kt), /pendingPlay = true/, `${name} resumes the start once the new surface arrives`)
+}
+// Media3 also has to stop claiming a picture it can no longer draw: the page
+// reads vo-configured back to decide whether a channel is playing.
+assert.match(
+  onSurfaceDestroyed(exoKt),
+  /firstFrame = false/,
+  'and no picture is reported while there is no surface to draw one on',
+)
 // One engine for live, and an engine that is actually started.
 //
 // Media3 was blamed for Free TV and libVLC made the default for everything,

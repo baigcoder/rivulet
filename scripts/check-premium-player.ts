@@ -468,8 +468,16 @@ check('provider VOD titles drop the language prefix', () => {
 check('a live channel shows a loader until the first frame', () => {
   const player = readFileSync(`${ROOT}app/components/MpvPlayer.vue`, 'utf8')
   assert.ok(
-    /!fromEngine\.value && started\.value && !ended\.value && videoWidth\.value === 0/.test(player),
+    /!fromEngine\.value && started\.value && !ended\.value && !sawPicture\.value/.test(player),
     'centre loading must not be gated on !isLive — that left premium live on a black screen',
+  )
+  // Until the first frame, and no longer. The rest of that test is a reading of
+  // now, and a pause satisfies all of it on Android — neither backend reports a
+  // size for a live track and a paused clock does not move — so every pause put
+  // the opening loader back over a channel that had been playing for an hour.
+  assert.ok(
+    /const sawPicture = ref\(false\)/.test(player),
+    'and comes down once a frame has arrived, which no reading of the moment can say',
   )
   assert.ok(
     watchSrc.includes('premium.player === \'buffering\''),

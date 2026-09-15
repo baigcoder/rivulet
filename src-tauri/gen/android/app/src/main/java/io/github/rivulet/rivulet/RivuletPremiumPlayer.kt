@@ -318,6 +318,26 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
             override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {}
 
             override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
+                // A rotation destroys this surface and builds another, and the
+                // decoder loses its output with the first one. Handing it the
+                // replacement is not on its own enough to get it rendering
+                // again, so the start is made pending exactly as a cold one is
+                // — unless the viewer paused on purpose, or the stream was
+                // stopped, in which case there is nothing to resume.
+                //
+                // VlcPlayer.kt has carried this since the day live TV worked at
+                // all; live TV moved onto this player without it, and the
+                // symptom came back word for word: the picture goes black on
+                // rotate, the HUD says it is connecting, and Retry looks like
+                // the fix when all Retry does is run once the rotation has
+                // finished.
+                if (running && p.playWhenReady)
+                    pendingPlay = true
+                // And there is no picture until the new surface has drawn one.
+                // The page reads this back as `vo-configured` to decide whether
+                // a channel is playing, so leaving it true describes a picture
+                // that is not on screen and cannot come back on its own.
+                firstFrame = false
                 p.clearVideoSurface()
                 outputAttached = false
                 videoSurface?.release()
