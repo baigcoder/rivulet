@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import process from 'node:process'
-import { diskBudget, ENGINE, findReleases, haveAt, headFill, isAwkward, normalizeSource, NoServerStream, parseRelease, pickBest, pickPlay, pickSubtitleFiles, pickVideoFile, planEviction, planNetwork, PRIME_BYTES, primeHead, primeTail, ranked, releaseFileName, releaseKey, releaseLangs, releaseQuality, serverCandidates, setSources, startTorrent, streamParts, toRelease, uploadLimit, usedBytes, withoutUhd } from '../app/utils/torrents'
+import { diskBudget, ENGINE, engineFault, findReleases, haveAt, headFill, isAwkward, normalizeSource, NoServerStream, parseRelease, pickBest, pickPlay, pickSubtitleFiles, pickVideoFile, planEviction, planNetwork, PRIME_BYTES, primeHead, primeTail, ranked, releaseFileName, releaseKey, releaseLangs, releaseQuality, serverCandidates, setSources, startTorrent, streamParts, toRelease, uploadLimit, usedBytes, withoutUhd } from '../app/utils/torrents'
 // Self-check for the torrent parser/ranker: `bun scripts/check-torrents.ts`.
 // The fixture is the response shape a source answers with, filled in with a
 // public-domain film. `--live <source-url> <imdb-id>` also searches for real.
@@ -865,6 +865,46 @@ const promise = startTorrent({
 })
 assert.equal((await promise).id, 7, 'the name arrived with the lookup, and still adopted')
 assert.ok(!requests.some(u => u.startsWith('https://a.example')), 'and the sources were never asked')
+
+// --- What the engine already said ---------------------------------------------
+// A torrent the engine has given up on is not a slow one, and every reading the
+// player takes is a reading of a swarm. With no swarm there was nothing to read
+// and nothing to say, so a download that had failed outright sat on
+// "Buffering · — · 0 peers · 0%" until somebody pressed Back.
+
+const ok = { state: 'live', error: null, progress_bytes: 1, uploaded_bytes: 0, total_bytes: 2, finished: false, file_progress: [], live: null }
+assert.equal(engineFault(null), '', 'nothing to report without stats')
+assert.equal(engineFault(ok), '', 'a running torrent is not a fault')
+assert.equal(engineFault({ ...ok, state: 'initializing' }), '', 'nor is one still checking its files')
+// Verbatim from librqbit: the operation, a blank line, "Caused by:", the cause.
+const DISK_FULL = 'error writing to file 352 ("Bleach - 353.mkv")'
+  + '\n\nCaused by:\n    There is not enough space on the disk. (os error 112)'
+assert.match(
+  engineFault({ ...ok, state: 'error', error: DISK_FULL }),
+  /not enough free disk space/,
+  'a full disk is named, and it is the common one: the engine lays out every file in the torrent before it fetches any',
+)
+assert.match(
+  engineFault({ ...ok, state: 'error', error: DISK_FULL }),
+  /Settings → Storage/,
+  'with the two things the viewer can actually do about it',
+)
+assert.match(
+  engineFault({ ...ok, state: 'error', error: 'open failed\n\nCaused by:\n    Access is denied. (os error 5)' }),
+  /could not write to the download folder/,
+  'a folder it cannot write is its own sentence',
+)
+// Anything else: the last line of the chain is the cause, and the frames above
+// it are a stack trace nobody on a sofa wants.
+const other = engineFault({ ...ok, state: 'error', error: 'doing a thing\n\nCaused by:\n    the network went away' })
+assert.match(other, /the network went away/, 'an unrecognised fault still says what the engine said')
+assert.doesNotMatch(other, /Caused by/, 'without the anyhow scaffolding around it')
+assert.doesNotMatch(other, /doing a thing/, 'and without the call that led to it')
+
+// The page reads it off the poll it already runs, and the player treats it as
+// the end of the stream rather than one more thing to wait through.
+assert.match(watchVue, /const fault = computed\(\(\) => engineFault\(stats\.value\)\)/, 'the watch page reads the engine verdict it was already polling')
+assert.match(watchVue, /:fault="fault"/, 'and hands it to the player')
 
 // --- Priming the stream -------------------------------------------------------
 // The engine fetches the pieces of every open reader before it fetches anything

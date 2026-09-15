@@ -466,6 +466,17 @@ const progressPct = computed(() => {
   return s?.total_bytes ? Math.min(100, (s.progress_bytes / s.total_bytes) * 100) : 0
 })
 
+/**
+ * The engine's own verdict, if it has one.
+ *
+ * It polls this torrent already, and `state: 'error'` with a sentence under it
+ * has been in every one of those answers all along — unread. A download the
+ * engine had given up on showed "Buffering · — · 0 peers · 0%" until someone
+ * pressed Back, because every reading the player has is a reading of a swarm,
+ * and there was no swarm: a full disk had stopped it before the first piece.
+ */
+const fault = computed(() => engineFault(stats.value))
+
 const speed = computed(() => stats.value?.live?.download_speed.human_readable ?? '—')
 const peers = computed(() => stats.value?.live?.snapshot.peer_stats.live ?? 0)
 /**
@@ -519,6 +530,7 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
         :resolving="resolving"
         :step="step"
         :status="statusLine"
+        :fault="fault"
         :media="title"
         :next="next"
         :imdb-id="media?.imdbId"

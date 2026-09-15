@@ -342,6 +342,15 @@ assert.ok(!mpv.includes('rootEl.value?.querySelectorAll'), 'scoped to the player
 assert.match(mpv, /live: isLive\.value/, 'mpv must know live from VOD so 4K HEVC gets a real probe')
 assert.match(mpv, /isLive\.value \? 'sdr'/, 'live HDR passthrough on SDR is a black picture with sound')
 
+// --- A verdict is not a wait --------------------------------------------------
+// Every reading this player takes of a torrent is a reading of a swarm, so a
+// torrent the engine has already failed gives it nothing to read and nothing to
+// say. It showed "Buffering" over a download that had stopped on a full disk
+// before the first piece, for as long as anyone left it there.
+assert.match(mpv, /if \(props\.fault\)\s+return 'error'/, 'the engine verdict outranks every spinner here')
+assert.match(mpv, /props\.fault \|\| \(errorMsg\.value \? friendlyPlaybackError/, 'and is shown as-is, being a sentence already')
+assert.match(mpv, /errorMsg\.value \|\| props\.fault\)\s+return false/, 'and stops the head watchdog, which would answer a disk error with a line about seeders')
+
 // --- A torrent stream that never opens ----------------------------------------
 // mpv answers no cache state and no duration until its demuxer opens, so for the
 // whole of the opening wait the overlay had an indeterminate spinner and nothing

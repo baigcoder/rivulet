@@ -715,6 +715,37 @@ export interface TorrentStats {
   }
 }
 
+/**
+ * What the engine says went wrong with this torrent, as one sentence.
+ *
+ * librqbit answers a torrent it cannot run with `state: 'error'` and an anyhow
+ * chain: the operation that failed, a blank line, "Caused by:", and the OS
+ * message under that. Nothing ever read it — so a download that had already
+ * failed outright showed "Buffering · — · 0 peers · 0%" for as long as anyone
+ * was willing to look at it, which is a wait no swarm was going to end.
+ *
+ * The two cases worth naming are the two that are the viewer's to fix. A full
+ * disk is the common one and it does not take a big download to hit: the
+ * engine lays out every file in the torrent before it fetches any of them, so
+ * a 300 GB season pack needs 300 GB free to stream one episode out of it.
+ */
+export function engineFault(stats?: TorrentStats | null): string {
+  if (!stats || stats.state !== 'error')
+    return ''
+  const raw = stats.error ?? ''
+  if (/not enough space|no space left|disk full|os error 112|enospc/i.test(raw)) {
+    return $t('There is not enough free disk space for this download. The engine reserves room for every file in the torrent, so a season pack needs space for the whole pack. Free some up, or choose another folder in Settings → Storage.')
+  }
+  if (/permission denied|access is denied|os error 5|\beacces\b/i.test(raw))
+    return $t('The engine could not write to the download folder. Choose another one in Settings → Storage.')
+  // Otherwise the last line of the chain is the cause and the lines above it
+  // are how we got there — the cause is the only part worth showing.
+  const cause = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean).pop() ?? ''
+  return cause
+    ? $t('The torrent engine stopped this download: {reason}', { reason: cause })
+    : $t('The torrent engine stopped this download.')
+}
+
 /** A torrent as the engine lists it. */
 export interface EngineTorrent {
   id: number

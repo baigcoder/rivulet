@@ -71,6 +71,16 @@ const props = defineProps<{
   src: string
   /** Live torrent status, shown while playback is stalled for data. */
   status?: string
+  /**
+   * The engine has already failed this stream and said why.
+   *
+   * Not the same thing as `status`: that is a reading of a download in
+   * progress, and this is the end of one. It outranks every spinner here,
+   * because nothing the player waits for is going to change it — a torrent
+   * the engine put into `error` has stopped, and the sentence with it is the
+   * only thing on screen worth reading.
+   */
+  fault?: string
   /** Hold the OS window in fullscreen for as long as this player is mounted. */
   fullscreen?: boolean
   /** Fit / center / stretch. Live TV drives this from its overlay; VOD uses the player's own button. */
@@ -429,7 +439,10 @@ const errorMsg = ref('')
 /** Empty stays empty: `friendlyPlaybackError('')` is the generic overlay
  *  sentence, and the live watch page treats any string here as a full-screen
  *  failure — including while the stream has not started yet. */
-const friendlyError = computed(() => errorMsg.value ? friendlyPlaybackError(errorMsg.value) : '')
+// The parent's verdict first: it is already a sentence for a viewer, where
+// `errorMsg` is whatever mpv or the shim last said and has to be cleaned up.
+const friendlyError = computed(() =>
+  props.fault || (errorMsg.value ? friendlyPlaybackError(errorMsg.value) : ''))
 /** The current stream was a debrid stub clip (quota/key error) — remembered for the failover verdict. */
 const stubSeen = ref(false)
 /** Chapter list fetched once when the file opens. */
@@ -3227,6 +3240,10 @@ const stalled = ref(false)
 watchDebounced(() => buffering.value && started.value, v => (stalled.value = v), { debounce: 500 })
 
 const centre = computed(() => {
+  // Ahead of `ended` and every spinner below: the engine has stopped, and a
+  // torrent that reached the last frame of what it holds is not finished.
+  if (props.fault)
+    return 'error'
   // Live TV owns failure UI on its overlay — mpv's ffmpeg tail is not
   // actionable and reads like the app is broken.
   if (errorMsg.value && !isLive.value)
@@ -3287,7 +3304,7 @@ watch(centre, c => {
  * bitfield the seek previews read.
  */
 function needsHead() {
-  if (!fromEngine.value || !props.src || ended.value || errorMsg.value)
+  if (!fromEngine.value || !props.src || ended.value || errorMsg.value || props.fault)
     return false
   // A clock that is moving, or a picture with a size, is a stream that has
   // started whatever else it has failed to report — the same reading the
