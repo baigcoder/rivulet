@@ -595,6 +595,25 @@ assert.match(
   /firstFrame = false/,
   'and no picture is reported while there is no surface to draw one on',
 )
+
+// --- A live stream that says it ended has usually not ------------------------
+// A discontinuity in an HLS or MPEG-TS feed raises "ended" and the picture
+// never stops. `running` is what the page reads to decide whether to keep
+// polling at all, so a one-way flag turned one hiccup into everything
+// downstream of a poll that had given up: the HUD stuck on "Opening the
+// stream…" over a moving picture, the eight-second auto-retry restarting a
+// channel that was working, and auto-skip walking past channels that all
+// played. A device trace caught it exactly — first frame at 13:13:56.385,
+// the page restarting at 13:14:00.116.
+for (const [name, kt] of [['libVLC', vlcKt], ['Media3', exoKt]] as const) {
+  assert.match(kt, /private var deadAt = 0L/, `${name} gives a live stream a grace window before calling it dead`)
+  assert.match(kt, /liveRecoverMs/, `${name} bounds that window`)
+  assert.doesNotMatch(kt, /STATE_ENDED -> running = false|EndReached -> running = false/, `${name} never gives up on the first hiccup`)
+}
+// And only a stream that has shown a picture earns the doubt — one that never
+// rendered a frame has failed, and Free TV's walk down the list must not wait
+// out a grace window for it.
+assert.match(exoKt, /isLiveStream\(\) && firstFrame/, 'the doubt is for a channel that was playing, not one that never started')
 // One engine for live, and an engine that is actually started.
 //
 // Media3 was blamed for Free TV and libVLC made the default for everything,

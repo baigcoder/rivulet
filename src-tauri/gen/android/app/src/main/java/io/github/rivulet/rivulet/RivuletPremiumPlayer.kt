@@ -103,6 +103,52 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
     @Volatile
     private var buffering = false
 
+    /**
+     * When Media3 last said this stream ended or errored, or 0.
+     *
+     * Live reports both spuriously: a discontinuity in an HLS or MPEG-TS feed
+     * raises STATE_ENDED and the picture never actually stops. `running` was
+     * one-way — set in `start`, cleared on the first hiccup — so one of those
+     * marked a channel stopped for the rest of its life while it played on.
+     *
+     * The page reads `running` to decide whether to keep polling at all, so
+     * what the viewer saw was everything downstream of a poll that had given
+     * up: the HUD stuck on "Opening the stream…" over a moving picture, the
+     * one-shot auto-retry firing eight seconds in and restarting a channel
+     * that was working, and the auto-skip walking down the list past channels
+     * that were all playing. Retry appeared to fix it because a fresh start is
+     * the only thing that ever set this back.
+     *
+     * VlcPlayer.kt has had this grace since the same bug was found there. A
+     * stream with a real length still ends the moment it says so.
+     */
+    @Volatile
+    private var deadAt = 0L
+
+    /** How long a live stream may be silent before it has really stopped. */
+    private val liveRecoverMs = 6_000L
+
+    /** No length is how a live stream reports itself; a file always has one. */
+    private fun isLiveStream(): Boolean = (player?.duration ?: 0L) <= 0L
+
+    /**
+     * Media3 says the stream stopped. For a file that is the truth. For live it
+     * is a maybe, so start the grace window and let `refresh` decide once
+     * Media3 has had its own go at carrying on.
+     *
+     * Only a stream that has actually shown a picture gets the benefit of the
+     * doubt. One that never rendered a frame has not hiccuped, it has failed,
+     * and Free TV's walk down the list must not wait out a grace window for it.
+     */
+    private fun markDead(why: String?) {
+        if (why != null) failure = why
+        if (isLiveStream() && firstFrame) {
+            if (deadAt == 0L) deadAt = android.os.SystemClock.elapsedRealtime()
+        } else {
+            running = false
+        }
+    }
+
     private val tick = object : Runnable {
         override fun run() {
             refresh()
@@ -120,6 +166,7 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
         running = true
         firstFrame = false
         buffering = false
+        deadAt = 0L
         onMain {
             val p = ensure()
             activity.setVlcVideoMode(true)
@@ -278,8 +325,7 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
             .build()
         p.addListener(object : Player.Listener {
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                running = false
-                failure = error.message ?: "Media3 could not play this stream."
+                markDead(error.message ?: "Media3 could not play this stream.")
                 android.util.Log.e("RivuletPremiumPlayer", "error: ${error.message}")
             }
         })
@@ -287,8 +333,14 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
             override fun onPlaybackStateChanged(state: Int) {
                 buffering = state == Player.STATE_BUFFERING
                 when (state) {
-                    Player.STATE_ENDED -> running = false
-                    Player.STATE_READY, Player.STATE_BUFFERING -> Unit
+                    Player.STATE_ENDED -> markDead(null)
+                    // Anything that is not the end is Media3 carrying on, and
+                    // that retires a grace window the hiccup before it opened.
+                    Player.STATE_READY, Player.STATE_BUFFERING -> {
+                        running = true
+                        deadAt = 0L
+                        failure = null
+                    }
                 }
             }
 
@@ -296,6 +348,9 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
             override fun onRenderedFirstFrame() {
                 firstFrame = true
                 buffering = false
+                running = true
+                deadAt = 0L
+                failure = null
                 android.util.Log.d("RivuletPremiumPlayer", "trace first frame")
             }
         })
@@ -388,6 +443,17 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
 
     private fun refresh() {
         val p = player ?: return
+
+        // A live stream that said it stopped and then stayed quiet really has
+        // stopped. One that came back on its own already cleared this above.
+        val dead = deadAt
+        if (dead != 0L && android.os.SystemClock.elapsedRealtime() - dead > liveRecoverMs) {
+            deadAt = 0L
+            if (!p.isPlaying) {
+                running = false
+                android.util.Log.d("RivuletPremiumPlayer", "no picture after the grace window - giving up")
+            }
+        }
         val duration = if (p.duration <= 0) 0.0 else p.duration / 1000.0
         val pos = if (p.currentPosition < 0) 0.0 else p.currentPosition / 1000.0
         val format = p.videoFormat
