@@ -357,6 +357,27 @@ assert.match(mpv, /errorMsg\.value \|\| props\.fault\)\s+return false/, 'and sto
 // so it is worth being sure; with other copies ranked and waiting, staying costs
 // the whole wait and moving on costs a few seconds.
 assert.match(mpv, /const ENGINE_FAILOVER_STALL_MS = \d/, 'a shorter window applies when another copy can be tried')
+
+// --- A Direct link gets the patience its own player was configured for --------
+// `--network-timeout=90` is set because the first byte of a debrid link can wait
+// on an unlock. Giving up at twelve seconds was the app overruling the player it
+// had just configured — and only defensible when there is another server to
+// switch to, which costs a remount and nothing else.
+assert.match(mpv, /const DIRECT_LAST_MS = \d/, 'the last server is waited on for longer than the first')
+assert.ok(
+  Number(/const DIRECT_START_MS = (\d+)_?(\d*)/.exec(mpv)?.slice(1).join('') ?? 0)
+  < Number(/const DIRECT_LAST_MS = (\d+)_?(\d*)/.exec(mpv)?.slice(1).join('') ?? 0),
+  'and being out of servers is what makes it patient, not the stream',
+)
+assert.match(
+  mpv,
+  /hasCandidates\.value \? DIRECT_START_MS : DIRECT_LAST_MS/,
+  'which of the two applies turns on having somewhere to go',
+)
+// Read when it fires, not when it was armed: the other servers are searched for
+// in the background and can land after playback started.
+assert.match(mpv, /const armedAt = Date\.now\(\)/, 'the deadline is measured from the start')
+assert.match(mpv, /window\.setTimeout\(giveUp, Math\.min\(2_000/, 'and re-checked rather than decided once')
 assert.match(
   mpv,
   /const stall = hasCandidates\.value \? ENGINE_FAILOVER_STALL_MS : ENGINE_STALL_MS/,
@@ -691,7 +712,12 @@ assert.doesNotMatch(mpv, /moving\.value = started\.value/, 'and it is not gated 
 // time, after which the auto-skip moved on and the viewer got "connecting" then
 // a playback error on a channel that worked.
 assert.match(mpv, /const LIVE_START_GRACE_MS = 30_000/, 'live gets thirty seconds for its first frame')
-assert.match(mpv, /isLive\.value \? LIVE_START_GRACE_MS : 12_000/, 'and a file, served from loopback, keeps twelve')
+assert.match(
+  mpv,
+  /isLive\.value \? LIVE_START_GRACE_MS : DIRECT_START_MS/,
+  'and a file, served from loopback, starts on the twelve-second clock',
+)
+assert.match(mpv, /const DIRECT_START_MS = 12_000/, 'which is still twelve')
 // A stream still filling its buffer is not a dead one. Measured on a phone:
 // attempts ran four and six seconds with data plainly arriving and were torn
 // down before libVLC produced a frame, each teardown reminting a token and

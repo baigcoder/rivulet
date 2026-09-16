@@ -404,6 +404,24 @@ const ENGINE_STALL_MS = 60_000
 const ENGINE_FAILOVER_GRACE_MS = 20_000
 const ENGINE_FAILOVER_STALL_MS = 25_000
 
+/**
+ * How long a Direct link gets to produce a first frame.
+ *
+ * The same question as the engine's, and the same answer: it depends on what
+ * happens next. With another server ranked behind it, twelve seconds is right —
+ * switching costs a remount and the list is already there. With none, twelve
+ * seconds was the app overruling the player it had just configured:
+ * `--network-timeout=90` is set precisely because the first byte of a debrid
+ * link can wait on an unlock, and killing the attempt at twelve declared dead a
+ * link that ffmpeg had been told to wait a minute and a half for.
+ *
+ * Forty-five is not that ninety. Nothing is on screen for the whole of it, and
+ * an error naming the two things a viewer can do about it beats a black
+ * rectangle that is still technically trying.
+ */
+const DIRECT_START_MS = 12_000
+const DIRECT_LAST_MS = 45_000
+
 /** When the current stream was handed to the backend. See `streamDied`. */
 let startedAt = 0
 /** Where the clock last stood, and when it last went forward. */
@@ -2241,19 +2259,33 @@ async function startPlayer() {
     guess.value = null
     lastKey = '' // force a geometry + shape push on the next frame
     if (!fromEngine.value) {
-      window.setTimeout(() => {
+      const armedAt = Date.now()
+      const giveUp = () => {
         // A clock that is moving has started, whether or not libVLC ever says
         // how big the picture is. On Android a live channel often never does,
         // and this declared a channel that was playing dead twelve seconds in.
         if (!started.value || errorMsg.value || videoWidth.value > 0 || moving.value || duration.value)
           return
+        // Read when it fires rather than when it was armed: the other servers
+        // are searched for in the background and can land after playback has
+        // started (`onAlternativesLate`), which turns a last resort into one
+        // of several while this is counting.
+        const deadline = isLive.value
+          ? LIVE_START_GRACE_MS
+          : hasCandidates.value ? DIRECT_START_MS : DIRECT_LAST_MS
+        const waited = Date.now() - armedAt
+        if (waited < deadline) {
+          window.setTimeout(giveUp, Math.min(2_000, deadline - waited))
+          return
+        }
         if (localLive.value) {
           streamDied('dead')
           return
         }
         if (!streamDied())
           errorMsg.value = $t('This stream did not start. Try another quality, or change How Play works in Settings → Sources.')
-      }, isLive.value ? LIVE_START_GRACE_MS : 12_000)
+      }
+      window.setTimeout(giveUp, isLive.value ? LIVE_START_GRACE_MS : DIRECT_START_MS)
     }
     // Push geometry and cutouts immediately so the stalled overlay's data-cut
     // hole appears in the native window before the next paint — waiting for

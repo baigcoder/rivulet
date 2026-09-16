@@ -1045,6 +1045,19 @@ assert.equal(pieceBytes({ files: [{ name: 'a', length: 1024 ** 2 * 16, included:
 assert.ok(PIECE_CEILING < 16 * 1024 ** 2, 'the measured 16 MiB pack is over the ceiling')
 assert.ok(PIECE_CEILING >= 2 * 1024 ** 2, 'and an ordinary single-episode torrent is under it')
 
+// --- Failing over is bounded --------------------------------------------------
+// Unbounded, a title with twenty dead links spent twelve seconds on each: four
+// minutes of a black rectangle silently hopping between hosts. Free TV bounded
+// its auto-skip for the same reason; the film page never did.
+const watchSrc = await Bun.file(new URL('../app/pages/watch.vue', import.meta.url)).text()
+assert.match(watchSrc, /const MAX_FAILOVERS = \d/, 'there is a ceiling on silent server hopping')
+assert.match(
+  watchSrc,
+  /if \(failovers\.value >= MAX_FAILOVERS\)[\s\S]{0,200}?errorMsg\.value =/,
+  'and reaching it says so rather than carrying on',
+)
+assert.match(watchSrc, /failovers\.value = 0/, 'a fresh attempt gets a fresh budget')
+
 // --- A dead swarm is not the end of the attempt -------------------------------
 // A direct link has had somewhere to fail over to since there were servers to
 // fail over between. A torrent had nothing, so a swarm that never woke up ended

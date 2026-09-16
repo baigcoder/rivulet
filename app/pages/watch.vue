@@ -83,6 +83,20 @@ const activeCandidate = ref(0)
 
 /** False until you pick a server by hand — the automatic pick reads "Auto" in the menu. */
 const userPicked = ref(false)
+/**
+ * How many servers may fail before the answer is that the title is not playable.
+ *
+ * Unbounded, this walked the whole list: a title with twenty dead debrid links
+ * spent twelve seconds on each of them, four minutes of a black rectangle
+ * silently hopping between hosts with nothing on screen to say so. Bounded, the
+ * fourth failure says what happened and leaves the menu open, which is both
+ * sooner and honest — the same trade Free TV's auto-skip makes, for the same
+ * reason. The count is per attempt: Retry, another quality, or another title
+ * all start it again.
+ */
+const MAX_FAILOVERS = 4
+const failovers = ref(0)
+
 /** Shown as an OSD toast by the freshly mounted player after an auto-failover. */
 const failoverNotice = ref('')
 
@@ -182,6 +196,7 @@ async function start() {
   candidates.value = []
   activeCandidate.value = 0
   userPicked.value = false
+  failovers.value = 0
   failoverNotice.value = ''
 
   try {
@@ -292,8 +307,10 @@ function useCandidate(index: number, manual = true) {
   const next = candidates.value[index]
   if (!next || index === activeCandidate.value)
     return
-  if (manual)
+  if (manual) {
     userPicked.value = true
+    failovers.value = 0
+  }
   activeCandidate.value = index
   torrent.value = next
   errorMsg.value = ''
@@ -355,8 +372,15 @@ function onPlaybackFailed() {
     return
   const following = activeCandidate.value + 1
   const next = candidates.value[following]
-  if (!next)
+  if (!next) {
+    errorMsg.value = $t('None of the {count} servers for this title would play. Try another quality, or another release.', { count: candidates.value.length })
     return
+  }
+  if (failovers.value >= MAX_FAILOVERS) {
+    errorMsg.value = $t('Tried {count} servers for this title and none of them played. Pick one by hand from the server menu, or try another release.', { count: failovers.value })
+    return
+  }
+  failovers.value++
   // The swap itself is silent; the new player mount announces it (osd-on-start).
   failoverNotice.value = `${$t('Switched to')} ${hostOf(next.via ?? '') || next.source}`
   useCandidate(following, false)
