@@ -170,7 +170,16 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
         onMain {
             val p = ensure()
             activity.setVlcVideoMode(true)
-            textureView?.visibility = View.VISIBLE
+            // Left GONE (whatever `stop()` set it to, or its initial state on
+            // a cold start) rather than shown here: the TextureView keeps
+            // painting its last decoded frame until a new one arrives, and
+            // this channel has decoded none yet. Showing it now is how a zap
+            // away from a channel that had been playing left that channel's
+            // picture on screen — frozen, but looking exactly like this
+            // one's — under a HUD that correctly said "Connecting" or
+            // "Channel unavailable" about the new one.
+            // `onRenderedFirstFrame` below is the first proof this channel
+            // has a frame of its own; that is where it is shown.
             val httpFactory = DefaultHttpDataSource.Factory()
                 .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
                 .setConnectTimeoutMs(6_000)
@@ -351,6 +360,10 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
                 running = true
                 deadAt = 0L
                 failure = null
+                // The first real output this channel has produced — see the
+                // comment in `start()`. Safe on every call: a view already
+                // visible is a no-op.
+                textureView?.visibility = View.VISIBLE
                 android.util.Log.d("RivuletPremiumPlayer", "trace first frame")
             }
         })

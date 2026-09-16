@@ -443,6 +443,14 @@ function onTogglePlay() {
     void resolveStreamUrl()
     return
   }
+  // The one-shot auto-retry (see `AUTO_RETRY_MS` below) is a safety net for a
+  // viewer who does nothing; it does not know a viewer just did something.
+  // Its timer keeps running through a manual pause — pressing play again is
+  // `goLive`, a full reconnect — and if both land close together the two
+  // stop/starts race: whichever finishes second tears down the picture the
+  // first one had just drawn, back to "Connecting" with nothing on screen
+  // to explain it. A manual press is always the more current signal.
+  clearAutoRetry()
   p.togglePlay()
   setTimeout(syncPlayerState, 0)
 }
@@ -571,6 +579,11 @@ watch([hasPicture, streamUrl], () => {
 }, { immediate: true })
 
 async function onRetry() {
+  // The button and the auto-retry timer both call this. Pressing it by hand
+  // must cancel the timer, or the two can still race each other exactly as
+  // `onTogglePlay` guards against — a second reconnect landing behind the
+  // first one, tearing down the picture the first just drew.
+  clearAutoRetry()
   errorMsg.value = ''
   resolveError.value = ''
   playerCatchError.value = ''

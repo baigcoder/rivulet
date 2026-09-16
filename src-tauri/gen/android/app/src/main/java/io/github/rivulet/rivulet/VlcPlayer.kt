@@ -274,7 +274,15 @@ class RivuletPlayer(private val activity: MainActivity) {
       // second start that never saw a stop.
       if (hasMedia) p.stop()
       activity.setVlcVideoMode(true)
-      textureView?.visibility = View.VISIBLE
+      // Left GONE (whatever `stop()` set it to, or its initial state on a cold
+      // start) rather than shown here: the TextureView keeps painting its last
+      // decoded frame until a new one arrives, and this channel has decoded
+      // none yet. Showing it now is how a zap away from a channel that had
+      // been playing left that channel's picture on screen — frozen, but
+      // looking exactly like this one — under a HUD that correctly said
+      // "Connecting" or "Channel unavailable" about the new one. The Vout
+      // event below is the first proof this channel has a frame of its own;
+      // that is where it is shown.
       // `Media(lib, url)`'s constructor doesn't always take the URL through
       // libVLC's MRL parser — on some libVLC builds the constructor falls
       // back to `input-slave` parsing, which treats a URL with multiple
@@ -612,6 +620,11 @@ class RivuletPlayer(private val activity: MainActivity) {
           if (event.type == MediaPlayer.Event.Vout) {
             voutCount = event.voutCount
             note("Vout ${event.voutCount}")
+            // The first real output this channel has produced — see the
+            // comment in `start()`. Safe to call every time voutCount ticks,
+            // since a view already visible is a no-op.
+            if (voutCount > 0)
+              textureView?.visibility = View.VISIBLE
           }
           if (event.type == MediaPlayer.Event.ESAdded) {
             // The only thing that makes the cached track list stale.
