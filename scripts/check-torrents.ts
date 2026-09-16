@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import process from 'node:process'
-import { diskBudget, ENGINE, engineFault, findReleases, haveAt, headFill, isAwkward, isPack, normalizeSource, NoServerStream, parseRelease, pickBest, pickPlay, pickSubtitleFiles, pickVideoFile, planEviction, planNetwork, PRIME_BYTES, primeHead, primeTail, ranked, releaseFileName, releaseKey, releaseLangs, releaseQuality, serverCandidates, setSources, startTorrent, streamParts, toRelease, uploadLimit, usedBytes, withoutUhd } from '../app/utils/torrents'
+import { diskBudget, ENGINE, engineFault, findReleases, haveAt, headFill, isAwkward, isPack, normalizeSource, NoServerStream, parseRelease, pickBest, pickPlay, pickSubtitleFiles, pickVideoFile, PIECE_CEILING, pieceBytes, planEviction, planNetwork, PRIME_BYTES, primeHead, primeTail, PROBE_LIMIT, ranked, releaseFileName, releaseKey, releaseLangs, releaseQuality, serverCandidates, setSources, startTorrent, streamParts, toRelease, uploadLimit, usedBytes, withoutUhd } from '../app/utils/torrents'
 // Self-check for the torrent parser/ranker: `bun scripts/check-torrents.ts`.
 // The fixture is the response shape a source answers with, filled in with a
 // public-domain film. `--live <source-url> <imdb-id>` also searches for real.
@@ -958,6 +958,85 @@ const epRow = toRelease({
 })!
 assert.equal(pickBest([packRow, epRow])!.hash, 'epis', 'the single episode wins its tier, on a ninetieth of the seeders')
 assert.equal(pickBest([packRow])!.hash, 'pack', 'and a pack still plays when it is the only copy')
+
+// --- Play the copy that can start, not the one that looks best ----------------
+// Ranking is a judgement made from a release name; `list_only` is a measurement
+// made from the torrent. Only the measurement knows the piece size, and no
+// player shows a frame until the first whole piece of the file is on the disk —
+// so a 16 MiB piece has lost the first minute before a byte is fetched.
+
+const EPISODE_FILES = [{ name: 'Show.S01E02.1080p.mkv', length: 2 * 1024 ** 3, included: true }]
+/** Same episode, two copies: a season pack and a standalone. */
+const twoCopies = [
+  // More seeders, so this one is ranked first — and nothing in either name
+  // says which is cut into big pieces. Only the torrent knows.
+  { name: 'Example\n1080p', title: 'Show S01E02 1080p BluRay REPACK\n👤 900 💾 2 GB ⚙️ a', infoHash: 'pack' },
+  { name: 'Example\n1080p', title: 'Show S01E02 1080p BluRay\n👤 300 💾 2 GB ⚙️ a', infoHash: 'solo' },
+]
+
+/** A torrent whose pieces are `mib` MiB, for the `list_only` answer. */
+function shapedLike(mib: number, files = EPISODE_FILES) {
+  const total = files.reduce((n, f) => n + f.length, 0)
+  return { id: null, details: { name: 'x', info_hash: 'x', files, total_pieces: Math.ceil(total / (mib * 1024 ** 2)) } }
+}
+
+let probed: string[] = []
+let addedMagnet = ''
+globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+  const url = String(input)
+  const body = String(init?.body ?? '')
+  if (url.startsWith(`${ENGINE}/torrents?with_stats`))
+    return Response.json({ torrents: [] })
+  if (url.startsWith(`${ENGINE}/torrents?list_only`)) {
+    probed.push(body.includes('pack') ? 'pack' : 'solo')
+    // The pack is cut into 16 MiB pieces, exactly as the device measured.
+    return Response.json(shapedLike(body.includes('pack') ? 16 : 2))
+  }
+  if (url.startsWith(`${ENGINE}/torrents?overwrite`)) {
+    addedMagnet = body.includes('pack') ? 'pack' : 'solo'
+    return Response.json({ id: 9, details: { name: 'x', info_hash: 'solo', files: EPISODE_FILES } })
+  }
+  if (url.startsWith(ENGINE))
+    return Response.json({})
+  return Response.json({ streams: twoCopies })
+}) as typeof fetch
+
+probed = []
+addedMagnet = ''
+const started = await startTorrent({ imdbId: 'tt0000001', season: 1, episode: 2 })
+assert.equal(addedMagnet, 'solo', 'the copy that can start is the one that is added')
+assert.deepEqual(probed, ['pack', 'solo'], 'the better-ranked copy was measured first, and passed over on what it measured')
+assert.equal(started.index, 0)
+
+// Every copy measuring badly must still play: a slow start beats no playback.
+probed = []
+addedMagnet = ''
+globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+  const url = String(input)
+  const body = String(init?.body ?? '')
+  if (url.startsWith(`${ENGINE}/torrents?with_stats`))
+    return Response.json({ torrents: [] })
+  if (url.startsWith(`${ENGINE}/torrents?list_only`)) {
+    probed.push('x')
+    return Response.json(shapedLike(16))
+  }
+  if (url.startsWith(`${ENGINE}/torrents?overwrite`)) {
+    addedMagnet = body.includes('pack') ? 'pack' : 'solo'
+    return Response.json({ id: 9, details: { name: 'x', info_hash: 'h', files: EPISODE_FILES } })
+  }
+  if (url.startsWith(ENGINE))
+    return Response.json({})
+  return Response.json({ streams: twoCopies })
+}) as typeof fetch
+const anyway = await startTorrent({ imdbId: 'tt0000001', season: 1, episode: 2 })
+assert.equal(anyway.id, 9, 'a title whose every copy is slow still plays')
+assert.ok(probed.length <= PROBE_LIMIT, 'and the measuring is bounded — each probe is a metadata fetch')
+
+// The piece size itself, since everything above hangs off it.
+assert.equal(pieceBytes({ files: EPISODE_FILES, pieces: 0 }), 0, 'an engine that did not say is not a verdict')
+assert.equal(pieceBytes({ files: [{ name: 'a', length: 1024 ** 2 * 16, included: true }], pieces: 1 }), 16 * 1024 ** 2)
+assert.ok(PIECE_CEILING < 16 * 1024 ** 2, 'the measured 16 MiB pack is over the ceiling')
+assert.ok(PIECE_CEILING >= 2 * 1024 ** 2, 'and an ordinary single-episode torrent is under it')
 
 // --- What the engine already said ---------------------------------------------
 // A torrent the engine has given up on is not a slow one, and every reading the

@@ -333,6 +333,7 @@ export default {
   "Loading…": "Loading…",
   "Login via IPTV": "Login via IPTV",
   "Logout": "Logout",
+  "Looking for a copy that starts faster…": "Looking for a copy that starts faster…",
   "Loop A: {time}": "Loop A: {time}",
   "Loop cancelled": "Loop cancelled",
   "Loop off": "Loop off",

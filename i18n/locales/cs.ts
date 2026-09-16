@@ -333,6 +333,7 @@ export default {
   "Loading…": "Načítání…",
   "Login via IPTV": "TODO_TRANSLATION: Login via IPTV",
   "Logout": "TODO_TRANSLATION: Logout",
+  "Looking for a copy that starts faster…": "TODO_TRANSLATION: Looking for a copy that starts faster…",
   "Loop A: {time}": "TODO_TRANSLATION: Loop A: {time}",
   "Loop cancelled": "TODO_TRANSLATION: Loop cancelled",
   "Loop off": "TODO_TRANSLATION: Loop off",

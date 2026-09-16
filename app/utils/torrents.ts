@@ -822,7 +822,51 @@ export function setDownloadDir(path: string) {
  * The cost is resolving the metadata twice, which is the wait the UI already
  * calls "Fetching metadata from peers…".
  */
-export async function listTorrentFiles(magnet: string): Promise<EngineFile[]> {
+export interface TorrentShape {
+  files: EngineFile[]
+  /** How many pieces the whole torrent is cut into. 0 when the engine didn't say. */
+  pieces: number
+}
+
+/**
+ * How big one piece of this torrent is.
+ *
+ * The number that decides whether a release can start quickly, and the reason
+ * seeders and file size both fail to predict it. A player shows no frame until
+ * the *first whole piece* of the file is on the disk, and a piece grows with
+ * the torrent: measured on a phone, an eight-season 175 GiB pack is cut into
+ * 16 MiB pieces, and ninety seconds at half a megabyte a second finished one
+ * piece anywhere in the file and none at the head. The same episode on its own
+ * is cut into one- and two-megabyte pieces and plays almost at once.
+ */
+export function pieceBytes(shape: TorrentShape): number {
+  if (!shape.pieces)
+    return 0
+  return shape.files.reduce((n, f) => n + f.length, 0) / shape.pieces
+}
+
+/**
+ * The biggest piece a release may have and still be treated as playable now.
+ *
+ * Eight mebibytes is four seconds of head at a modest two megabytes a second,
+ * and in practice worse than that: the picker hands each peer a different
+ * piece, so the one piece that matters gets one peer's share of the line. Above
+ * this a release is not refused — it is simply passed over while another copy
+ * of the same title exists.
+ */
+export const PIECE_CEILING = 8 * 1024 ** 2
+
+/**
+ * How many releases may be measured before one is played.
+ *
+ * Each probe is a metadata fetch from the swarm, which is the wait the UI
+ * already calls "Fetching metadata from peers…" — so this is a budget on that
+ * wait, not on correctness. Three is enough to get past a season pack and its
+ * duplicate without turning a slow start into a slower one.
+ */
+export const PROBE_LIMIT = 3
+
+export async function listTorrentFiles(magnet: string): Promise<TorrentShape> {
   let res: Response
   try {
     res = await fetch(`${ENGINE}/torrents?list_only=true`, { method: 'POST', body: magnet })
@@ -832,8 +876,13 @@ export async function listTorrentFiles(magnet: string): Promise<EngineFile[]> {
   }
   if (!res.ok)
     throw new Error($t('Torrent engine said {status}: {reason}', { status: res.status, reason: await res.text() }))
-  const listed = await res.json() as { details?: { files?: EngineFile[] | null } }
-  return listed.details?.files ?? []
+  const listed = await res.json() as {
+    details?: { files?: EngineFile[] | null, total_pieces?: number }
+  }
+  return {
+    files: listed.details?.files ?? [],
+    pieces: listed.details?.total_pieces ?? 0,
+  }
 }
 
 /**
@@ -1579,6 +1628,8 @@ export async function startTorrent(options: {
   let magnet = options.magnet ?? ''
   let picked: Release | null = null
   let hint: number | null = null
+  /** Ranked alternatives to fall back to when the pick cannot start. */
+  let queue: Release[] = []
 
   // Nothing to add, nothing to fetch, nothing to keep — the link is the stream.
   if (options.url)
@@ -1707,6 +1758,12 @@ export async function startTorrent(options: {
       }
       magnet = picked.magnet
       hint = picked.fileIdx
+      // The ranked runners-up of the same title, for the probe below. Ranking
+      // is a judgement made from a name; the probe is a measurement made from
+      // the torrent, and it is the only one of the two that knows whether a
+      // release can start.
+      queue = ranked(pool, options.maxBytes, options.compatible ?? !hasNativePlayer(), allowTorrents)
+        .filter(t => t.magnet && releaseKey(t) !== releaseKey(picked!))
     }
   }
 
@@ -1746,21 +1803,76 @@ export async function startTorrent(options: {
   // is fetched on its own first (`list_only`: metadata, nothing created,
   // nothing requested), the choice is made against it, and the add that follows
   // carries the selection with it.
-  let files: EngineFile[]
-  try {
-    files = await listTorrentFiles(magnet)
-  }
-  catch (engineError) {
-    // Engine offline (browser mode) — fall back to the direct URL if available.
-    const directFallback = picked?.url || options.url
-    if (directFallback && !options.save)
-      return { id: -1, index: -1, hash: '', url: directFallback, torrent: picked }
-    throw engineError
+  /**
+   * Take the best release that can actually start, not the best-looking one.
+   *
+   * Ranking is a judgement made from a release name. `list_only` is a
+   * measurement made from the torrent itself — it resolves the metadata and
+   * stops there, creating nothing and requesting nothing — and it answers the
+   * two questions a name cannot: which files are really in here, and how big a
+   * piece is. A player shows no frame until the first whole piece of the file
+   * is on the disk, so a release whose pieces are 16 MiB has already lost the
+   * first minute before a single byte is fetched.
+   *
+   * This costs nothing in the ordinary case: the probe is the same one the add
+   * has needed since selection moved ahead of it, and the first candidate is
+   * almost always the one that is used. Only a release that measures badly, and
+   * only while another copy of the same title is left, is passed over — and if
+   * every candidate measures badly the best-ranked one is played anyway, since
+   * a slow start beats no playback.
+   */
+  const shortlist = [magnet, ...queue.slice(0, PROBE_LIMIT - 1).map(t => t.magnet)]
+  let files: EngineFile[] = []
+  let index: number | null = null
+  let chosen = magnet
+  let fallback: { magnet: string, files: EngineFile[], index: number, release: Release | null } | null = null
+
+  for (const [attempt, candidate] of shortlist.entries()) {
+    let shape: TorrentShape
+    try {
+      shape = await listTorrentFiles(candidate)
+    }
+    catch (engineError) {
+      // Engine offline (browser mode) — fall back to the direct URL if available.
+      const directFallback = picked?.url || options.url
+      if (directFallback && !options.save)
+        return { id: -1, index: -1, hash: '', url: directFallback, torrent: picked }
+      if (attempt < shortlist.length - 1)
+        continue
+      throw engineError
+    }
+
+    const release = attempt === 0 ? picked : (queue[attempt - 1] ?? null)
+    const idx = options.fileIndex ?? pickVideoFile(shape.files, attempt === 0 ? hint : release?.fileIdx ?? null, options)
+    if (idx == null)
+      continue
+
+    // The first candidate that measures well is the one that plays.
+    const piece = pieceBytes(shape)
+    if (!piece || piece <= PIECE_CEILING) {
+      files = shape.files
+      index = idx
+      chosen = candidate
+      if (attempt > 0)
+        picked = release
+      break
+    }
+    // Otherwise remember it and look at the next one; if none is better this is
+    // what gets played.
+    fallback ??= { magnet: candidate, files: shape.files, index: idx, release }
+    step($t('Looking for a copy that starts faster…'))
   }
 
-  const index = options.fileIndex ?? pickVideoFile(files, hint, options)
-  if (index == null)
-    throw new Error($t('That torrent holds no video file.'))
+  if (index == null) {
+    if (!fallback)
+      throw new Error($t('That torrent holds no video file.'))
+    files = fallback.files
+    index = fallback.index
+    chosen = fallback.magnet
+    picked = fallback.release
+  }
+
+  magnet = chosen
   // The subtitles this release ships come down with the video: a few hundred KB
   // each, and the engine only serves a file it was told to download.
   const wanted = [index, ...pickSubtitleFiles(files, index)]
