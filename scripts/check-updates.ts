@@ -8,7 +8,7 @@
 // anywhere to notice.
 import assert from 'node:assert'
 import { readFileSync } from 'node:fs'
-import { compareVersions, isNewer, parseUpdate, RELEASES_URL, transportMessage } from '../app/utils/updates'
+import { compareVersions, isNewer, parseUpdate, pickApk, RELEASES_URL, transportMessage } from '../app/utils/updates'
 import './i18n-stub'
 
 // --- Ordering ----------------------------------------------------------------
@@ -68,6 +68,45 @@ assert.equal(parsed?.notes, '## What changed\n- things')
 assert.equal(parsed?.url, release.html_url)
 // Android needs the one file it can install, not the six the release carries.
 assert.equal(parsed?.apk, 'https://example.invalid/apk')
+
+// --- One APK per architecture ------------------------------------------------
+// A universal APK is every ABI's native libraries in one file: measured at
+// 311 MB on a phone, of which 293 MB was three copies of `librivulet_lib.so`
+// (59.8 MB) and `libvlc.so` (39.8 MB). A device loads exactly one of the three
+// sets, and the phone measured never opens the x86_64 copy — the largest of
+// them. So a release now carries a per-ABI build beside the universal one.
+//
+// Picking the wrong one is not a slower download, it is an app that will not
+// install, so this is the part that has to be right.
+const split = [
+  { name: 'Rivulet_0.2.0.apk', browser_download_url: 'https://example.invalid/universal' },
+  { name: 'Rivulet_0.2.0-arm64-v8a.apk', browser_download_url: 'https://example.invalid/arm64' },
+  { name: 'Rivulet_0.2.0-armeabi-v7a.apk', browser_download_url: 'https://example.invalid/arm32' },
+  { name: 'Rivulet_0.2.0-x86_64.apk', browser_download_url: 'https://example.invalid/x64' },
+]
+assert.equal(pickApk(split, 'arm64-v8a'), 'https://example.invalid/arm64', 'a 64-bit phone takes its own build')
+assert.equal(pickApk(split, 'armeabi-v7a'), 'https://example.invalid/arm32', 'and a 32-bit one takes its own')
+assert.equal(pickApk(split, 'x86_64'), 'https://example.invalid/x64')
+// An architecture nobody recognised must not become a guess: the universal
+// build installs on anything, which is the only safe answer.
+assert.equal(pickApk(split, ''), 'https://example.invalid/universal', 'an unknown device takes the build that installs anywhere')
+// `armeabi-v7a` contains no substring that could match the 64-bit name, but a
+// naive `includes` on the other side would — pin both directions.
+assert.notEqual(pickApk(split, 'arm64-v8a'), 'https://example.invalid/arm32')
+// A release from before the split carries one APK and no suffixes; every
+// device must still find it.
+const old = [{ name: 'Rivulet_0.2.0.apk', browser_download_url: 'https://example.invalid/only' }]
+assert.equal(pickApk(old, 'arm64-v8a'), 'https://example.invalid/only', 'a release with no per-ABI build still updates')
+assert.equal(pickApk(old, ''), 'https://example.invalid/only')
+// And the version still decides which release build wins, suffix or not.
+assert.equal(
+  pickApk([
+    { name: 'Rivulet.apk', browser_download_url: 'https://example.invalid/stale' },
+    { name: 'Rivulet_0.9.0.apk', browser_download_url: 'https://example.invalid/new' },
+  ], ''),
+  'https://example.invalid/new',
+  'an unversioned copy beside a versioned one is not the newer of the two',
+)
 
 // A release with no APK is a normal state, not a parse failure — the panel
 // falls back to the release page.

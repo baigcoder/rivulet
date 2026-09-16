@@ -252,24 +252,44 @@ jobs:
       # An unsigned or wrongly-signed APK is worse than a failed build: it reaches
       # people, fails to install, and every later release inherits the mismatch.
       # Check before it can be uploaded, not after.
-      - name: Verify the APK is signed
+      # Every one of them: the split builds are what most people install now, so
+      # an unsigned per-ABI APK is exactly as bad as an unsigned universal one.
+      - name: Verify the APKs are signed
         run: |
-          apk=src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
-          if [ ! -f "$apk" ]; then
-            echo "::error::$apk is missing. An *-unsigned.apk here means the keystore secret never reached Gradle."
-            ls -la "$(dirname "$apk")" || true
+          out=src-tauri/gen/android/app/build/outputs/apk
+          universal="$out/universal/release/app-universal-release.apk"
+          if [ ! -f "$universal" ]; then
+            echo "::error::$universal is missing. An *-unsigned.apk here means the keystore secret never reached Gradle."
+            ls -laR "$out" || true
             exit 1
           fi
-          "$ANDROID_HOME"/build-tools/36.0.0/apksigner verify --print-certs "$apk"
+          for apk in "$out"/*/release/app-*-release.apk; do
+            echo "== $apk"
+            "$ANDROID_HOME"/build-tools/36.0.0/apksigner verify --print-certs "$apk"
+          done
 
-      - name: Attach the APK
+      - name: Attach the APKs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          apk=src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
-          mv "$apk" "Rivulet_${GITHUB_REF_NAME#v}.apk"
-          # The same file twice: the versioned name for the releases page, and an
-          # unversioned copy so `releases/latest/download/Rivulet.apk` resolves. That
-          # URL is what a television's Downloader app fetches, and it only works if the name never carries the version.
-          cp "Rivulet_${GITHUB_REF_NAME#v}.apk" Rivulet.apk
-          gh release upload "$GITHUB_REF_NAME" "Rivulet_${GITHUB_REF_NAME#v}.apk" Rivulet.apk --clobber
+          out=src-tauri/gen/android/app/build/outputs/apk
+          ver="${GITHUB_REF_NAME#v}"
+          # The universal build keeps both historic names: the versioned one for
+          # the releases page, and an unversioned copy so
+          # `releases/latest/download/Rivulet.apk` resolves. That URL is what a
+          # television's Downloader app fetches, and it only works if the name
+          # never carries the version. It stays the universal build on purpose —
+          # it is the one that installs on anything, and nobody typing a URL into
+          # a TV knows their architecture.
+          cp "$out/universal/release/app-universal-release.apk" "Rivulet_${ver}.apk"
+          cp "Rivulet_${ver}.apk" Rivulet.apk
+          files="Rivulet_${ver}.apk Rivulet.apk"
+          # And one per architecture beside them: a third of the size, and what
+          # the in-app updater asks for (see `pickApk` in app/utils/updates.ts).
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            apk="$out/$abi/release/app-$abi-release.apk"
+            [ -f "$apk" ] || continue
+            cp "$apk" "Rivulet_${ver}-${abi}.apk"
+            files="$files Rivulet_${ver}-${abi}.apk"
+          done
+          gh release upload "$GITHUB_REF_NAME" $files --clobber

@@ -17,6 +17,8 @@
  * download. See that command in `src-tauri/src/lib.rs`.
  */
 
+import { arch } from '@tauri-apps/plugin-os'
+
 export const REPO = 'baigcoder/rivulet'
 export const RELEASES_URL = `https://github.com/${REPO}/releases/latest`
 
@@ -95,15 +97,51 @@ export function isNewer(current: string, latest: string) {
 }
 
 /**
- * Pick the highest-versioned `.apk` from a release's assets.
+ * Which architecture's APK this device can actually run.
  *
- * Multiple APKs can live on the same release (e.g. `Rivulet.apk` from an older
- * build alongside `Rivulet_0.6.1.apk`).  `Array.find` picked whichever came
- * first — often the stale one.  Sorting by the version embedded in the
- * filename ensures the download button always points at the newest build.
+ * A release now carries one APK per ABI beside the universal one, because the
+ * universal build is three copies of every native library and a device loads
+ * exactly one of them — 311 MB where 110 MB would do. Picking the wrong one is
+ * not a slow download, it is an app that will not install, so an architecture
+ * this does not recognise takes the universal APK rather than a guess.
  */
-function pickLatestApk(assets?: { name?: string, browser_download_url?: string }[]): string {
-  const apks = assets?.filter(a => a.name?.endsWith('.apk')) ?? []
+const ABI_SUFFIX = /-(?:arm64-v8a|armeabi-v7a|x86_64|x86)\.apk$/
+
+function deviceAbi(): string {
+  try {
+    switch (arch()) {
+      case 'aarch64': return 'arm64-v8a'
+      case 'arm': return 'armeabi-v7a'
+      case 'x86_64': return 'x86_64'
+      default: return ''
+    }
+  }
+  catch {
+    // No Tauri underneath (a browser, or `bun run check:*`) — nothing to ask.
+    return ''
+  }
+}
+
+/**
+ * Pick the `.apk` this device should download, newest first.
+ *
+ * Multiple APKs live on one release: the universal build, and one per ABI. The
+ * version still decides which *release build* wins — an older `Rivulet.apk`
+ * can sit beside a newer `Rivulet_0.6.1.apk`, and `Array.find` used to take
+ * whichever came first. Among equals the device's own architecture decides,
+ * and where that is unknown the universal APK is the answer that always
+ * installs.
+ */
+export function pickApk(
+  assets?: { name?: string, browser_download_url?: string }[],
+  abi = deviceAbi(),
+): string {
+  const all = assets?.filter(a => a.name?.endsWith('.apk')) ?? []
+  // A per-ABI build for this device, if the newest release has one. Anything
+  // for another architecture is not a worse download, it is an unusable one.
+  const mine = abi ? all.filter(a => a.name?.includes(abi)) : []
+  const universal = all.filter(a => !ABI_SUFFIX.test(a.name ?? ''))
+  const apks = mine.length ? mine : universal.length ? universal : all
   if (!apks.length)
     return ''
   if (apks.length === 1)
@@ -153,7 +191,7 @@ export function parseUpdate(data: unknown): Update | null {
     version,
     notes: r.body?.trim() ?? '',
     url: r.html_url || RELEASES_URL,
-    apk: pickLatestApk(r.assets),
+    apk: pickApk(r.assets),
   }
 }
 

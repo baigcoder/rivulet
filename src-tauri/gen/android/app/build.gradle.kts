@@ -98,6 +98,31 @@ android {
     buildFeatures {
         buildConfig = true
     }
+    /**
+     * One APK per ABI, and a universal one beside them.
+     *
+     * The universal APK measured 311 MB on a phone, of which 293 MB was native
+     * libraries for three architectures — `librivulet_lib.so` at 59.8 MB and
+     * `libvlc.so` at 39.8 MB, once each for arm64-v8a, armeabi-v7a and x86_64.
+     * A device loads exactly one of those sets: the phone this was measured on
+     * reports `arm64-v8a,armeabi-v7a,armeabi` and will never open the x86_64
+     * copy, which is the largest of the three. So two thirds of every download
+     * and every byte of install footprint could not run.
+     *
+     * The universal one stays, because `releases/latest/download/Rivulet.apk`
+     * is a link people already have and an APK that installs everywhere is the
+     * right thing behind it. The per-ABI builds are what the updater picks (see
+     * `pickApk` in app/utils/updates.ts) and what anyone reading the release
+     * page should take.
+     */
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86_64")
+            isUniversalApk = true
+        }
+    }
 }
 
 rust {

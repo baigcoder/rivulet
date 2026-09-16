@@ -428,11 +428,17 @@ function buildAndroid(extra: string[]) {
   console.log(`\n→ Building a signed release APK for ${ANDROID_ABIS.join(' + ')}\n`)
   run(['tauri', 'android', 'build', '--apk', '--target', ...ANDROID_ABIS, ...extra], env)
 
-  const out = 'src-tauri/gen/android/app/build/outputs/apk/universal/release/'
+  const out = 'src-tauri/gen/android/app/build/outputs/apk/'
   console.log(
-    `\n✓ APK written under ${out}\n\n`
-    + 'Install it:\n'
-    + `  adb install -r ${out}app-universal-release.apk\n\n`
+    `\n✓ APKs written under ${out}\n\n`
+    + 'One per architecture, with a universal build beside them. The universal\n'
+    + 'one carries every ABI: three copies of a 60 MB Rust library and a 40 MB\n'
+    + 'libVLC, so it is about three times the size and a device loads exactly one\n'
+    + 'of the three sets. Install the one that matches:\n\n'
+    + `  adb install -r ${out}arm64-v8a/release/app-arm64-v8a-release.apk\n`
+    + `  adb install -r ${out}armeabi-v7a/release/app-armeabi-v7a-release.apk\n`
+    + `  adb install -r ${out}universal/release/app-universal-release.apk\n\n`
+    + 'Unsure which? adb shell getprop ro.product.cpu.abilist names it.\n\n'
     + 'A file named *-release-unsigned.apk instead means the keystore was not in the\n'
     + 'environment (ANDROID_KEYSTORE_PATH); Android will refuse to install it.\n\n'
     + 'For a TV box, enable Developer options → USB/Network debugging, then\n'
