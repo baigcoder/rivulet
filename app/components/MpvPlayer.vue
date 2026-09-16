@@ -3292,8 +3292,16 @@ const loadPercent = computed(() => {
     return null
   if (loadPeak.value > 0)
     return loadPeak.value
-  // Before mpv opens the file it answers no cache state at all, so the engine's
-  // own bitfield is the only thing that can say whether the wait is working.
+  // Before the file is open the backend's cache figure is a zero that means
+  // "nothing has been asked for yet", not "nothing has arrived", and the two
+  // are the whole question during a torrent's opening wait. It is also a
+  // number rather than nothing, so `cacheFill ?? headPct` read it as an answer
+  // and the head figure below never once reached the screen: every Android
+  // torrent showed a ring stuck on 0 beside a swarm doing megabytes a second.
+  // The engine's own bitfield is the only thing that can tell them apart, and
+  // it is what this window is for.
+  if (headPct.value != null && !duration.value)
+    return headPct.value
   return cacheFill.value ?? headPct.value
 })
 

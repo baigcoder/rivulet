@@ -359,6 +359,16 @@ assert.match(mpv, /errorMsg\.value \|\| props\.fault\)\s+return false/, 'and sto
 // engine's own bitfield is what tells them apart, so it is what the ring shows
 // and what the watchdog reads.
 assert.match(mpv, /return cacheFill\.value \?\? headPct\.value/, 'the ring falls back to how much of the opening is on disk')
+// And takes the head figure outright while the file is still closed. Until then
+// the backend answers a cache state of 0 — "nothing has been asked for yet",
+// not "nothing has arrived" — and 0 is a number, so the fallback above read it
+// as an answer and the head figure never once reached the screen: an Android
+// torrent showed a ring stuck on 0 beside a swarm doing megabytes a second.
+assert.match(
+  mpv,
+  /if \(headPct\.value != null && !duration\.value\)\s+return headPct\.value/,
+  'a cache figure of zero must not stand in for one the engine can actually give',
+)
 assert.match(mpv, /const ENGINE_START_GRACE_MS = \d/, 'a torrent is given time to find peers at all')
 assert.match(mpv, /const ENGINE_STALL_MS = \d/, 'and then has to keep delivering')
 // The order matters: a deadline would fail a cold swarm that was about to play.
