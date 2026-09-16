@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import process from 'node:process'
-import { diskBudget, ENGINE, engineFault, findReleases, haveAt, headFill, isAwkward, normalizeSource, NoServerStream, parseRelease, pickBest, pickPlay, pickSubtitleFiles, pickVideoFile, planEviction, planNetwork, PRIME_BYTES, primeHead, primeTail, ranked, releaseFileName, releaseKey, releaseLangs, releaseQuality, serverCandidates, setSources, startTorrent, streamParts, toRelease, uploadLimit, usedBytes, withoutUhd } from '../app/utils/torrents'
+import { diskBudget, ENGINE, engineFault, findReleases, haveAt, headFill, isAwkward, isPack, normalizeSource, NoServerStream, parseRelease, pickBest, pickPlay, pickSubtitleFiles, pickVideoFile, planEviction, planNetwork, PRIME_BYTES, primeHead, primeTail, ranked, releaseFileName, releaseKey, releaseLangs, releaseQuality, serverCandidates, setSources, startTorrent, streamParts, toRelease, uploadLimit, usedBytes, withoutUhd } from '../app/utils/torrents'
 // Self-check for the torrent parser/ranker: `bun scripts/check-torrents.ts`.
 // The fixture is the response shape a source answers with, filled in with a
 // public-domain film. `--live <source-url> <imdb-id>` also searches for real.
@@ -920,6 +920,44 @@ assert.ok(
   !requests.some(u => u.includes('update_only_files')),
   'nothing is narrowed after the fact, because by then it is already downloading',
 )
+
+// --- A pack is a slow start ---------------------------------------------------
+// A torrent's piece size grows with the torrent, and no player shows a frame
+// until the first whole piece of the file is on the disk. Measured against an
+// eight-season pack on a phone: 175 GiB in 11,220 pieces of 16 MiB, ninety
+// seconds at half a megabyte a second, one piece finished anywhere, no picture.
+// The size filter cannot catch it — a source reports the size of the episode it
+// matched inside the pack, not of the torrent carrying it.
+
+const packNamed = (name: string) => isPack({ name } as never)
+assert.ok(packNamed('Dexter (2006) Season 1-8 S01-S08 (1080p BluRay x265 HEVC 10bit AAC 5.1 ImE)'), 'the real one, verbatim off the device')
+assert.ok(packNamed('Show.S01-S03.1080p.WEB'), 'a season range')
+assert.ok(packNamed('Show Seasons 1 to 4 COMPLETE'), 'spelled out')
+assert.ok(packNamed('Show Complete Series 1080p'), 'a complete series')
+assert.ok(packNamed('Show Season 2 1080p WEB-DL'), 'and one whole season is still a pack for one episode')
+// An explicit episode marker settles it whatever else the name says: that is
+// the copy that starts quickly, and it is what the ranker has to prefer.
+assert.ok(!packNamed('Show.S01E02.1080p.WEB-DL'), 'a single episode is not a pack')
+assert.ok(!packNamed('Show 1x02 HDTV'), 'nor in the other spelling')
+assert.ok(!packNamed('Show.Season.1.S01E02.1080p'), 'an episode inside a pack-ish name is still one episode')
+// Films must not be swept up by a word that happens to appear in a title.
+assert.ok(!packNamed('Season of the Witch 2011 1080p BluRay'), 'a film named Season is not a season')
+assert.ok(!packNamed('The Four Seasons 1981 1080p'), 'nor one named Seasons')
+
+// The ranker prefers the episode over the pack at the same tier, and still
+// plays the pack when it is all there is.
+const packRow = toRelease({
+  name: 'Example\n1080p',
+  title: 'Show Season 1-8 1080p BluRay\n👤 900 💾 2 GB ⚙️ indexer-a',
+  infoHash: 'pack',
+})!
+const epRow = toRelease({
+  name: 'Example\n1080p',
+  title: 'Show S01E02 1080p BluRay\n👤 10 💾 2 GB ⚙️ indexer-a',
+  infoHash: 'epis',
+})!
+assert.equal(pickBest([packRow, epRow])!.hash, 'epis', 'the single episode wins its tier, on a ninetieth of the seeders')
+assert.equal(pickBest([packRow])!.hash, 'pack', 'and a pack still plays when it is the only copy')
 
 // --- What the engine already said ---------------------------------------------
 // A torrent the engine has given up on is not a slow one, and every reading the

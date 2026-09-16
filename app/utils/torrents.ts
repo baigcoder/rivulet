@@ -367,6 +367,40 @@ export function isBloated(t: Release) {
 }
 
 /**
+ * A whole season, or eight of them, when one episode was asked for.
+ *
+ * Ranked below a single-episode copy of the same tier, for a reason neither
+ * the size filter nor the seeder count can see: a torrent's piece size grows
+ * with the torrent, and a player cannot show a frame until the *first whole
+ * piece* of the file is on the disk. Measured on a phone against an
+ * eight-season pack: 175 GiB in 11,220 pieces of 16 MiB, ninety seconds at
+ * half a megabyte a second, one piece finished anywhere, no picture. A
+ * single-episode release of the same programme is cut into one- and two-
+ * megabyte pieces and starts almost at once.
+ *
+ * The size filter cannot catch it because a source reports the size of the
+ * episode* it matched inside the pack, not of the torrent carrying it — which
+ * is also why only the release name is read here and never `file`: the file is
+ * the episode, and it would clear the flag on every pack there is.
+ *
+ * A tiebreak, not a filter. Where a pack is all there is, it still plays.
+ */
+const PACK = [
+  /\bs\d{1,2}\s*[-–]\s*s?\d{1,2}\b/i,
+  /\bseasons?\s*\d{1,2}\s*(?:[-–]|to)\s*\d{1,2}\b/i,
+  /\bcomplete\s+(?:series|collection|seasons?)\b/i,
+  /\bseason\s*\d{1,2}\b/i,
+]
+/** An explicit episode marker: this release is one episode, whatever else it says. */
+const ONE_EPISODE = /\bs\d{1,2}[\s._-]*e\d{1,3}\b|\b\d{1,2}x\d{2}\b/i
+
+export function isPack(t: Release) {
+  if (ONE_EPISODE.test(t.name))
+    return false
+  return PACK.some(re => re.test(t.name))
+}
+
+/**
  * What a release name says it carries, and how to ask this device about each.
  *
  * A name is all a source gives us to go on, but it is only half the question —
@@ -439,6 +473,9 @@ export function ranked(list: Release[], maxBytes = MAX_BYTES, compatible = false
     .sort((a, b) =>
       rank(a) - rank(b)
       || (compatible ? Number(isAwkward(a)) - Number(isAwkward(b)) : 0)
+      // Above bloat: a pack that is the right size still cannot start quickly,
+      // and starting is what the viewer is waiting for.
+      || Number(isPack(a)) - Number(isPack(b))
       || Number(isBloated(a)) - Number(isBloated(b))
       || (allowTorrents ? Number(!!a.url) - Number(!!b.url) : Number(!a.url) - Number(!b.url))
       || b.seeders - a.seeders)
