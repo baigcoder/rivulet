@@ -391,6 +391,19 @@ const LIVE_START_GRACE_MS = 30_000
 const ENGINE_START_GRACE_MS = 45_000
 const ENGINE_STALL_MS = 60_000
 
+/**
+ * The same patience, when there is another copy to try instead of a dead end.
+ *
+ * How long to wait on a stalled head is a question about what happens next, not
+ * about the swarm. With nothing to fail over to the only other answer is an
+ * error, so it is worth being sure — a minute of nothing, after forty-five
+ * seconds of grace. With other copies of the same film ranked and waiting, the
+ * cost of moving on is a few seconds and a fresh swarm, and the cost of staying
+ * is the whole wait; so the same evidence is acted on much sooner.
+ */
+const ENGINE_FAILOVER_GRACE_MS = 20_000
+const ENGINE_FAILOVER_STALL_MS = 25_000
+
 /** When the current stream was handed to the backend. See `streamDied`. */
 let startedAt = 0
 /** Where the clock last stood, and when it last went forward. */
@@ -3358,9 +3371,15 @@ async function readHead() {
     return
   }
 
-  // Slow is not a failure; stopped is.
-  if (since < ENGINE_START_GRACE_MS || Date.now() - headMovedAt < ENGINE_STALL_MS)
+  // Slow is not a failure; stopped is — and how long "stopped" takes to call
+  // depends on whether there is another copy to call it in favour of.
+  const grace = hasCandidates.value ? ENGINE_FAILOVER_GRACE_MS : ENGINE_START_GRACE_MS
+  const stall = hasCandidates.value ? ENGINE_FAILOVER_STALL_MS : ENGINE_STALL_MS
+  if (since < grace || Date.now() - headMovedAt < stall)
     return
+  // `streamDied` hands it to the page when there is somewhere to go, and the
+  // page starts the next copy. Only a title whose every copy is exhausted ends
+  // up saying so.
   if (!streamDied())
     errorMsg.value = $t('This release stopped downloading before it could start — it may have no seeders left. Try another one.')
 }

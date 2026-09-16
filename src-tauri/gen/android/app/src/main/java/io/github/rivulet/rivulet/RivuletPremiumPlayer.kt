@@ -386,7 +386,18 @@ class RivuletPremiumPlayer(private val activity: MainActivity) {
                 // rotate, the HUD says it is connecting, and Retry looks like
                 // the fix when all Retry does is run once the rotation has
                 // finished.
-                if (running && p.playWhenReady)
+                //
+                // `p.playWhenReady` alone over-reaches: this rotation is
+                // entering player mode itself, landing in the same instant as
+                // the tap most viewers make on a screen that is still
+                // loading — the centre button is the only thing there to tap.
+                // If no frame has ever rendered (`!firstFrame`) there is
+                // nothing paused to preserve, only an open that never got to
+                // happen; honouring the pause there is the "opening never
+                // finishes, Retry fixes it" report, because Retry's only
+                // advantage is a fresh `start()` that resets `playWhenReady`
+                // itself.
+                if (running && (p.playWhenReady || !firstFrame))
                     pendingPlay = true
                 // And there is no picture until the new surface has drawn one.
                 // The page reads this back as `vo-configured` to decide whether

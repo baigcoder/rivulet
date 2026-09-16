@@ -669,8 +669,19 @@ class RivuletPlayer(private val activity: MainActivity) {
         // viewer explicitly paused or the stream was stopped. Otherwise the
         // first click remains on "Connecting" and Retry only works because
         // the rotation has finished by then.
-        if (hasMedia && !userPaused)
+        //
+        // `userPaused` alone over-reaches: this rotation is entering player
+        // mode itself, which lands in the same instant as the tap most
+        // viewers make on a screen that is still loading — the centre button
+        // is the only thing to tap on. If no frame has ever shown
+        // (`voutCount == 0`) there is nothing paused to preserve, only an
+        // open that never got to happen; honouring the pause there is the
+        // "opening never finishes, Retry fixes it" report, because Retry's
+        // only advantage is a fresh `start()` that clears `userPaused` too.
+        if (hasMedia && (!userPaused || voutCount == 0)) {
           pendingPlay = true
+          userPaused = false
+        }
         player?.vlcVout?.detachViews()
         outputAttached = false
         videoSurface?.release()

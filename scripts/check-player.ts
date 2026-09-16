@@ -351,6 +351,23 @@ assert.match(mpv, /if \(props\.fault\)\s+return 'error'/, 'the engine verdict ou
 assert.match(mpv, /props\.fault \|\| \(errorMsg\.value \? friendlyPlaybackError/, 'and is shown as-is, being a sentence already')
 assert.match(mpv, /errorMsg\.value \|\| props\.fault\)\s+return false/, 'and stops the head watchdog, which would answer a disk error with a line about seeders')
 
+// --- A stalled torrent has somewhere to go ------------------------------------
+// How long to wait on a head that has stopped filling is a question about what
+// happens next. With nothing to fail over to the only other answer is an error,
+// so it is worth being sure; with other copies ranked and waiting, staying costs
+// the whole wait and moving on costs a few seconds.
+assert.match(mpv, /const ENGINE_FAILOVER_STALL_MS = \d/, 'a shorter window applies when another copy can be tried')
+assert.match(
+  mpv,
+  /const stall = hasCandidates\.value \? ENGINE_FAILOVER_STALL_MS : ENGINE_STALL_MS/,
+  'and which window is used turns on whether there is a candidate, not on the swarm',
+)
+assert.ok(
+  Number(/const ENGINE_FAILOVER_STALL_MS = (\d+)_?(\d*)/.exec(mpv)?.slice(1).join('') ?? 0)
+  < Number(/const ENGINE_STALL_MS = (\d+)_?(\d*)/.exec(mpv)?.slice(1).join('') ?? 0),
+  'the failover window is the shorter of the two — that is the whole point of it',
+)
+
 // --- A torrent stream that never opens ----------------------------------------
 // mpv answers no cache state and no duration until its demuxer opens, so for the
 // whole of the opening wait the overlay had an indeterminate spinner and nothing
@@ -380,7 +397,7 @@ assert.match(
 )
 assert.match(
   mpv,
-  /if \(since < ENGINE_START_GRACE_MS \|\| Date\.now\(\) - headMovedAt < ENGINE_STALL_MS\)\s+return/,
+  /if \(since < grace \|\| Date\.now\(\) - headMovedAt < stall\)\s+return/,
   'and both windows have to run out before anything fails',
 )
 assert.doesNotMatch(mpv, /setTimeout\([^)]*ENGINE_START_GRACE_MS/, 'a torrent gets no deadline — slow is not dead')
@@ -811,7 +828,21 @@ assert.match(vlcKt, /if \(outputAttached\) \{\r?\n {8}p\.play\(\)/, 'playback wa
 assert.match(vlcKt, /still waiting for video surface after/, 'libVLC never starts headless while Android is still laying out')
 assert.doesNotMatch(vlcKt, /private val playWhenReady = Runnable \{[\s\S]{0,300}player\?\.play\(\)/, 'libVLC cannot consume the first attempt before a surface exists')
 assert.match(vlcKt, /if \(pendingPlay\) \{/, 'and the surface arriving is what starts it')
-assert.match(vlcKt, /if \(hasMedia && !userPaused\)\r?\n\s*pendingPlay = true/, 'a player-mode rotation resumes the stream on its replacement surface')
+// A pause recorded before any frame existed is not a pause the viewer meant to
+// hold through a rotation: entering player mode rotates the screen in the same
+// instant most people tap the only button on it. `voutCount == 0` says no frame
+// ever showed, so there is nothing to preserve — only an open that never got to
+// happen, which is the 'opening never finishes, Retry fixes it' report.
+assert.match(
+  vlcKt,
+  /if \(hasMedia && \(!userPaused \|\| voutCount == 0\)\)/,
+  'a player-mode rotation resumes the stream on its replacement surface',
+)
+assert.match(
+  vlcKt,
+  /voutCount == 0\)\) \{\s+pendingPlay = true\s+userPaused = false/,
+  'and clears the pause it is overriding, so nothing downstream still believes it',
+)
 assert.match(exoKt, /if \(outputAttached\) \{\r?\n {16}p\.playWhenReady = true/, 'Media3 also waits for its first video surface')
 assert.match(exoKt, /still waiting for video surface/, 'Media3 never starts headless while Android is still laying out')
 assert.doesNotMatch(exoKt, /private val playWhenReady = Runnable \{[\s\S]{0,450}player\?\.playWhenReady = true/, 'Media3 cannot consume the first attempt before a surface exists')

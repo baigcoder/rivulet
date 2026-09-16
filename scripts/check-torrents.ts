@@ -1045,6 +1045,17 @@ assert.equal(pieceBytes({ files: [{ name: 'a', length: 1024 ** 2 * 16, included:
 assert.ok(PIECE_CEILING < 16 * 1024 ** 2, 'the measured 16 MiB pack is over the ceiling')
 assert.ok(PIECE_CEILING >= 2 * 1024 ** 2, 'and an ordinary single-episode torrent is under it')
 
+// --- A dead swarm is not the end of the attempt -------------------------------
+// A direct link has had somewhere to fail over to since there were servers to
+// fail over between. A torrent had nothing, so a swarm that never woke up ended
+// the attempt with three more copies of the same film sitting unused in the
+// list the ranker had already built.
+assert.ok(Array.isArray(started.alternatives), 'a started torrent carries the copies it did not take')
+assert.ok(
+  (started.alternatives ?? []).every(t => t.magnet && t.magnet !== started.torrent?.magnet),
+  'every one of them is a torrent, and none of them is the one already playing',
+)
+
 // --- What the engine already said ---------------------------------------------
 // A torrent the engine has given up on is not a slow one, and every reading the
 // player takes is a reading of a swarm. With no swarm there was nothing to read

@@ -1199,6 +1199,24 @@ export function streamUrl(id: number, index: number) {
 export const PRIME_BYTES = 4 * 1024 ** 2
 
 /**
+ * Enough of the head for the player to open the file at all.
+ *
+ * mpv probes 512 KiB before it will name a format (`demuxer-lavf-probesize`),
+ * and the moment it has that it seeks to the *end* for the index — an MP4 keeps
+ * its `moov` there and an MKV its cues, which is what `primeTail` exists for.
+ * Both halves are needed before a single frame, so waiting out the whole 4 MiB
+ * of head before even asking for the tail put the two in series when they had
+ * to be one behind the other by a beat, not by megabytes. On a swarm giving a
+ * megabyte a second that is most of the wait, and it is a wait this app
+ * introduced: the head reader answered "ready" at 4 MiB because that was the
+ * slice it happened to be pulling.
+ *
+ * A mebibyte is twice what the probe needs, which is the margin for a container
+ * that front-loads more than mpv's guess.
+ */
+export const OPEN_BYTES = 1024 ** 2
+
+/**
  * A reader held open on the engine: `ready` settles once the bytes asked for
  * are on disk, `abort` lets the reader go.
  */
@@ -1225,14 +1243,22 @@ export interface Priming {
  * the engine stops queueing for, and the point is to still be holding the head
  * when mpv arrives.
  */
-export function primeHead(id: number, index: number, bytes = PRIME_BYTES): Priming {
+export function primeHead(id: number, index: number, bytes = PRIME_BYTES, openAt = OPEN_BYTES): Priming {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), 120_000)
   // Kept past the read loop deliberately: a collected reader is a dropped one,
   // and a dropped one stops counting towards what the engine fetches next.
   let held: ReadableStreamDefaultReader<Uint8Array> | null = null
 
-  const ready = (async () => {
+  // `ready` answers at `openAt` — the point the player can open the file and
+  // will immediately want the index at the far end — while the reader carries
+  // on to `bytes`, holding the head in the engine's priority list behind it.
+  // Resolving a promise twice is a no-op, so the loop need not track whether it
+  // has already answered.
+  let settle: (ok: boolean) => void = () => {}
+  const ready = new Promise<boolean>(resolve => (settle = resolve))
+
+  void (async () => {
     try {
       const res = await fetch(streamUrl(id, index), {
         signal: ctrl.signal,
@@ -1241,7 +1267,7 @@ export function primeHead(id: number, index: number, bytes = PRIME_BYTES): Primi
       })
       const reader = res.body?.getReader()
       if (!reader)
-        return false
+        return settle(false)
       held = reader
       let got = 0
       while (got < bytes) {
@@ -1249,11 +1275,13 @@ export function primeHead(id: number, index: number, bytes = PRIME_BYTES): Primi
         if (done)
           break
         got += value?.byteLength ?? 0
+        if (got >= openAt)
+          settle(true)
       }
-      return got > 0
+      settle(got > 0)
     }
     catch {
-      return false // best effort: without it the head still arrives, only later
+      settle(false) // best effort: without it the head still arrives, only later
     }
   })()
 
@@ -1911,7 +1939,18 @@ export async function startTorrent(options: {
   const only = [...new Set([...included, ...wanted])]
   if (narrowed && only.length !== included.length)
     await limitToFiles(added.id, only)
-  return { id: added.id, index, hash: added.details.info_hash, url: '', torrent: picked }
+  return {
+    id: added.id,
+    index,
+    hash: added.details.info_hash,
+    url: '',
+    torrent: picked,
+    // The copies not taken, so a torrent that never starts has somewhere to go.
+    // A direct link has had this since there were servers to fail over to; a
+    // torrent had nothing, so a dead swarm was the end of the attempt however
+    // many other copies of the same film the sources had answered with.
+    alternatives: queue.filter(t => t.magnet && t.magnet !== magnet),
+  }
 }
 
 export function magnetForHash(hash: string) {

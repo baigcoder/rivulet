@@ -244,8 +244,9 @@ async function start() {
     step.value = $t('Buffering…')
     src.value = started.url || streamUrl(started.id, started.index)
 
-    // Server playback carries the other answers with it; the player's menus and
-    // the failover below walk this list.
+    // Both kinds carry their runners-up now: a server stream its other servers,
+    // a torrent the other copies the sources answered with. The player's menus
+    // and the failover below walk one list either way.
     candidates.value = started.alternatives ?? []
     activeCandidate.value = 0
     // `serverCandidates` already ranks 1080p first (ahead of 4K, which is
@@ -289,15 +290,63 @@ async function start() {
  */
 function useCandidate(index: number, manual = true) {
   const next = candidates.value[index]
-  if (!next || !next.url || index === activeCandidate.value)
+  if (!next || index === activeCandidate.value)
     return
   if (manual)
     userPicked.value = true
   activeCandidate.value = index
   torrent.value = next
-  torrentId.value = null
   errorMsg.value = ''
+
+  // A server stream is a URL swap and nothing else: the player remounts on
+  // `:key="src"` and plays it. A torrent has to be handed to the engine first,
+  // and until this it could not be a candidate at all — so a swarm that never
+  // woke up was the end of the attempt, with three more copies of the same
+  // film sitting unused in the list the picker had already ranked.
+  if (!next.url && next.magnet) {
+    void playMagnet(next.magnet)
+    return
+  }
+  if (!next.url)
+    return
+  torrentId.value = null
   src.value = next.url
+}
+
+/**
+ * Start one of the other copies through the engine, keeping the rest of the
+ * list intact so a second failure moves on again rather than starting over.
+ */
+async function playMagnet(magnetUrl: string) {
+  const mine = ++generation
+  releasePriming()
+  src.value = ''
+  torrentId.value = null
+  resolving.value = true
+  try {
+    const started = await downloads.start(key.value, {
+      magnet: magnetUrl,
+      season: season.value,
+      episode: episode.value,
+      allowTorrents: true,
+      onStep: value => (step.value = value),
+    })
+    if (mine !== generation)
+      return
+    torrentId.value = started.url ? null : started.id
+    void downloads.focus(started.id)
+    if (!started.url && started.id >= 0)
+      prime(started.id, started.index)
+    resolving.value = false
+    step.value = $t('Buffering…')
+    src.value = started.url || streamUrl(started.id, started.index)
+  }
+  catch (e) {
+    if (mine !== generation)
+      return
+    resolving.value = false
+    errorMsg.value = e instanceof Error ? e.message : String(e)
+  }
 }
 
 /** Playback of the current server failed — silently move to the next one, if any. */
