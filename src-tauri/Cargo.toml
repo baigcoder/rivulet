@@ -163,6 +163,32 @@ desktop = ["tauri/tray-icon"]
 [profile.dev.package."*"]
 opt-level = 2
 
+# Three copies of this library ship in every Android release — one per ABI —
+# so a megabyte here is three megabytes in the download. Measured on a phone:
+# `librivulet_lib.so` is 59.8 MB, beside libVLC's 39.8 MB, in an APK that was
+# 311 MB before it was split per architecture.
+#
+# There was no release profile at all, so cargo defaults applied: no LTO and
+# sixteen codegen units, which is to say the optimiser never looked across
+# crate boundaries in a binary that is almost entirely other people's crates.
+#
+# What is deliberately not here:
+#
+# - `panic = "abort"` would save the unwinding tables, and would break two
+#   things that work today. `lib.rs` catches a panic from the tray icon so a
+#   desktop with no system tray still starts, and `catch_unwind` catches
+#   nothing once panics abort. And the engine runs fifteen-odd spawned tasks
+#   against untrusted peers, where tokio contains a panic to the task that
+#   raised it; aborting turns one malformed peer message into a dead app.
+#
+# - `opt-level = "z"`. The engine hashes every piece it downloads, and that
+#   is slow enough on a TV box to starve playback — the dev profile above
+#   exists for that very reason. Size is not worth buying with it.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+
 [dependencies.tauri]
 version = "2.9.5"
 features = ["unstable"]

@@ -910,6 +910,13 @@ assert.ok(listedAt < addedAt, 'in that order: looking after adding is looking af
 
 const add = requests[addedAt]!
 assert.match(add, /[?&]only_files=/, 'the add carries the selection rather than following it with one')
+// The engine's ten-second connect default left a phone holding most of its
+// connection slots open on peers that never answered: 770 seen, 50-124 stuck
+// connecting, 4-9 actually sending. The add is the only place this is settable.
+const dialSecs = Number(new URL(add).searchParams.get('peer_connect_timeout'))
+assert.ok(dialSecs > 0, 'the add sets a peer connect timeout rather than taking the ten-second default')
+assert.ok(dialSecs <= 6, 'and it is short enough to stop dead addresses holding slots')
+assert.ok(dialSecs >= 2, 'but not so short that a slow handshake over Wi-Fi is never given a chance')
 const chosen = new URL(add).searchParams.get('only_files')!.split(',').map(Number)
 assert.ok(chosen.includes(1), 'and the selection is the episode asked for')
 assert.ok(!chosen.includes(0), 'not the one before it')

@@ -886,6 +886,25 @@ export async function listTorrentFiles(magnet: string): Promise<TorrentShape> {
 }
 
 /**
+ * How long a peer gets to answer before the engine drops it and dials another.
+ *
+ * The engine's own default is ten seconds, and on a phone that is ten seconds
+ * of a connection slot spent on an address that is usually not there at all.
+ * Most peers a handset finds come from the DHT, and most of those are behind a
+ * NAT or long gone. Measured on one: 770 peers seen, 50 to 124 sitting in
+ * "connecting" at any moment, and 4 to 9 actually sending — half a megabyte a
+ * second, while the film waited on a single piece.
+ *
+ * Four seconds is a slow handshake across an ocean and nothing else. It is a
+ * trade rather than a free win: a peer that would have answered at six seconds
+ * is now dropped. That costs one peer and returns six seconds of a slot to a
+ * pool of hundreds, which is the side of the trade the measurement argues for.
+ *
+ * Settable only on the add — the engine takes it as a query parameter there and
+ * nowhere else.
+ */
+export const PEER_CONNECT_TIMEOUT_S = 4
+/**
  * Hand a magnet to the engine. `onlyFiles` is the selection, and it belongs
  * here* rather than in an `update_only_files` a moment later: the engine
  * starts fetching the instant it is added, and a selection that arrives after
@@ -896,9 +915,12 @@ export async function addTorrent(magnet: string, onlyFiles?: number[]) {
   // its data is already sitting in it.
   const folder = downloadDir ? `&output_folder=${encodeURIComponent(downloadDir)}` : ''
   const only = onlyFiles?.length ? `&only_files=${onlyFiles.join(',')}` : ''
+  // See `PEER_CONNECT_TIMEOUT_S`: the ten-second default leaves a phone holding
+  // most of its connection slots open on peers that never answer.
+  const dial = `&peer_connect_timeout=${PEER_CONNECT_TIMEOUT_S}`
   let res: Response
   try {
-    res = await fetch(`${ENGINE}/torrents?overwrite=true${folder}${only}`, { method: 'POST', body: magnet })
+    res = await fetch(`${ENGINE}/torrents?overwrite=true${folder}${only}${dial}`, { method: 'POST', body: magnet })
   }
   catch {
     throw new Error($t('Torrent engine offline. Launch the native desktop or Android app to play torrents.'))
