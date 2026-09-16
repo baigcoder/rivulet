@@ -257,12 +257,19 @@ jobs:
       - name: Verify the APKs are signed
         run: |
           out=src-tauri/gen/android/app/build/outputs/apk
-          universal="$out/universal/release/app-universal-release.apk"
-          if [ ! -f "$universal" ]; then
-            echo "::error::$universal is missing. An *-unsigned.apk here means the keystore secret never reached Gradle."
+          # Tauri builds one product flavour, and the ABI split appends its own
+          # suffix inside it — so the files are app-<flavour>-<abi>-release.apk
+          # and the fat one is app-<flavour>-universal-release.apk. Globbed
+          # rather than spelled out, because the flavour name is tauri's to
+          # choose and the second shape is what a build with splits disabled
+          # would leave behind.
+          universal=$(ls "$out"/*/release/app-*-universal-release.apk "$out"/*/release/app-universal-release.apk 2>/dev/null | head -1)
+          if [ -z "$universal" ]; then
+            echo "::error::No universal APK under $out. An *-unsigned.apk here means the keystore secret never reached Gradle."
             ls -laR "$out" || true
             exit 1
           fi
+          echo "universal: $universal"
           for apk in "$out"/*/release/app-*-release.apk; do
             echo "== $apk"
             "$ANDROID_HOME"/build-tools/36.0.0/apksigner verify --print-certs "$apk"
@@ -274,6 +281,7 @@ jobs:
         run: |
           out=src-tauri/gen/android/app/build/outputs/apk
           ver="${GITHUB_REF_NAME#v}"
+          universal=$(ls "$out"/*/release/app-*-universal-release.apk "$out"/*/release/app-universal-release.apk 2>/dev/null | head -1)
           # The universal build keeps both historic names: the versioned one for
           # the releases page, and an unversioned copy so
           # `releases/latest/download/Rivulet.apk` resolves. That URL is what a
@@ -281,15 +289,26 @@ jobs:
           # never carries the version. It stays the universal build on purpose —
           # it is the one that installs on anything, and nobody typing a URL into
           # a TV knows their architecture.
-          cp "$out/universal/release/app-universal-release.apk" "Rivulet_${ver}.apk"
+          cp "$universal" "Rivulet_${ver}.apk"
           cp "Rivulet_${ver}.apk" Rivulet.apk
           files="Rivulet_${ver}.apk Rivulet.apk"
           # And one per architecture beside them: a third of the size, and what
           # the in-app updater asks for (see `pickApk` in app/utils/updates.ts).
+          missing=
           for abi in arm64-v8a armeabi-v7a x86_64; do
-            apk="$out/$abi/release/app-$abi-release.apk"
-            [ -f "$apk" ] || continue
+            apk=$(ls "$out"/*/release/app-*-"$abi"-release.apk 2>/dev/null | head -1)
+            if [ -z "$apk" ]; then
+              missing="$missing $abi"
+              continue
+            fi
             cp "$apk" "Rivulet_${ver}-${abi}.apk"
             files="$files Rivulet_${ver}-${abi}.apk"
           done
+          # A warning rather than a failure: the universal APK installs
+          # everywhere, so a release without the splits still works — it is
+          # three times the download, which is worth saying loudly and is not
+          # worth blocking a release over.
+          if [ -n "$missing" ]; then
+            echo "::warning::No per-ABI APK for:$missing — everyone downloads the universal build. Did the Gradle abi splits stop running?"
+          fi
           gh release upload "$GITHUB_REF_NAME" $files --clobber

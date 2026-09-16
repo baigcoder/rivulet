@@ -428,16 +428,16 @@ function buildAndroid(extra: string[]) {
   console.log(`\n→ Building a signed release APK for ${ANDROID_ABIS.join(' + ')}\n`)
   run(['tauri', 'android', 'build', '--apk', '--target', ...ANDROID_ABIS, ...extra], env)
 
-  const out = 'src-tauri/gen/android/app/build/outputs/apk/'
+  const out = 'src-tauri/gen/android/app/build/outputs/apk/universal/release/'
   console.log(
     `\n✓ APKs written under ${out}\n\n`
-    + 'One per architecture, with a universal build beside them. The universal\n'
-    + 'one carries every ABI: three copies of a 60 MB Rust library and a 40 MB\n'
-    + 'libVLC, so it is about three times the size and a device loads exactly one\n'
-    + 'of the three sets. Install the one that matches:\n\n'
-    + `  adb install -r ${out}arm64-v8a/release/app-arm64-v8a-release.apk\n`
-    + `  adb install -r ${out}armeabi-v7a/release/app-armeabi-v7a-release.apk\n`
-    + `  adb install -r ${out}universal/release/app-universal-release.apk\n\n`
+    + 'One per architecture, with a universal build beside them. Measured at\n'
+    + 'v0.6.62: arm64-v8a 94 MB, armeabi-v7a 83 MB, x86_64 101 MB, universal\n'
+    + '271 MB — the universal one is every ABI at once and a device loads just\n'
+    + 'one of them. Install the one that matches:\n\n'
+    + `  adb install -r ${out}app-universal-arm64-v8a-release.apk\n`
+    + `  adb install -r ${out}app-universal-armeabi-v7a-release.apk\n`
+    + `  adb install -r ${out}app-universal-universal-release.apk\n\n`
     + 'Unsure which? adb shell getprop ro.product.cpu.abilist names it.\n\n'
     + 'A file named *-release-unsigned.apk instead means the keystore was not in the\n'
     + 'environment (ANDROID_KEYSTORE_PATH); Android will refuse to install it.\n\n'
