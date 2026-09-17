@@ -135,11 +135,32 @@ function sha256(path: string) {
   return createHash('sha256').update(readFileSync(path)).digest('hex')
 }
 
+/**
+ * Fetch one asset, and keep trying — see the same note in `ytdlp.ts`.
+ *
+ * A bare `fetch` in a release build is one CDN hiccup away from failing the
+ * whole desktop job, and a release has three runners each taking that bet.
+ * Backed off rather than immediate, because the thing being waited out is a
+ * server having a moment, not a race.
+ */
 async function download(url: string, to: string) {
-  const res = await fetch(url)
-  if (!res.ok)
-    throw new Error(`${url} → HTTP ${res.status}`)
-  writeFileSync(to, new Uint8Array(await res.arrayBuffer()))
+  const attempts = 5
+  let last: unknown
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const res = await fetch(url)
+      if (!res.ok)
+        throw new Error(`${url} → HTTP ${res.status}`)
+      writeFileSync(to, new Uint8Array(await res.arrayBuffer()))
+      return
+    }
+    catch (e) {
+      last = e
+      if (attempt < attempts)
+        await new Promise(r => setTimeout(r, attempt * 2000))
+    }
+  }
+  throw last instanceof Error ? last : new Error(String(last))
 }
 
 /** One binary out of the release, downloaded, checked and unpacked. */

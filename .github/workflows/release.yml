@@ -203,6 +203,15 @@ jobs:
   android:
     # The draft release has to exist before there is anything to upload to.
     needs: desktop
+    # ...and that is all this waits for. `needs` on its own also demands that
+    # every desktop runner *succeeded*, which is a different and much stronger
+    # claim — one macOS runner taking a 500 from a CDN while fetching yt-dlp
+    # skipped the APK entirely, for a release whose only real change was to the
+    # Android player. The draft is made by whichever desktop bundle finishes
+    # first, so one surviving leg is enough. If none survive there is no draft
+    # and the upload below says so, which is a louder and more honest ending
+    # than a grey skip.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

@@ -75,8 +75,34 @@ function cacheDir(): string {
   return join(ROOT, '.cache', 'ytdlp')
 }
 
+/**
+ * Fetch one asset, and keep trying.
+ *
+ * `--retry` on its own is not enough, and the gap cost a release: curl only
+ * retries what it classes as transient, and a CDN that starts a response and
+ * then drops it mid-body comes back as exit 56 — a receive failure — rather
+ * than as the 500 it had just printed. So the retry never ran, one macOS
+ * runner failed, and the Android job that needed nothing from it but a draft
+ * release was skipped with it. `--retry-all-errors` is what makes a retry
+ * mean a retry.
+ *
+ * A partial file left behind is not a risk worth handling here: every caller
+ * checks the SHA-256 before the binary goes anywhere near a bundle.
+ */
 function download(url: string, dest: string): void {
-  const r = spawnSync('curl', ['-fSL', '--retry', '3', '-o', dest, url], { stdio: 'inherit' })
+  const r = spawnSync('curl', [
+    '-fSL',
+    '--retry',
+    '5',
+    '--retry-delay',
+    '3',
+    '--retry-all-errors',
+    '--connect-timeout',
+    '30',
+    '-o',
+    dest,
+    url,
+  ], { stdio: 'inherit' })
   if (r.status !== 0)
     throw new Error(`download failed (curl exited ${r.status ?? 'null'}) for ${url}`)
 }
