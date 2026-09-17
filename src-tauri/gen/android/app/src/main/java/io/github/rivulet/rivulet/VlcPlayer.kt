@@ -695,6 +695,15 @@ class RivuletPlayer(private val activity: MainActivity) {
           pendingPlay = true
           userPaused = false
         }
+        // And there is no picture until the replacement surface has drawn one.
+        // The page reads this back as `vo-configured` to decide whether a
+        // channel is playing, so leaving it at its last value describes a
+        // picture that is not on screen and cannot come back by itself —
+        // libVLC goes on decoding into nothing here, clock and all. That is
+        // the blank screen after an auto-rotate, with the HUD hidden over it
+        // because the page had no reason to think anything was wrong.
+        // RivuletPremiumPlayer.kt clears `firstFrame` here for the same reason.
+        voutCount = 0
         player?.vlcVout?.detachViews()
         outputAttached = false
         videoSurface?.release()

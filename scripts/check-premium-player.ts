@@ -484,8 +484,18 @@ check('a live channel shows a loader until the first frame', () => {
     'the watch page must treat buffering as busy',
   )
   assert.ok(
-    /videoWidth === 'number' && p\.videoWidth > 0/.test(mirrorSrc),
+    /const picture = asBool\(p\.moving\)/.test(mirrorSrc),
     'playing must wait for a decoded frame, not just mpv having started',
+  )
+  // And a size is not a decoded frame. Media3 reports the size the *stream*
+  // declares as soon as it has read the format, and keeps its TextureView
+  // hidden until something is actually drawn \u2014 so a channel that opened, said
+  // 720p and then rendered nothing read as playing: the loader came down, the
+  // start watchdog disarmed, and the reconnect stood down because it defers to
+  // the picture. Black screen, and nothing left to get out of it.
+  assert.ok(
+    !/p\.videoWidth/.test(mirrorSrc),
+    'and a size the stream merely declares is not one',
   )
   // Read off the mirror because that is where the reading moved. Left pointing
   // at the page, this went red the day of the refactor and stayed red.

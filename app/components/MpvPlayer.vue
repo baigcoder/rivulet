@@ -422,11 +422,46 @@ const ENGINE_FAILOVER_STALL_MS = 25_000
 const DIRECT_START_MS = 12_000
 const DIRECT_LAST_MS = 45_000
 
+/**
+ * How long a live engine may hold a stream it has parsed and not drawn.
+ *
+ * Counted from the moment the video size is known, and that is what makes it a
+ * short number: the size comes off the container, so by then the demuxer is
+ * through and bytes are plainly arriving. What is left is the decoder's own
+ * start-up, and five seconds is generous for one that is going to succeed.
+ *
+ * It also has to land inside the eight-second auto-retry on the Free TV page.
+ * That retry restarts the player, not the engine \u2014 so if it goes first it
+ * spends itself re-running the same dead decode.
+ */
+const NO_FRAME_MS = 5000
+
 /** When the current stream was handed to the backend. See `streamDied`. */
 let startedAt = 0
 /** Where the clock last stood, and when it last went forward. */
 let lastClock = -1
 let lastClockAt = 0
+/**
+ * Whether this stream has ever had a video output, and since when it has not.
+ *
+ * A backend that answers `vo-configured` is answering the only question that
+ * matters here — are there frames on the screen — and once it has said yes, a
+ * later no is a fact rather than a gap in its reporting. The clock cannot
+ * stand in for it: libVLC goes on decoding audio and advancing `time` after
+ * its output has been torn away, which is precisely what an auto-rotate does
+ * to it, so a moving clock described a picture that was not on screen and
+ * nothing downstream could tell.
+ *
+ * Not believed the instant it goes false, though. A vout is destroyed and
+ * rebuilt for an ordinary HLS ladder switch as well, and the TextureView keeps
+ * its last frame painted across that — so anything under `VO_LOST_MS` is the
+ * hiccup it usually is, and the clock still carries it.
+ */
+let voSeen = false
+let voLostAt = 0
+const VO_LOST_MS = 2500
+/** When this engine first had a size to draw and nothing drawn. See `NO_FRAME_MS`. */
+let noFrameSince = 0
 const busy = ref(false)
 const waiting = ref(false)
 const paused = ref(false)
@@ -1881,7 +1916,7 @@ function frame(now: number) {
     || (!!props.src && !started.value)
     || (started.value && (
       buffering.value
-      || (!fromEngine.value && videoWidth.value === 0 && !moving.value)
+      || (!fromEngine.value && !moving.value)
     ))
   const needsGeometry = started.value || (native && overlay && hasCentre)
 
@@ -2253,6 +2288,9 @@ async function startPlayer() {
     confirmedStopped = false
     lastClock = -1
     lastClockAt = 0
+    voSeen = false
+    voLostAt = 0
+    noFrameSince = 0
     subDelay.value = 0 // a fresh mpv starts at zero
     subSpeed.value = 1
     syncNote.value = ''
@@ -2264,7 +2302,16 @@ async function startPlayer() {
         // A clock that is moving has started, whether or not libVLC ever says
         // how big the picture is. On Android a live channel often never does,
         // and this declared a channel that was playing dead twelve seconds in.
-        if (!started.value || errorMsg.value || videoWidth.value > 0 || moving.value || duration.value)
+        //
+        // A *size* is not in this test, and must not be put back. Both Android
+        // backends read it off the stream's own format — Media3 from
+        // `videoFormat`, libVLC from `currentVideoTrack` — which is known as
+        // soon as the container is parsed and says nothing about whether a
+        // frame ever reached the screen. A premium channel that opened, named
+        // itself 720p and then rendered nothing disarmed this watchdog with
+        // that size, so the one thing that would have reconnected it never ran
+        // and the viewer sat on black with the connecting panel gone.
+        if (!started.value || errorMsg.value || moving.value || duration.value)
           return
         // Read when it fires rather than when it was armed: the other servers
         // are searched for in the background and can land after playback has
@@ -2441,6 +2488,24 @@ async function stopPlayer() {
 
 async function restart() {
   await stopPlayer()
+  await startPlayer()
+}
+
+/**
+ * Give up on Media3 for this component and bring the stream back on libVLC.
+ *
+ * `engine` is chosen once and then reused, so retiring a backend means
+ * clearing it too — `exoRefused` on its own only changes what the *next*
+ * choice would be, and without this there is never a next choice. The refusal
+ * branch in `poll` does exactly this; so does this one, for the failure that
+ * announces itself by saying nothing.
+ */
+async function retireExo() {
+  exoRefused = true
+  engineIsExo = false
+  androidLog('engine: Media3 parsed the stream and drew no frame; libVLC takes the next attempt')
+  await stopPlayer()
+  engine = null
   await startPlayer()
 }
 
@@ -2718,10 +2783,66 @@ async function poll() {
   // Connecting — libVLC reported Playing at 0.8s and a video output at 2.3s
   // throughout. Both signals below are cleared by `start` and `stop`, so a
   // stale one cannot survive into the next stream.
-  moving.value = (lastClockAt > 0 && Date.now() - lastClockAt < 2000)
-    || p['vo-configured'] === true
-  if (moving.value || videoWidth.value > 0)
+  //
+  // It also runs the other way, and that half was missing. A backend that has
+  // once had an output and no longer has one has *lost the picture*, and on
+  // Android that is a whole state of its own: an auto-rotate destroys the
+  // TextureView's surface, the decoder's output goes with it, and libVLC plays
+  // on into nothing with its clock still advancing. The clock then answered
+  // for a blank screen — the HUD hid itself over it, and every recovery path
+  // downstream defers to the picture, so nothing was left to notice. See
+  // `voSeen` for why the loss has to last before it counts.
+  const vo = p['vo-configured']
+  if (vo === true) {
+    voSeen = true
+    voLostAt = 0
+  }
+  else if (voSeen && !voLostAt) {
+    voLostAt = Date.now()
+  }
+  const voGone = voSeen && voLostAt > 0 && Date.now() - voLostAt > VO_LOST_MS
+  moving.value = vo === true
+    || (!voGone && lastClockAt > 0 && Date.now() - lastClockAt < 2000)
+  // A *size* is deliberately not part of this. Both Android backends report
+  // the stream's declared format — Media3 off `videoFormat`, libVLC off
+  // `currentVideoTrack` — the moment the container is parsed, and both keep
+  // their TextureView hidden until a frame is actually drawn. So a size with
+  // no output is the exact shape of the bug: the page read 720p as proof of a
+  // picture, dropped the connecting panel, and left black on screen with every
+  // retry, reconnect and auto-skip standing down because each of them defers
+  // to the picture.
+  if (moving.value)
     sawPicture.value = true
+
+  // This engine has read the stream and is drawing nothing.
+  //
+  // A known video size means the demuxer got all the way through: bytes are
+  // arriving and the container parsed. No video output on top of that is not a
+  // slow network — it is this engine having nothing it can put on screen,
+  // which is what a codec the device's Media3 will not take looks like from
+  // here. Waiting cannot fix that, and neither could a retry: `engine` is
+  // picked once per component, so every attempt re-ran the identical decode
+  // and the channel stayed black until the thirty-second watchdog gave up —
+  // then came back on the same engine and did it again.
+  //
+  // Media3 already retires itself when it *says* it was refused (the
+  // `log_tail` branch above). This is that same retirement for the case where
+  // it says nothing at all, which is the one a viewer sees: libVLC carries its
+  // own FFmpeg and takes a great deal more, so the next attempt is a different
+  // decoder rather than a slower copy of this one. If that one draws nothing
+  // either, the channel really is dead and the watchdog is right to say so.
+  if (isLive.value && engineIsExo && started.value && !busy.value
+    && !sawPicture.value && !paused.value && videoWidth.value > 0) {
+    noFrameSince ||= Date.now()
+    if (Date.now() - noFrameSince > NO_FRAME_MS) {
+      noFrameSince = 0
+      void retireExo()
+      return
+    }
+  }
+  else {
+    noFrameSince = 0
+  }
 
   // While there is still no picture the HUD is saying "Connecting", and on a
   // phone that is all anyone can see. libVLC's own trace proved it was playing
@@ -3324,7 +3445,7 @@ const centre = computed(() => {
   // for half an hour. A stream that has shown a frame is not opening; it is
   // playing, paused or stalled, and the branches below say which.
   if (!fromEngine.value && started.value && !ended.value && !sawPicture.value
-    && videoWidth.value === 0 && !moving.value) {
+    && !moving.value) {
     return 'loading'
   }
   if (started.value && (buffering.value || stalled.value))

@@ -188,9 +188,15 @@ const fatal = computed(() => premium.player === 'error')
  * the next channel — and it is the only thing that does: mpv's centre spinner
  * stands down (`resolving`) rather than saying it a second time over the
  * picture.
+ *
+ * `hasPicture` is the shared reading, not a second one taken here. This asked
+ * the player for a size of its own, and Media3 reports the size the stream
+ * declares before it has rendered anything — so a channel that named itself
+ * 720p and then drew no frame took this panel down and left the viewer with a
+ * black screen, no notice, and no Retry to press.
  */
 const hudConnecting = computed(() =>
-  busy.value && !fatal.value && (playerRef.value?.videoWidth ?? 0) <= 0 && !playerRef.value?.moving)
+  busy.value && !fatal.value && !hasPicture.value)
 
 const overlayError = computed(() => {
   // One modal. A second card on this page painted "Playback Error"

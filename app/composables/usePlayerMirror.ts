@@ -17,7 +17,6 @@ import { ref } from 'vue'
 
 /** What both pages need off `<mpv-player>`; each may expose more. */
 export interface PlayerHandle {
-  videoWidth?: number
   moving?: boolean | { value?: boolean }
   paused?: boolean | { value?: boolean }
   behindLive?: boolean | { value?: boolean }
@@ -76,11 +75,20 @@ export function usePlayerMirror() {
    */
   function mirror(p: PlayerHandle): { picture: boolean, gainedPicture: boolean } {
     const hadPicture = hasPicture.value
-    // A size, or a clock that is moving — see `moving` in MpvPlayer. libVLC
-    // often reports no size at all for a live channel on Android, and on that
-    // test alone a channel could play for minutes while the page called it
-    // still opening.
-    const picture = (typeof p.videoWidth === 'number' && p.videoWidth > 0) || asBool(p.moving)
+    // `moving` in MpvPlayer, and nothing else — a video output that is up, or
+    // a clock that is going forward without one. libVLC often reports no size
+    // at all for a live channel on Android, which is why the size was never
+    // enough on its own.
+    //
+    // It is not evidence either, which is what this used to treat it as. Both
+    // Android backends publish the size the *stream* declares as soon as the
+    // container is parsed, and both keep their TextureView hidden until a
+    // frame is really drawn — so a premium channel that opened, said 720p and
+    // then rendered nothing read here as a picture. Everything defers to this
+    // flag, so that one reading took down the connecting panel, the start
+    // watchdog, the one-shot retry, the auto-skip and the reconnect at once,
+    // and left a black screen with nothing able to act on it.
+    const picture = asBool(p.moving)
     hasPicture.value = picture
     // A picture that is not paused is playing. `started` was in this test on
     // the Premium page until v0.6.47 and is the page's own bookkeeping, not a

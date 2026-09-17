@@ -561,13 +561,23 @@ assert.match(autoBlock, /setWindowFullscreen\(true\)/, 'and then goes full scree
 // lock while starved — and libVLC's own decoder setup waits on that lock.
 assert.doesNotMatch(vlcKt, /THREAD_PRIORITY_BACKGROUND/, 'the decoder scan must not be starved while holding the codec lock')
 
-// --- Live on Android: a moving clock is a picture ------------------------------
+// --- Live on Android: a moving clock is a picture, a size is not --------------
 // libVLC often reports no size for a live channel, so videoWidth === 0 alone kept
 // the loader up over a playing picture, let the 12-second start watchdog declare a
 // playing channel dead, and never let a real start reset the reconnect counter.
 assert.match(mpv, /const moving = ref\(false\)/, 'the player tracks whether the clock is moving')
-assert.match(mpv, /videoWidth\.value > 0 \|\| moving\.value \|\| duration\.value/, 'the start watchdog must not kill a channel whose clock is moving')
-assert.match(mpv, /&& videoWidth\.value === 0 && !moving\.value\) \{\s+return 'loading'/, 'the loader clears once the clock moves, size or no size')
+assert.match(mpv, /!started\.value \|\| errorMsg\.value \|\| moving\.value \|\| duration\.value/, 'the start watchdog must not kill a channel whose clock is moving')
+assert.match(mpv, /&& !sawPicture\.value\s+&& !moving\.value\) \{\s+return 'loading'/, 'the loader clears once the clock moves, size or no size')
+// And the other way round: a size is not a picture and may not answer for one.
+// Both Android backends publish the size the *stream* declares the moment the
+// container is parsed \u2014 Media3 off videoFormat, libVLC off currentVideoTrack \u2014
+// and both keep their TextureView hidden until a frame is really drawn. So a
+// premium channel that opened, called itself 720p and then rendered nothing read
+// as playing everywhere: the connecting panel went away, the start watchdog
+// disarmed, and the retry, the auto-skip and the reconnect all stood down,
+// because every one of them defers to the picture. Black screen, and no way out
+// of it.
+assert.doesNotMatch(mpv, /videoWidth\.value > 0 \|\| moving\.value/, 'a declared size never stands in for a frame on screen')
 // And once a frame has arrived at all. Every other reading in that test is a
 // reading of now, and a pause satisfies all of them on Android — no size for a
 // live track on either backend, and a paused clock that does not move. So every
@@ -579,7 +589,9 @@ const freeWatch = readFileSync(new URL('../app/pages/live-tv/watch.vue', import.
 // The picture test lives in the shared mirror now, so it is one rule rather
 // than two copies that drifted. Both pages read it through there.
 const mirrorSrc = readFileSync(new URL('../app/composables/usePlayerMirror.ts', import.meta.url), 'utf8')
-assert.match(mirrorSrc, /p\.videoWidth > 0\) \|\| asBool\(p\.moving\)/, 'a moving clock counts as a picture, so a real start resets the reconnect counter')
+assert.match(mirrorSrc, /const picture = asBool\(p\.moving\)/, 'a moving clock counts as a picture, so a real start resets the reconnect counter')
+assert.doesNotMatch(mirrorSrc, /p\.videoWidth/, 'and a size the stream merely declares does not')
+assert.match(premiumWatch, /busy\.value && !fatal\.value && !hasPicture\.value/, 'Premium reads that one picture rather than asking for a size of its own')
 assert.match(premiumWatch, /usePlayerMirror\(\)/, 'Premium TV reads the player through it')
 assert.match(freeWatch, /usePlayerMirror\(\)/, 'and so does Free TV')
 
@@ -626,13 +638,28 @@ function onSurfaceDestroyed(kt: string) {
 for (const [name, kt] of [['libVLC', vlcKt], ['Media3', exoKt]] as const) {
   assert.match(onSurfaceDestroyed(kt), /pendingPlay = true/, `${name} resumes the start once the new surface arrives`)
 }
-// Media3 also has to stop claiming a picture it can no longer draw: the page
-// reads vo-configured back to decide whether a channel is playing.
+// Both also have to stop claiming a picture they can no longer draw: the page
+// reads vo-configured back to decide whether a channel is playing. libVLC went
+// on decoding into nothing after a rotation with its clock still advancing, and
+// the page read that clock as a picture \u2014 so the HUD hid itself over a blank
+// screen, and every recovery path deferred to a picture that was not there.
 assert.match(
   onSurfaceDestroyed(exoKt),
   /firstFrame = false/,
-  'and no picture is reported while there is no surface to draw one on',
+  'and Media3 reports no picture while there is no surface to draw one on',
 )
+assert.match(
+  onSurfaceDestroyed(vlcKt),
+  /voutCount = 0/,
+  'nor does libVLC',
+)
+// Which only bites if the page believes it. A backend that has once had an
+// output and no longer has one has lost the picture, whatever its clock says \u2014
+// though not the instant it says so, because an ordinary HLS ladder switch
+// destroys and rebuilds a vout while the last frame stays painted.
+assert.match(mpv, /const VO_LOST_MS = \d/, 'the page gives a lost video output a moment to come back')
+assert.match(mpv, /const voGone = voSeen && voLostAt > 0/, 'and then stops calling it a picture')
+assert.match(mpv, /moving\.value = vo === true\s+\|\| \(!voGone &&/, 'so a clock cannot answer for a screen with nothing on it')
 
 // --- A live stream that says it ended has usually not ------------------------
 // A discontinuity in an HLS or MPEG-TS feed raises "ended" and the picture
@@ -701,7 +728,7 @@ assert.match(vlcKt, /private fun rebuildTracks\(p: MediaPlayer\)/, 'the track li
 assert.match(vlcKt, /if \(tracksDirty\)/, 'and is rebuilt only when libVLC says the tracks changed')
 assert.match(vlcKt, /cacheFill = 0\s+voutCount = 0/, 'a new start forgets the last channel\'s output')
 assert.match(mpv, /POLLED = \[[^\]]*'vo-configured'/, 'the player polls it')
-assert.match(mpv, /\|\| p\['vo-configured'\] === true/, 'and a video output that is up counts as a picture')
+assert.match(mpv, /const vo = p\['vo-configured'\]/, 'and a video output that is up counts as a picture')
 // ...on its own account. Gating this on `started` meant the page could decide
 // a channel was not playing while libVLC was reporting Playing and a video
 // output, which is what left a working stream under a "Connecting" HUD and
