@@ -320,4 +320,18 @@ jobs:
           if [ -n "$missing" ]; then
             echo "::warning::No per-ABI APK for:$missing — everyone downloads the universal build. Did the Gradle abi splits stop running?"
           fi
-          gh release upload "$GITHUB_REF_NAME" $files --clobber
+          # Retried, because this is the step a release is most likely to lose.
+          # v0.6.68 built and signed every APK, then GitHub's asset service
+          # answered "Error saving asset" to all three runners that afternoon,
+          # and the release went out with no APK on it at all. `--clobber` makes
+          # a second attempt safe: it replaces whatever half-saved asset the
+          # first one left instead of refusing the name.
+          for attempt in 1 2 3 4 5; do
+            gh release upload "$GITHUB_REF_NAME" $files --clobber && break
+            if [ "$attempt" = 5 ]; then
+              echo "::error::Could not attach the APKs after 5 attempts. Re-run this job; the build itself is fine."
+              exit 1
+            fi
+            echo "::warning::Upload attempt $attempt failed; retrying in $((attempt * 15))s"
+            sleep $((attempt * 15))
+          done

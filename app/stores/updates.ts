@@ -35,8 +35,26 @@ export const useUpdatesStore = defineStore('updates', () => {
   /** Version whose APK is on disk — so Install survives a restart, and an old file is not offered as a new one. */
   const pendingApk = useLocalStorage(key('updateApkVersion'), '')
 
-  const available = computed(() =>
-    release.value && isNewer(current.value, release.value.version) ? release.value : null)
+  /**
+   * A newer release this copy can actually install.
+   *
+   * On Android that means a release with an APK on it, and nothing else. A
+   * release can go out without one — the upload step fails on GitHub's side
+   * after the build has passed, and the release is published anyway with every
+   * other bundle attached — and it used to be offered regardless: notification,
+   * badge, Install. Install then fell back to the release's *web page*, handed
+   * that HTML to the system installer as the APK, and the viewer was told the
+   * download was corrupt and to try again, which could never work. No APK is
+   * no update, on the one platform where the APK is the whole update.
+   */
+  const available = computed(() => {
+    const r = release.value
+    if (!r || !isNewer(current.value, r.version))
+      return null
+    if (isAndroid() && !r.apk)
+      return null
+    return r
+  })
 
   const dismissed = computed(() => !!available.value && available.value.version === skipped.value)
 
@@ -153,7 +171,9 @@ export const useUpdatesStore = defineStore('updates', () => {
 
     // ── Android: direct APK download + system install ────────────────
     if (isAndroid()) {
-      const apkUrl = available.value.apk || available.value.url
+      // The APK and nothing but the APK. This used to fall back to the release
+      // page, which downloads as HTML and fails the installer's own check.
+      const apkUrl = available.value.apk
       if (!apkUrl) {
         status.value = 'failed'
         error.value = $t('No downloadable APK found for this release.')

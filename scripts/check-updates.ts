@@ -111,6 +111,13 @@ assert.equal(
 // A release with no APK is a normal state, not a parse failure — the panel
 // falls back to the release page.
 assert.equal(parseUpdate({ ...release, assets: [] })?.apk, '')
+// ...but on Android it is not an update. v0.6.68 went out with no APK (GitHub
+// refused the upload after the build had passed), Android offered it anyway,
+// and Install downloaded the release's web page and handed that HTML to the
+// system installer — "does not look like a valid APK", on every retry.
+const updatesStore = readFileSync(new URL('../app/stores/updates.ts', import.meta.url), 'utf8')
+assert.match(updatesStore, /if \(isAndroid\(\) && !r\.apk\)\s+return null/, 'Android is not offered a release it cannot install')
+assert.doesNotMatch(updatesStore, /available\.value\.apk \|\| available\.value\.url/, 'and Install never downloads the release page as an APK')
 assert.equal(parseUpdate({ ...release, html_url: undefined })?.url, RELEASES_URL)
 assert.equal(parseUpdate({ ...release, body: undefined })?.notes, '')
 
