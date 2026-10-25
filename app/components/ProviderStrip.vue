@@ -12,30 +12,12 @@ import type { WatchProvider } from '~/utils/streamingProviders'
 import { mdiTelevisionClassic } from '@mdi/js'
 import { useElementSize } from '@vueuse/core'
 import { computed, ref } from 'vue'
-import { fillRows, providerColumns, streamingProviders } from '~/utils/streamingProviders'
+import { popularProviders, providerColumns } from '~/utils/streamingProviders'
 
 type Provider = WatchProvider
 
-const settings = useSettingsStore()
-
-/**
- * TMDB's provider catalogues are per-country. The app language usually knows
- * its region ("pt-BR"), and that is the right default; '' falls back to the US
- * catalogue, the largest one TMDB has. The choice itself lives on the provider
- * page — this strip just follows it. `uiLocale` reads `<html lang>`, which is
- * also what keeps `useI18n`'s types out of this file.
- */
-const region = computed(() => {
-  if (settings.watchRegion)
-    return settings.watchRegion
-  try {
-    const tag = new Intl.Locale(uiLocale()).maximize()
-    return tag.region ?? 'US'
-  }
-  catch {
-    return 'US'
-  }
-})
+/** TMDB's provider catalogues are per-country — see `useWatchRegion`. */
+const region = useWatchRegion()
 
 const { data, error, pending } = useAsyncData(
   () => `providers-${region.value}`,
@@ -56,9 +38,6 @@ const { data, error, pending } = useAsyncData(
   { watch: [region] },
 )
 
-/** Every service in the region, once each, household names first — see `streamingProviders`. */
-const all = computed(() => streamingProviders(data.value ?? [], region.value))
-
 /**
  * Columns follow the strip's real width rather than breakpoints, so the count
  * of cards can be chosen to fill whole rows — eleven services on a ten-column
@@ -67,13 +46,13 @@ const all = computed(() => streamingProviders(data.value ?? [], region.value))
 const grid = ref<HTMLElement>()
 const { width } = useElementSize(grid)
 const cols = computed(() => providerColumns(width.value))
-const gridStyle = computed(() => ({ gridTemplateColumns: `repeat(${cols.value}, minmax(0, 1fr))` }))
+const gridStyle = computed(() => ({ gridTemplateColumns: `repeat(${Math.min(10, cols.value)}, minmax(0, 1fr))` }))
 
-/** Two full rows on Home; the rest one press away rather than 150 cards up front. */
-const ROWS = 2
-const expanded = ref(false)
-const collapsedCount = computed(() => fillRows(all.value.length, cols.value, ROWS))
-const providers = computed(() => expanded.value ? all.value : all.value.slice(0, collapsedCount.value))
+/**
+ * One fixed row of the popular services, as many as the width fits up to ten.
+ * The long tail is still reachable from search; on Home it was 150 cards.
+ */
+const providers = computed(() => popularProviders(data.value ?? [], region.value, Math.min(10, cols.value)))
 
 function to(p: Provider) {
   // No locale prefix exists in the URL (no_prefix strategy), so a plain route
@@ -120,17 +99,6 @@ function to(p: Provider) {
         <!-- Subtle gradient gloss on hover -->
         <div class="pointer-events-none absolute inset-0 rounded-2xl bg-gradient-to-t from-white/10 via-transparent to-transparent opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100" />
       </nuxt-link>
-    </div>
-
-    <div v-if="!error && all.length > collapsedCount" class="mx-4 mt-3 md:mx-6">
-      <button
-        type="button"
-        class="rounded-full px-4 py-2 text-label-large font-medium text-primary transition-colors hover:bg-primary/10 focus-visible:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-        :aria-expanded="expanded ? 'true' : 'false'"
-        @click="expanded = !expanded"
-      >
-        {{ expanded ? $t('Show fewer services') : $t('All {count} services', { count: all.length }) }}
-      </button>
     </div>
   </section>
 </template>

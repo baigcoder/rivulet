@@ -106,7 +106,9 @@ impl CredentialVault {
 
 /// Read the master key from the OS keychain, creating it on first
 /// use. On Android there is no keyring backend, so we fall back to
-/// a 0600 file in the app's private cache dir.
+/// a 0600 file in the app's private data dir — `RIVULET_APP_CACHE` is
+/// `app_data_dir` despite its name (see lib.rs), so clearing the app's
+/// cache does not take the key, and every saved login, with it.
 fn load_or_create_master_key() -> Result<[u8; 32], PremiumError> {
     #[cfg(target_os = "android")]
     {

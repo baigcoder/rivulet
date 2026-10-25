@@ -176,16 +176,7 @@ pub struct ApiState {
 /// `http://localhost` rejects `http://localhost:3001` when the normal dev
 /// port is already occupied.
 fn is_local_app_origin(origin: &HeaderValue) -> bool {
-    let Ok(origin) = origin.to_str() else {
-        return false;
-    };
-    origin == "tauri://localhost"
-        || origin == "https://tauri.localhost"
-        || origin == "http://tauri.localhost"
-        || origin == "http://localhost"
-        || origin.starts_with("http://localhost:")
-        || origin == "http://127.0.0.1"
-        || origin.starts_with("http://127.0.0.1:")
+    origin.to_str().is_ok_and(crate::local_guard::is_app_origin)
 }
 
 /// Build the router. CORS admits the Tauri origin and loopback development

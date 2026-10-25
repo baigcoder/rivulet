@@ -23,7 +23,7 @@
  * never logged, never written to localStorage, and gone the moment the
  * request returns; the Rust side encrypts it before the row hits SQLite.
  */
-import { mdiCheckCircle, mdiLinkVariant, mdiServerNetwork } from '@mdi/js'
+import { mdiCheckCircle, mdiEye, mdiEyeOff, mdiLinkVariant, mdiServerNetwork } from '@mdi/js'
 import { computed, onUnmounted, watch } from 'vue'
 
 const { heading = true } = defineProps<{ heading?: boolean }>()
@@ -37,6 +37,8 @@ const accountName = ref('')
 const serverUrl = ref('')
 const username = ref('')
 const password = ref('')
+/** Shown on request: a password typed on a TV remote is worth checking before it is sent. */
+const showPassword = ref(false)
 const busy = ref(false)
 const error = ref('')
 const elapsedSeconds = ref(0)
@@ -177,7 +179,7 @@ async function submit() {
             <v-text-field
               v-model="link"
               :label="$t('Provider link')"
-              :hint="$t('An Xtream Codes link or a playlist URL. Your account is checked and only live channels are imported.')"
+              :hint="$t('An Xtream Codes link or a playlist URL. An Xtream account brings its live channels, movies and series; a playlist brings its channels.')"
               persistent-hint
               placeholder="http://example.com:8080/…"
               variant="outlined"
@@ -224,11 +226,22 @@ async function submit() {
             <v-text-field
               v-model="password"
               :label="$t('Password')"
-              type="password"
+              :type="showPassword ? 'text' : 'password'"
               variant="outlined"
               required
               autocomplete="new-password"
-            />
+            >
+              <template #append-inner>
+                <button
+                  type="button"
+                  class="grid size-8 place-items-center rounded-full opacity-70 outline-none hover:bg-white/10 hover:opacity-100 focus-visible:bg-white/10 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary"
+                  :aria-label="showPassword ? $t('Hide password') : $t('Show password')"
+                  @click="showPassword = !showPassword"
+                >
+                  <v-icon :icon="showPassword ? mdiEyeOff : mdiEye" size="20" />
+                </button>
+              </template>
+            </v-text-field>
             <v-btn
               type="submit"
               color="primary"

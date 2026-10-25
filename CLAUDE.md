@@ -80,7 +80,9 @@ keeps glued to a box in the page. Targets desktop **and Android TV**.
 - Logic worth trusting has a `bun run check:*` script beside it
   (`check:dpad`, `check:torrents`, `check:subtitles`, `check:theme`,
   `check:library`, `check:player`, `check:swipe`, `check:boot`,
-  `check:perf`, `check:android-downloads`, `check:updates`, `check:i18n`).
+  `check:perf`, `check:android-downloads`, `check:updates`, `check:i18n`, and
+  `check:security`, which replays a hostile web page against the loopback
+  servers and needs the app running).
   Add to those rather than pulling in a test framework. `bun run check:types` is
   the odd one out: a whole-app `vue-tsc` pass, which is the only thing that
   reads a template's bindings against its script's types — eslint never does.

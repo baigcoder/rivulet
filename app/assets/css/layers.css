@@ -106,6 +106,38 @@
     animation-delay: calc(var(--i, 0) * var(--motion-stagger));
   }
 
+  /* Home's spotlight fades into whatever is behind the app — a colour, the
+     ambient art, the user's own picture — rather than into a black it would
+     have to guess. Two masks multiplied: off at the bottom, softly at the left. */
+  .hero-mask {
+    mask-image:
+      linear-gradient(to bottom, #000 55%, transparent 100%),
+      linear-gradient(to right, rgb(0 0 0 / 0.55) 0%, #000 35%);
+    mask-composite: intersect;
+  }
+
+  /* A poster still on its way. A flat grey box read as a broken grid for the
+     seconds a search took to fill; a highlight crossing it reads as loading.
+     The band moves by `transform` alone — compositor work, the one kind a TV's
+     GPU does not pay for in paint — and only while the image is missing. Like
+     the other skeletons it keeps moving under `reduce-effects`: a still one is
+     a grid that looks hung. */
+  .poster-shimmer {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+
+  .poster-shimmer::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(100deg, transparent 30%, rgb(255 255 255 / 0.08) 50%, transparent 70%);
+    transform: translateX(-100%);
+    animation: poster-shimmer 1.4s ease-in-out infinite;
+  }
+
   /* A rule draws from the side the language starts on. `transform-origin` takes
      no logical keyword — there is no `inline-start` for it — so the one place in
      this app that needs a physical direction states both, keyed off the `dir`
@@ -249,6 +281,12 @@
 
   to {
     transform: none;
+  }
+}
+
+@keyframes poster-shimmer {
+  to {
+    transform: translateX(100%);
   }
 }
 

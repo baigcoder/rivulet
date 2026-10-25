@@ -6,8 +6,8 @@ import type { WatchProvider } from '../app/utils/streamingProviders'
 import type { Media } from '../app/utils/tmdb'
 import assert from 'node:assert'
 import { applyBackup, backupSummary, makeBackup, PREFIX, readBackup } from '../app/utils/backup'
-import { arrange, continuing, finished, fraction, kindOf, nextEpisode, parseKey, placeholder, playedTitles, progressKey, remainingText, resumable, showEntries, slim, UNKNOWN_TITLE, watchedInSeason } from '../app/utils/library'
-import { fillRows, providerColumns, streamingProviders } from '../app/utils/streamingProviders'
+import { arrange, chapterCredits, chapterIntro, continuing, finished, fraction, kindOf, nextEpisode, parseKey, placeholder, playedTitles, progressKey, remainingText, resumable, showEntries, slim, UNKNOWN_TITLE, watchedInSeason } from '../app/utils/library'
+import { fillRows, popularProviders, providerColumns, streamingProviders } from '../app/utils/streamingProviders'
 import { mediaLink } from '../app/utils/tmdb'
 
 // `mediaLink` runs its path through Nuxt's auto-imported `localePath`, which
@@ -424,6 +424,14 @@ assert.deepEqual(
   'a service ranks by its best tier, not by whichever tier came first',
 )
 assert.deepEqual(names.slice(10), ['fuboTV', 'Philo'], 'everything else follows TMDB\'s prominence for the region')
+// Home shows the popular ones only: the pinned names, never the long tail.
+assert.deepEqual(popularProviders(usProviders, 'US').map(p => p.provider_name), names.slice(0, 10), 'Home\'s row is the household names, in order')
+assert.ok(!popularProviders(usProviders, 'US').some(p => p.provider_name === 'Philo'), 'and nothing past them')
+assert.deepEqual(
+  popularProviders(tmdbUs([[8, 'Netflix', 1], [1, 'Philo', 17], [3, 'Sling', 5]]), 'US').map(p => p.provider_name),
+  ['Netflix', 'Sling', 'Philo'],
+  'a region with few household names is topped up from its own most prominent',
+)
 
 // Whole rows only: eleven services on ten columns left one card alone.
 assert.equal(fillRows(11, 10, 2), 10, 'a short second row is dropped, not shown with one card')
@@ -432,5 +440,20 @@ assert.equal(fillRows(7, 10, 2), 7, 'a list shorter than one row shows every car
 assert.equal(fillRows(0, 10, 2), 0)
 assert.ok(providerColumns(1800) <= 12 && providerColumns(1800) >= 10, 'a wide window fits ten to twelve cards')
 assert.equal(providerColumns(360), 4, 'a phone still gets four')
+
+// --- Skip Intro from the file's own chapters ----------------------------------
+const chapters = [
+  { time: 0, title: 'Recap' },
+  { time: 60, title: 'Opening' },
+  { time: 150, title: 'Part 1' },
+  { time: 2400, title: 'End Credits' },
+]
+assert.deepEqual(chapterIntro(chapters, 90), { target: 150 }, 'inside the opening, skip to the next chapter')
+assert.equal(chapterIntro(chapters, 30), null, 'a recap is not the intro')
+assert.equal(chapterIntro(chapters, 200), null, 'past it, nothing to skip')
+assert.equal(chapterIntro([{ time: 0, title: 'Opening Night' }, { time: 600, title: 'Act II' }], 10), null, 'a film\'s chapter is not a title sequence')
+assert.equal(chapterIntro([{ time: 0, title: 'OP' }], 10), null, 'an intro with no chapter after it has nowhere to skip to')
+assert.equal(chapterCredits(chapters, 2401), true)
+assert.equal(chapterCredits(chapters, 2000), false)
 
 console.log('check-library: ok')

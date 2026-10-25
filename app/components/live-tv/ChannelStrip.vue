@@ -161,9 +161,7 @@ const label = computed(() => [
           <span class="block h-full rounded-full bg-on-surface/60" :style="{ width: `${programme.pct}%` }" />
         </span>
       </template>
-      <span v-else class="truncate text-body-small text-on-surface/35">
-        {{ $t('No guide for this channel') }}
-      </span>
+
     </span>
 
     <span class="hidden items-center justify-end gap-1.5 md:flex">

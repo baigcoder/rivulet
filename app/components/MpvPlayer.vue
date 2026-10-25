@@ -6,6 +6,7 @@ import type { EngineTorrent, PieceMap } from '~/utils/torrents'
 import {
   mdiAlertCircleOutline,
   mdiAlphaA,
+  mdiAspectRatio,
   mdiAutoFix,
   mdiChartTimeline,
   mdiCheck,
@@ -14,7 +15,6 @@ import {
   mdiClose,
   mdiCloud,
   mdiCog,
-  mdiCropFree,
   mdiEarHearing,
   mdiFastForward10,
   mdiFullscreen,
@@ -30,7 +30,6 @@ import {
   mdiRewind10,
   mdiSkipNext,
   mdiStar,
-  mdiStepForward,
   mdiSubtitles,
   mdiSubtitlesOutline,
   mdiTranslate,
@@ -100,6 +99,11 @@ const props = defineProps<{
   year?: string
   season?: number
   episode?: number
+  /** A Stream only torrent: fetched a few minutes ahead of the picture, not to the end — see `streamCap`. */
+  streamOnly?: boolean
+  /** An episode's own name and synopsis, for the pause screen of a series. */
+  episodeTitle?: string
+  episodeOverview?: string
   /** Transparent title treatment from TMDB (logo PNG path). Shown on the pause overlay. */
   logo?: string | null
   /**
@@ -146,6 +150,11 @@ const props = defineProps<{
    */
   userAgent?: string | null
   referer?: string | null
+  /**
+   * How long the title really runs, in seconds — what a direct link's clip
+   * is held against (see `stubChecked`). 0 or absent: nothing to compare.
+   */
+  expectedSeconds?: number
 }>()
 
 const emit = defineEmits<{
@@ -156,6 +165,8 @@ const emit = defineEmits<{
   autoOpened: []
   /** User pressed Back while the player was resolving or idle — delegate to the parent. */
   back: []
+  /** The credits are rolling, or the last two minutes are — once per stream. The page gets the next episode ready. */
+  nearEnd: []
 }>()
 
 /**
@@ -405,6 +416,17 @@ const ENGINE_FAILOVER_GRACE_MS = 20_000
 const ENGINE_FAILOVER_STALL_MS = 25_000
 
 /**
+ * A copy that has handed over *nothing* of its opening this long after mpv was
+ * given it is not slow, it is empty: the swarm the source reported (often
+ * hours stale) is not there. With another copy waiting, that is moved on from
+ * now rather than after the full grace and stall — measured, a dead 1080p
+ * sat at "2 peers · 0%" for most of a minute while a live copy was ranked
+ * right behind it. A copy that has started filling, however slowly, keeps
+ * the patient windows above.
+ */
+const ENGINE_DEAD_START_MS = 15_000
+
+/**
  * How long a Direct link gets to produce a first frame.
  *
  * The same question as the engine's, and the same answer: it depends on what
@@ -518,32 +540,9 @@ const currentChapter = ref(-1)
 // ---------------------------------------------------------------------------
 // A-B Loop
 // ---------------------------------------------------------------------------
-/** null = not looping, { a, b } = loop between these two points. */
-const abLoop = ref<{ a: number, b: number } | null>(null)
-
-function setLoopA() {
-  if (!started.value)
-    return
-  abLoop.value = { a: position.value, b: abLoop.value?.b ?? position.value + 10 }
-  osd($t('Loop A: {time}', { time: fmt(position.value) }))
-}
-
-function setLoopB() {
-  if (!started.value || !abLoop.value)
-    return
-  if (position.value <= abLoop.value.a) {
-    abLoop.value = null
-    osd($t('Loop cancelled'))
-    return
-  }
-  abLoop.value.b = position.value
-  osd($t('Loop: {a} → {b}', { a: fmt(abLoop.value.a), b: fmt(position.value) }))
-}
-
-function clearLoop() {
-  abLoop.value = null
-  osd($t('Loop off'))
-}
+// Marks, messages and the jump back are in the composable; the check against
+// the playhead stays with the clock (see the position watcher).
+const { abLoop, setLoopA, setLoopB, clearLoop } = useAbLoop({ started, position, osd, fmt })
 
 // ---------------------------------------------------------------------------
 // Network Stats Overlay
@@ -1174,6 +1173,22 @@ function setSubSpeed(rate: number) {
   ipc(['set_property', 'sub-speed', rate])
 }
 
+// ---------------------------------------------------------------------------
+// Audio delay — a picture that leads or trails its sound, which some encodes
+// and most Bluetooth headphones do. mpv shifts the audio; the webview's
+// <video> cannot, so the control is offered only where mpv is playing.
+// ---------------------------------------------------------------------------
+const audioDelay = ref(0)
+const audioDelayText = computed(() => seconds(audioDelay.value))
+
+function nudgeAudioDelay(delta: number) {
+  if (!native)
+    return
+  audioDelay.value = Math.round((audioDelay.value + delta) * 10) / 10
+  ipc(['set_property', 'audio-delay', audioDelay.value])
+  osd(`${$t('Audio delay')} ${audioDelayText.value}`)
+}
+
 function nudgeDelay(delta: number) {
   // Back onto the tenth-of-a-second grid: a fit leaves the delay somewhere in
   // between, and stepping from 0.14 to 0.24 reads like a stuck button.
@@ -1375,53 +1390,82 @@ const skipKey = computed(() => {
   return progressKey(props.media.type, props.media.id, props.season ?? 0, props.episode ?? 0)
 })
 
+// A mark the viewer set wins; the file's own chapter titles are the fallback,
+// so a release that names its "Opening" skips with nothing marked at all.
 const introSkip = computed(() => {
-  if (!skipKey.value || !started.value)
+  if (!started.value)
     return null
-  return inIntro(skipKey.value, position.value)
+  return (skipKey.value ? inIntro(skipKey.value, position.value) : null)
+    ?? chapterIntro(chapters.value, position.value)
 })
 
 const creditsReached = computed(() => {
-  if (!skipKey.value || !started.value)
+  if (!started.value)
     return false
-  return inCredits(skipKey.value, position.value, duration.value)
+  return (!!skipKey.value && inCredits(skipKey.value, position.value, duration.value))
+    || chapterCredits(chapters.value, position.value)
 })
 
 // ---------------------------------------------------------------------------
 // Auto-play next episode countdown
 // ---------------------------------------------------------------------------
-const autoPlayCountdown = ref<number | null>(null)
-let autoPlayHandle: ReturnType<typeof setTimeout> | null = null
+const { remaining: autoPlayCountdown, start: startCountdown, clear: clearAutoPlayCountdown } = useCountdown(() => {
+  if (props.next)
+    navigateTo(props.next.to)
+})
 
 function startAutoPlayCountdown() {
-  if (!props.next || autoPlayCountdown.value !== null)
-    return
-  autoPlayCountdown.value = 15
-  const tick = () => {
-    if (autoPlayCountdown.value === null || autoPlayCountdown.value <= 0) {
-      clearAutoPlayCountdown()
-      return
-    }
-    autoPlayCountdown.value--
-    if (autoPlayCountdown.value <= 0) {
-      clearAutoPlayCountdown()
-      // Navigate via router
-      navigateTo(props.next!.to)
-    }
-    else {
-      autoPlayHandle = setTimeout(tick, 1000)
-    }
-  }
-  autoPlayHandle = setTimeout(tick, 1000)
+  if (props.next)
+    startCountdown(15)
 }
 
-function clearAutoPlayCountdown() {
-  autoPlayCountdown.value = null
-  if (autoPlayHandle) {
-    clearTimeout(autoPlayHandle)
-    autoPlayHandle = null
-  }
-}
+// The end is close: the credits by chapter or mark, or two minutes left of a
+// file past its half. Said once per stream, so a seek back and forward again
+// does not start the next episode's preload twice.
+let nearEndSent = false
+watch(() => props.src, () => (nearEndSent = false))
+
+/**
+ * A cloud source that can't serve the file says so with a video: a thirty-
+ * second clip reading "Debrid provider is currently unavailable", handed back
+ * as if it were the film. It plays perfectly, so nothing failed — except
+ * that it is not the title. A direct link is never probed (the probe is
+ * CORS-blocked), so its length is the tell: a clip under three minutes for
+ * something that runs over ten is the source's error card. Once per link.
+ */
+let stubChecked = false
+watch(() => props.src, () => {
+  stubChecked = false
+  stubSeen.value = false
+})
+watch(duration, d => {
+  if (stubChecked || !d || fromEngine.value || isLive.value || fromPremium.value)
+    return
+  const expected = props.expectedSeconds ?? 0
+  if (expected < 600)
+    return
+  stubChecked = true
+  if (d >= Math.min(180, expected / 10))
+    return
+  stubSeen.value = true
+  // Not stopped here: the page answers by swapping the link, which remounts
+  // this player, and mpv is one process for the whole app — a stop still in
+  // flight from this instance landed after the next one had started and
+  // killed it, leaving a black screen at 0:00.
+  errorMsg.value = $t('This source sent a short error clip instead of the title — its cloud service is unavailable right now, or its key was rejected.')
+  // Always told, candidates or not: the page is the one that can offer the
+  // torrent instead once every link has turned out to be the same card.
+  emit('failed', 'stub')
+})
+watch(
+  () => creditsReached.value || (duration.value > 0 && position.value > duration.value / 2 && duration.value - position.value < 120),
+  near => {
+    if (near && !nearEndSent) {
+      nearEndSent = true
+      emit('nearEnd')
+    }
+  },
+)
 
 // Start countdown when credits are reached (only if there's a next episode)
 watch(creditsReached, v => {
@@ -1577,7 +1621,9 @@ const PILL = computed(() => `inline-flex items-center gap-1 rounded-full border 
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
 
 /** Server playback only — the failover list and the resolution shortcuts. */
-const hasCandidates = computed(() => !!props.candidates?.servers?.length)
+// More than one: the list holds the copy that is playing too, so a single
+// entry is that copy and nowhere else to go.
+const hasCandidates = computed(() => (props.candidates?.servers?.length ?? 0) > 1)
 
 function shortQuality(text: string) {
   const m = text.toLowerCase().match(/\b(2160p|1440p|1080p|720p|480p|4k|2k)\b/)
@@ -1862,7 +1908,13 @@ function viewport(dpr: number) {
  * would never be found by a search scoped to the player — leaving mpv painting
  * over the only label a bare icon button has.
  */
-const CUT = '[data-cut], .v-tooltip > .v-overlay__content'
+// `[data-cut-children]` cuts each child of a row rather than the row — the top
+// strip, which holds a button or two and would otherwise black out its width.
+// The bottom bar is cut whole instead: cut button by button, every control
+// sat in its own black box with the picture showing between them, which read
+// as a broken bar over anything bright. A deliberate solid bar that slides
+// away reads as a bar.
+const CUT = '[data-cut], [data-cut-children] > :not([data-cut-skip]), .v-tooltip > .v-overlay__content'
 
 /** Every overlay's rectangle, clipped to the video box and in physical pixels. */
 function cutouts(box: DOMRect, dpr: number): Rect[] {
@@ -2292,6 +2344,7 @@ async function startPlayer() {
     voLostAt = 0
     noFrameSince = 0
     subDelay.value = 0 // a fresh mpv starts at zero
+    audioDelay.value = 0
     subSpeed.value = 1
     syncNote.value = ''
     guess.value = null
@@ -3524,6 +3577,12 @@ async function readHead() {
     return
   }
 
+  // Nothing at all, and somewhere else to go: see `ENGINE_DEAD_START_MS`.
+  if (hasCandidates.value && pct === 0 && since > ENGINE_DEAD_START_MS) {
+    streamDied()
+    return
+  }
+
   // Slow is not a failure; stopped is — and how long "stopped" takes to call
   // depends on whether there is another copy to call it in favour of.
   const grace = hasCandidates.value ? ENGINE_FAILOVER_GRACE_MS : ENGINE_START_GRACE_MS
@@ -3536,6 +3595,42 @@ async function readHead() {
   if (!streamDied())
     errorMsg.value = $t('This release stopped downloading before it could start — it may have no seeders left. Try another one.')
 }
+
+// ---------------------------------------------------------------------------
+// Stream only: download as you watch. Every few seconds, how much gap-free film
+// is ahead of the playhead decides how fast the engine may fetch — flat out
+// below two minutes, a trickle past four. See `streamCap` in utils/torrents.
+// ---------------------------------------------------------------------------
+const downloadsStore = useDownloadsStore()
+let bufferMap: { src: string, map: PieceMap | null } | null = null
+
+async function holdBuffer() {
+  const parts = streamParts(props.src)
+  if (!props.streamOnly || !parts || !started.value || !duration.value) {
+    downloadsStore.streamLimit = null
+    return
+  }
+  if (bufferMap?.src !== props.src)
+    bufferMap = { src: props.src, map: await pieceMap(parts.id, parts.index) }
+  const map = bufferMap.map
+  const haves = map ? await torrentHaves(parts.id) : null
+  if (!map || !haves)
+    return
+  const ahead = contiguousAhead(map, haves, position.value / duration.value) * duration.value
+  downloadsStore.streamLimit = streamCap(ahead, map.length / duration.value)
+}
+
+const { pause: stopBuffer, resume: startBuffer } = useIntervalFn(holdBuffer, 3000, { immediate: false })
+watch(() => !!props.streamOnly && started.value, on => {
+  if (on) {
+    startBuffer()
+  }
+  else {
+    stopBuffer()
+    downloadsStore.streamLimit = null
+  }
+}, { immediate: true })
+onBeforeUnmount(() => (downloadsStore.streamLimit = null))
 
 // `readHead` is a hoisted function declaration, so wiring the interval up beside
 // the computed it feeds is safe.
@@ -3553,8 +3648,15 @@ function isTypingTarget(t: HTMLElement | null) {
   return t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.tagName === 'INPUT'
 }
 
+/**
+ * mpv takes the volume past 100 by amplifying (its own `volume-max` is 130),
+ * which is what a quiet encode on laptop speakers needs. The webview's media
+ * element stops at 100, so that is its ceiling.
+ */
+const VOLUME_MAX = native ? 130 : 100
+
 function nudgeVolume(delta: number) {
-  setVolume(Math.max(0, Math.min(100, volume.value + delta)))
+  setVolume(Math.max(0, Math.min(VOLUME_MAX, volume.value + delta)))
   osd(`Volume ${volume.value}%`)
 }
 
@@ -3581,6 +3683,8 @@ const KEYS: Record<string, () => void> = {
   's': () => openMenu('subs'),
   'z': () => nudgeDelay(-0.1),
   'Z': () => nudgeDelay(0.1),
+  'x': () => nudgeAudioDelay(-0.1),
+  'X': () => nudgeAudioDelay(0.1),
   '[': () => setSpeed(speedStep(-1)),
   ']': () => setSpeed(speedStep(1)),
   'Home': () => seekTo(0),
@@ -3953,7 +4057,13 @@ function fmtDuration(s: number) {
 /** Full logo URL from the TMDB logo path, or null. */
 const logoSrc = computed(() => logoUrl(props.logo ?? null, 'w500'))
 
-const remaining = computed(() => duration.value ? `-${fmt((duration.value - position.value) / speed.value)}` : '')
+/** When this finishes if it is resumed now, at the speed it is playing at — the pause screen's "Ends at". */
+const endsAt = computed(() => {
+  if (!duration.value)
+    return ''
+  const at = new Date(Date.now() + ((duration.value - position.value) / (speed.value || 1)) * 1000)
+  return at.toLocaleTimeString(settings.locale || undefined, { hour: 'numeric', minute: '2-digit' })
+})
 </script>
 
 <template>
@@ -4091,7 +4201,7 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
     >
       <header
         v-show="ui && !isLive"
-        data-cut
+        data-cut-children
         class="absolute inset-x-0 top-0 z-30 h-14 flex items-center px-3 bg-transparent"
         @pointerenter="hovering = true"
         @pointerleave="onChildPointerLeave"
@@ -4283,8 +4393,16 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
                 <span>S{{ props.season }}E{{ props.episode }}</span>
               </template>
             </div>
-            <div v-if="props.media?.overview" class="line-clamp-3 text-body-large leading-relaxed text-white/50">
-              {{ props.media.overview }}
+            <div v-if="endsAt" class="text-title-small text-white/60">
+              {{ $t('Ends at {time}', { time: endsAt }) }}
+            </div>
+            <!-- A series pauses on the episode, not the show: its name, and its
+                 own synopsis rather than the one for the whole run. -->
+            <div v-if="props.episodeTitle" class="text-title-large font-medium text-white/90">
+              {{ props.episodeTitle }}
+            </div>
+            <div v-if="props.episodeOverview || props.media?.overview" class="line-clamp-3 text-body-large leading-relaxed text-white/50">
+              {{ props.episodeOverview || props.media?.overview }}
             </div>
           </div>
         </div>
@@ -4352,6 +4470,20 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
             <p v-if="!audioTracks.length && !audioLangs.length" :class="NOTE">
               {{ $t('This file has one audio track.') }}
             </p>
+            <template v-if="native">
+              <p :class="MENU_GROUP">
+                {{ $t('Audio delay') }}
+              </p>
+              <div class="flex items-center justify-between gap-2 px-3 py-1">
+                <button v-tooltip:top="$t('Sound earlier (x)')" class="!h-7 !min-w-7" :class="ICO" @click="nudgeAudioDelay(-0.1)">
+                  <v-icon :icon="mdiMinus" size="18" />
+                </button>
+                <span class="w-16 text-center text-label-large tabular-nums">{{ audioDelayText }}</span>
+                <button v-tooltip:top="$t('Sound later (X)')" class="!h-7 !min-w-7" :class="ICO" @click="nudgeAudioDelay(0.1)">
+                  <v-icon :icon="mdiPlus" size="18" />
+                </button>
+              </div>
+            </template>
           </template>
 
           <!-- The servers this title was found on, best first. Picking one is
@@ -4733,14 +4865,18 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
            black control sheet halfway down the Android player. -->
       <footer
         v-show="ui && !isLive"
-        data-cut
-        class="absolute inset-x-0 bottom-0 z-30 border-t border-transparent px-5 pb-3 pt-5.5"
-        :class="touch && 'min-h-19 px-3 pb-2 pt-4'"
+        :data-cut="overlay ? '' : undefined"
+        class="absolute inset-x-0 bottom-0 z-30 border-t px-5 pb-3 pt-5.5"
+        :class="[
+          touch && 'min-h-19 px-3 pb-2 pt-4',
+          overlay ? 'border-white/8 bg-[#0f1117]' : 'border-transparent bg-gradient-to-t from-black/85 via-black/45 to-transparent',
+        ]"
         @pointerenter="hovering = true"
         @pointerleave="onChildPointerLeave"
       >
         <player-slider
           v-if="!isLive"
+          data-cut
           :model-value="position"
           :max="duration || 1"
           :buffered="cacheEnd"
@@ -4776,15 +4912,6 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
             <button v-tooltip:top="$t('Forward 10s (l)')" :class="ICO" :disabled="!started || isLive" @click="seekBy(10)">
               <v-icon :icon="mdiFastForward10" size="22" />
             </button>
-            <button
-              v-if="paused && !isLive"
-              v-tooltip:top="$t('Frame forward (.)')"
-              :class="ICO"
-              :disabled="!started"
-              @click="frameStep"
-            >
-              <v-icon :icon="mdiStepForward" size="22" />
-            </button>
           </template>
 
           <!-- The slider only unrolls while the group is hovered, so the bar
@@ -4797,7 +4924,7 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
             <player-slider
               class="w-0 flex-none overflow-hidden opacity-0 transition-[width,margin,opacity] duration-160 group-hover/volume:mx-1.5 group-hover/volume:w-19 group-hover/volume:opacity-100 group-focus-within/volume:mx-1.5 group-focus-within/volume:w-19 group-focus-within/volume:opacity-100"
               :model-value="muted ? 0 : volume"
-              :max="100"
+              :max="VOLUME_MAX"
               :disabled="!started"
               @update:model-value="setVolume"
               @scrub="volumeHeld = $event"
@@ -4808,7 +4935,7 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
 
           <div class="flex-1" />
 
-          <span v-if="remaining" class="opacity-55" :class="TIME">{{ remaining }}</span>
+          <span v-if="endsAt && !touch" class="opacity-60" :class="TIME">{{ $t('Ends {time}', { time: endsAt }) }}</span>
 
           <span class="mx-1.5 h-5 w-px bg-white/15" aria-hidden="true" />
 
@@ -4875,12 +5002,13 @@ const remaining = computed(() => duration.value ? `-${fmt((duration.value - posi
             <v-icon :icon="mdiPictureInPictureBottomRight" size="22" />
           </button>
           <button
-            v-tooltip:top="aspectLabel"
-            :class="[ICO, aspectRatio !== 'contain' && '!text-primary !opacity-100']"
+            v-tooltip:top="$t('Picture: {mode}', { mode: aspectLabel })"
+            :class="[aspectRatio === 'contain' ? ICO : PILL, aspectRatio !== 'contain' && '!text-primary !opacity-100']"
             :disabled="!started"
             @click="cycleAspectRatio"
           >
-            <v-icon :icon="mdiCropFree" size="22" />
+            <v-icon :icon="mdiAspectRatio" size="22" />
+            <span v-if="aspectRatio !== 'contain'" class="text-label-large">{{ aspectLabel }}</span>
           </button>
           <button
             v-tooltip:top="windowFullscreen ? $t('Exit fullscreen (f)') : $t('Fullscreen (f)')"

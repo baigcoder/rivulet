@@ -1,4 +1,5 @@
 import type { SubtitleStyle } from '~/utils/subtitles'
+import type { SourceReport } from '~/utils/torrents'
 import {
   mdiAccountCircleOutline,
   mdiCastConnected,
@@ -13,6 +14,28 @@ import {
 } from '@mdi/js'
 import { key } from '~/brand'
 import { DEFAULT_SOURCE } from '~/theme/presets'
+
+/** What the app knows about one source — see `sourceMeta`. */
+export interface SourceMeta {
+  /** The addon's own name and logo, from its manifest. */
+  name?: string
+  logo?: string
+  /** Switched off: kept in the list, never asked. */
+  disabled?: boolean
+  /** What it has answered with so far: magnets, links, or both. */
+  kind?: 'torrent' | 'direct' | 'both'
+  /** The last search: how long it took, how much came back, and any error. */
+  ms?: number
+  count?: number
+  error?: string
+  /** When that was, epoch ms. */
+  at?: number
+  /** What its manifest says its streams cover — see `handles` in utils/torrents. */
+  types?: string[]
+  idPrefixes?: string[]
+  /** Sitting out after failing in a row, until then (epoch ms). */
+  pausedUntil?: number
+}
 
 export type SectionKey = 'appearance' | 'language' | 'sources' | 'subtitles' | 'network' | 'storage' | 'account' | 'about' | 'parental' | 'premium-tv'
 
@@ -158,6 +181,61 @@ export const useSettingsStore = defineStore('settings', () => {
   const sources = useLocalStorage<string[]>(key('sources'), [])
 
   /**
+   * What the app knows about each source, keyed by its URL: the name and logo
+   * from its manifest, whether the user switched it off, and how its last
+   * search went. Kept beside `sources` rather than in it so that list stays
+   * the plain ordered array backups, deep links and the search already read.
+   */
+  const sourceMeta = useLocalStorage<Record<string, SourceMeta>>(key('sourceMeta'), {})
+
+  /** The sources a search asks, in preference order: every one not switched off. */
+  const activeSources = computed(() => sources.value.filter(url => !sourceMeta.value[url]?.disabled))
+
+  function patchSource(url: string, patch: Partial<SourceMeta>) {
+    sourceMeta.value = { ...sourceMeta.value, [url]: { ...sourceMeta.value[url], ...patch } }
+  }
+
+  /**
+   * One search's worth of news about a source. Its kind is read from what it
+   * actually answers with — a magnet is a torrent, a URL is a link — since a
+   * manifest says nothing about which it hands out.
+   */
+  function noteSourceReport(r: SourceReport) {
+    if (!sources.value.includes(r.base))
+      return
+    const was = sourceMeta.value[r.base]
+    const kind = r.magnets && r.links ? 'both' : r.links ? 'direct' : r.magnets ? 'torrent' : was?.kind
+    patchSource(r.base, { ms: r.ms, count: r.count, error: r.error ?? '', at: Date.now(), kind, pausedUntil: r.pausedUntil ?? 0 })
+  }
+
+  /**
+   * Free sources only: links (debrid unlocks, hosted files) are dropped from
+   * every answer and a paid-account source is refused when added. Play then
+   * always goes through the torrent engine — see `setTorrentOnly`.
+   */
+  const torrentOnly = useLocalStorage(key('torrentOnly'), false)
+
+  /**
+   * Can Play start instantly — is any source switched on a cloud one, a debrid
+   * service or anything else that answers with links rather than torrents?
+   * Known from what a source has answered with, or guessed from its address
+   * and name before it has answered at all. *Torrents only* drops every link,
+   * so with it on nothing is instant.
+   */
+  const hasInstantSource = computed(() => !torrentOnly.value && activeSources.value.some(url => {
+    const m = sourceMeta.value[url]
+    return m?.kind === 'direct' || m?.kind === 'both' || (!m?.kind && isDebridSource(url, m))
+  }))
+
+  /**
+   * Stream only with no instant source: ask, at Play, whether to download
+   * while watching or stream from a temporary cache. False once the user has
+   * ticked "Always do this" on the streaming choice; the download choice
+   * switches *How Play works* instead, so it needs no flag of its own.
+   */
+  const askBeforeTorrentStream = useLocalStorage(key('askBeforeTorrentStream'), true)
+
+  /**
    * How the Play button starts a title.
    *
    * On: Play picks a magnet and the torrent engine streams it while the rest
@@ -246,5 +324,5 @@ export const useSettingsStore = defineStore('settings', () => {
     && subscriptionExpiresAt.value > Date.now(),
   )
 
-  return { locale, theme, source, themeFromArt, colourFromPicture, customCss, uiScale, reduceEffects, motion, effectiveMotion, sources, allowTorrents, keepDownloading, watchRegion, tmdbKey, downLimit, upLimit, wifiOnly, downloadDir, subs, resetSubs, notifyComplete, notifyError, notifyUpdates, parentalEnabled, parentalMaxRating, parentalPin, hideAdultChannels, subscriptionTier, subscriptionExpiresAt, isPremium }
+  return { locale, theme, source, themeFromArt, colourFromPicture, customCss, uiScale, reduceEffects, motion, effectiveMotion, sources, sourceMeta, activeSources, patchSource, noteSourceReport, torrentOnly, hasInstantSource, askBeforeTorrentStream, allowTorrents, keepDownloading, watchRegion, tmdbKey, downLimit, upLimit, wifiOnly, downloadDir, subs, resetSubs, notifyComplete, notifyError, notifyUpdates, parentalEnabled, parentalMaxRating, parentalPin, hideAdultChannels, subscriptionTier, subscriptionExpiresAt, isPremium }
 })

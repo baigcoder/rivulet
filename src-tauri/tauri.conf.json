@@ -88,7 +88,8 @@
 			}
 		],
 		"security": {
-			"csp": null
+			"csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; media-src 'self' data: blob: https: http:; connect-src 'self' ipc: http://ipc.localhost https: http:; font-src 'self' data:; worker-src 'self' blob:; frame-src https://www.youtube-nocookie.com https://www.youtube.com http://127.0.0.1:3031; object-src 'none'; base-uri 'self'; form-action 'none'",
+			"dangerousDisableAssetCspModification": ["style-src"]
 		}
 	}
 }

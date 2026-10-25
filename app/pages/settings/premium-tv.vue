@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import {
-  mdiCastConnected,
+  mdiCheck,
   mdiClockOutline,
+  mdiInfinity,
   mdiLogout,
   mdiShieldCheckOutline,
   mdiShieldOffOutline,
+  mdiTelevisionPlay,
 } from '@mdi/js'
 import { premiumApi, pushEntitlement } from '~/utils/premiumTv'
 
@@ -101,6 +103,24 @@ function deactivate() {
   return activate('free', 0)
 }
 
+/**
+ * Where the user is in getting Premium TV going, as three steps. The page used
+ * to be two unrelated sections, and nothing said that the second one needed
+ * the first — or that, once both were done, the channels were somewhere else.
+ */
+const steps = computed(() => [
+  { title: $t('Turn on Premium TV'), done: settings.isPremium },
+  { title: $t('Connect your provider'), done: settings.isPremium && premium.connected },
+  { title: $t('Watch'), done: false },
+])
+const currentStep = computed(() => steps.value.findIndex(s => !s.done))
+
+/** Whole days left on the subscription, for the bar under it. */
+const daysLeft = computed(() => settings.subscriptionExpiresAt
+  ? Math.max(0, Math.ceil((settings.subscriptionExpiresAt - Date.now()) / DAY_MS))
+  : 0)
+const unlimited = computed(() => daysLeft.value > 365 * 10)
+
 function formatExpiry(ms: number): string {
   if (!ms)
     return ''
@@ -114,6 +134,40 @@ function formatExpiry(ms: number): string {
 
 <template>
   <div class="flex flex-col gap-8">
+    <!-- Where you are: the two sections below depend on each other, and the
+         end of it — the channels — is on another page. -->
+    <ol class="m-0 grid list-none gap-3 p-0 sm:grid-cols-3" :aria-label="$t('Getting started')">
+      <li
+        v-for="(step, i) in steps"
+        :key="step.title"
+        class="flex items-center gap-3 rounded-2xl border px-4 py-3"
+        :class="step.done
+          ? 'border-emerald-400/30 bg-emerald-400/8'
+          : i === currentStep ? 'border-primary/50 bg-primary/10' : 'border-white/8 bg-surface-container/40 opacity-60'"
+        :aria-current="i === currentStep ? 'step' : undefined"
+      >
+        <span
+          class="grid size-8 shrink-0 place-items-center rounded-full text-label-large font-bold"
+          :class="step.done ? 'bg-emerald-400 text-black' : i === currentStep ? 'bg-primary text-on-primary' : 'bg-white/10'"
+        >
+          <v-icon v-if="step.done" :icon="mdiCheck" size="18" />
+          <template v-else>{{ i + 1 }}</template>
+        </span>
+        <span class="min-w-0 truncate text-title-small font-semibold">{{ step.title }}</span>
+        <v-btn
+          v-if="i === 2 && currentStep === 2"
+          size="small"
+          color="primary"
+          variant="flat"
+          class="ms-auto"
+          :prepend-icon="mdiTelevisionPlay"
+          :to="localePath('/live-tv/premium')"
+        >
+          {{ $t('Open') }}
+        </v-btn>
+      </li>
+    </ol>
+
     <!-- Subscription status -->
     <settings-section
       :title="$t('Subscription')"
@@ -132,9 +186,17 @@ function formatExpiry(ms: number): string {
           <v-icon :icon="mdiShieldCheckOutline" size="24" color="success" />
           <span class="text-title-medium font-bold text-success">{{ $t('Subscription active') }}</span>
         </div>
-        <p v-if="settings.subscriptionExpiresAt" class="text-body-small opacity-70">
-          {{ $t('Expires {date}', { date: formatExpiry(settings.subscriptionExpiresAt) }) }}
+        <p v-if="unlimited" class="flex items-center gap-1.5 text-body-medium opacity-80">
+          <v-icon :icon="mdiInfinity" size="18" /> {{ $t('Unlimited — no expiry') }}
         </p>
+        <template v-else-if="settings.subscriptionExpiresAt">
+          <p class="text-body-medium opacity-80">
+            {{ $t('{days} days left · expires {date}', { days: daysLeft, date: formatExpiry(settings.subscriptionExpiresAt) }) }}
+          </p>
+          <div class="h-1.5 w-full max-w-sm overflow-hidden rounded-full bg-white/10">
+            <div class="h-full rounded-full bg-success" :style="{ width: `${Math.min(100, (daysLeft / TRIAL_DAYS) * 100)}%` }" />
+          </div>
+        </template>
         <p v-else class="text-body-small opacity-70">
           {{ $t('No expiry date set.') }}
         </p>
@@ -150,39 +212,31 @@ function formatExpiry(ms: number): string {
         </v-btn>
       </v-card>
 
-      <v-card
-        v-else
-        rounded="xl"
-        class="panel flex flex-col items-start gap-3 p-6"
-      >
-        <div class="flex items-center gap-3">
-          <v-icon :icon="mdiCastConnected" size="24" class="opacity-40" />
-          <span class="text-title-medium">{{ $t('No active subscription') }}</span>
-        </div>
-        <p class="text-body-medium max-w-prose opacity-70">
-          {{ $t('Activate a subscription to access Premium TV features.') }}
-        </p>
-        <div class="flex flex-wrap gap-2">
-          <v-btn
-            variant="tonal"
-            color="primary"
-            :prepend-icon="mdiClockOutline"
-            :loading="activationBusy"
-            @click="activateTrial"
-          >
-            {{ $t('Login via IPTV') }}
-          </v-btn>
-          <v-btn
-            variant="tonal"
-            color="secondary"
-            :prepend-icon="mdiShieldCheckOutline"
-            :loading="activationBusy"
-            @click="activateUnlimited"
-          >
-            {{ $t('Activate unlimited') }}
-          </v-btn>
-        </div>
-      </v-card>
+      <!-- Two choices, each saying what it is. The first button used to read
+           "Login via IPTV" and started a thirty-day trial — nothing was logged
+           into, and the IPTV login is the section below. -->
+      <div v-else class="grid gap-3 sm:grid-cols-2">
+        <button
+          type="button"
+          class="flex flex-col items-start gap-2 rounded-2xl border border-white/10 bg-surface-container/60 p-5 text-start outline-none transition-colors hover:border-primary/60 focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
+          :disabled="activationBusy"
+          @click="activateTrial"
+        >
+          <v-icon :icon="mdiClockOutline" size="28" class="text-primary" />
+          <span class="text-title-medium font-bold">{{ $t('Start a 30-day trial') }}</span>
+          <span class="text-body-medium opacity-70">{{ $t('Everything in Premium TV for thirty days. Turn it off any time.') }}</span>
+        </button>
+        <button
+          type="button"
+          class="flex flex-col items-start gap-2 rounded-2xl border border-white/10 bg-surface-container/60 p-5 text-start outline-none transition-colors hover:border-primary/60 focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
+          :disabled="activationBusy"
+          @click="activateUnlimited"
+        >
+          <v-icon :icon="mdiInfinity" size="28" class="text-primary" />
+          <span class="text-title-medium font-bold">{{ $t('Activate unlimited') }}</span>
+          <span class="text-body-medium opacity-70">{{ $t('No expiry date. For your own provider, on this device.') }}</span>
+        </button>
+      </div>
 
       <v-alert
         v-if="activationMessage"
@@ -203,7 +257,7 @@ function formatExpiry(ms: number): string {
     <!-- The provider itself: connected, or the one box that connects it -->
     <settings-section
       :title="$t('Provider')"
-      :hint="$t('Paste the link your provider gave you. Only live channels are imported.')"
+      :hint="$t('Paste the link your provider gave you, or enter its server details. Xtream accounts bring movies and series too.')"
     >
       <div class="flex flex-col gap-4">
         <premium-tv-premium-account-card

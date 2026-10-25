@@ -31,6 +31,14 @@ const emit = defineEmits<{
 const scrollRef = ref<HTMLElement>()
 const { width: gridWidth } = useElementSize(scrollRef)
 
+/**
+ * Whatever the page puts above the channels (its recent and favourite rows)
+ * scrolls away with them, so the virtualizer has to know the rows start
+ * below it — `scrollMargin` is that offset, the same as the season page.
+ */
+const headerRef = ref<HTMLElement>()
+const { height: headerHeight } = useElementSize(headerRef)
+
 const cols = computed(() => props.layout === 'list' ? 1 : liveGridColumnCount(gridWidth.value, props.density ?? 'comfortable'))
 
 const rowStyle = computed(() => ({
@@ -141,6 +149,7 @@ const virtualizer = useVirtualizer(computed(() => ({
   // initial zero rows before the country query returned.
   count: rows.value.length,
   getScrollElement: () => scrollRef.value ?? null,
+  scrollMargin: headerHeight.value,
   estimateSize: () => rowEstimate.value,
   overscan: 2,
 })))
@@ -222,8 +231,11 @@ watch(
     class="h-full overflow-y-auto"
     data-dpad-start
   >
+    <div ref="headerRef">
+      <slot name="header" />
+    </div>
     <div
-      :style="{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }"
+      :style="{ height: `${virtualizer.getTotalSize() - headerHeight}px`, position: 'relative' }"
     >
       <div
         v-for="virtualRow in virtualizer.getVirtualItems()"
@@ -233,7 +245,7 @@ watch(
           top: 0,
           left: 0,
           right: 0,
-          transform: `translateY(${virtualRow.start}px)`,
+          transform: `translateY(${virtualRow.start - headerHeight}px)`,
         }"
       >
         <div v-if="layout === 'list'" class="pb-1">

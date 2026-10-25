@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { LibraryKind, LibrarySort } from '~/utils/library'
 import type { Media } from '~/utils/tmdb'
-import { mdiBookmarkPlus, mdiCheckAll, mdiClose, mdiHeartPlus, mdiSelect, mdiSelectAll, mdiSortVariant } from '@mdi/js'
+import { mdiBookmarkPlus, mdiCheckAll, mdiClose, mdiHeartPlus, mdiMagnify, mdiMovieOpenOutline, mdiSelect, mdiSelectAll, mdiSortVariant, mdiTelevisionClassic } from '@mdi/js'
 
 /**
  * Favourites, the Watchlist and History are the same page three times: a list
@@ -18,6 +18,10 @@ const props = defineProps<{
   recent: string
   /** Allow batch removal from this list. */
   removable?: boolean
+  /** What the empty list says it is for, and how it fills. */
+  emptyIcon: string
+  emptyTitle: string
+  emptyHint: string
 }>()
 
 const { lgAndUp } = useDisplay()
@@ -171,6 +175,7 @@ const selectionCount = computed(() => selected.value.size)
             :value="option.value"
             :text="option.title"
             size="small"
+            variant="outlined"
           />
         </v-chip-group>
 
@@ -263,7 +268,20 @@ const selectionCount = computed(() => selected.value.size)
         :selecting="selecting"
         :selected="selected"
         @toggle-select="toggleSelect"
-      />
+      >
+        <template #empty>
+          <!-- Filtered to nothing is a different answer from empty. -->
+          <empty-state v-if="props.items.length" :icon="mdiMagnify" :title="$t('Nothing matches this filter.')" />
+          <empty-state v-else :icon="emptyIcon" :title="emptyTitle" :hint="emptyHint">
+            <v-btn :prepend-icon="mdiMovieOpenOutline" variant="tonal" :to="localePath('/movies')">
+              {{ $t('Browse films') }}
+            </v-btn>
+            <v-btn :prepend-icon="mdiTelevisionClassic" variant="tonal" :to="localePath('/tv')">
+              {{ $t('Browse shows') }}
+            </v-btn>
+          </empty-state>
+        </template>
+      </media-layout>
     </div>
 
     <!-- Batch action toolbar -->

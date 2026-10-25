@@ -121,7 +121,7 @@ function onLogoLoad(e: Event): void {
     @click="emit('play', channel)"
   >
     <div
-      class="relative aspect-video w-full overflow-hidden rounded-xl bg-zinc-950 ring-1 ring-white/10 transition-shadow group-focus-visible:ring-2 group-focus-visible:ring-inset group-focus-visible:ring-primary"
+      class="relative aspect-video w-full overflow-hidden rounded-xl bg-gradient-to-br from-zinc-800 to-zinc-950 ring-1 ring-white/10 transition-shadow group-focus-visible:ring-2 group-focus-visible:ring-inset group-focus-visible:ring-primary"
       :class="dead ? 'opacity-50' : ''"
     >
       <div
@@ -134,7 +134,7 @@ function onLogoLoad(e: Event): void {
         alt=""
         loading="lazy"
         decoding="async"
-        class="size-full object-contain p-3 transition-opacity duration-300"
+        class="absolute inset-0 m-auto max-h-[58%] max-w-[70%] object-contain transition-opacity duration-300"
         :class="imgLoaded ? 'opacity-100' : 'opacity-0'"
         @load="onLogoLoad"
         @error="imgError = true"
@@ -158,9 +158,11 @@ function onLogoLoad(e: Event): void {
           class="flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
           :class="dead ? 'bg-zinc-800/90 text-white/75' : 'bg-red-600 text-white'"
         >
+          <!-- Still, not pulsing: a grid mounts hundreds of these, and on a TV
+               the animated area is what costs the frame (check:perf). -->
           <span
             v-if="!dead"
-            class="size-1.5 rounded-full bg-white animate-pulse"
+            class="size-1.5 rounded-full bg-white"
           />
           {{ dead ? $t('Offline') : $t('LIVE') }}
         </span>

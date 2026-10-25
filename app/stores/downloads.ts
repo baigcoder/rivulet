@@ -1,6 +1,7 @@
 import type { DiskSpace, EngineTorrent } from '~/utils/torrents'
 import { mdiAlertCircleOutline, mdiCheckCircleOutline, mdiFormatListBulleted, mdiPauseCircleOutline, mdiTrayArrowDown } from '@mdi/js'
 import { invoke } from '@tauri-apps/api/core'
+import { appCacheDir, join } from '@tauri-apps/api/path'
 import { sendNotification } from '@tauri-apps/plugin-notification'
 import { key } from '~/brand'
 
@@ -50,6 +51,16 @@ export const useDownloadsStore = defineStore('downloads', () => {
   /** Rate ceilings and the storage folder are the user's, not ours. */
   const settings = useSettingsStore()
   const torrents = ref<EngineTorrent[]>([])
+  /**
+   * Where a download with no folder of its own actually lands — the setting
+   * when there is one, else the default Rust works out. Shown on the Downloads
+   * page and opened by its folder button, so "Open folder" names a real place.
+   */
+  const resolvedDir = ref('')
+  /** Connected peers across every torrent — the usual reason a fast line looks like 3 MiB/s. */
+  const peers = computed(() =>
+    torrents.value.reduce((n, t) => n + (t.stats?.live?.snapshot.peer_stats.live ?? 0), 0),
+  )
   const offline = ref(false)
   const loaded = ref(false)
   let lastFail = 0
@@ -137,11 +148,91 @@ export const useDownloadsStore = defineStore('downloads', () => {
     }
   }
 
+  /**
+   * Hashes of torrents that stream-only mode added and is due to delete — kept
+   * in storage so a stream the app was closed in the middle of is still
+   * cleared up on the next launch rather than left on the disk for good.
+   */
+  const ephemeral = useLocalStorage<string[]>(key('ephemeral'), [])
+  let sweptEphemeral = false
+
+  /**
+   * Per show, the torrent its last episode played from — for `startTorrent`'s
+   * `pack`. Session-only: a pack worth reusing is one still in the engine.
+   */
+  const lastPack = new Map<string, { hash: string, bingeGroup?: string }>()
+
+  /**
+   * How long a stream-only copy outlives its player. Long enough for the next
+   * episode to start from the same pack — the autoplay countdown and a click
+   * on Next both land well inside it — and short enough that nothing is kept.
+   */
+  const EPHEMERAL_GRACE_MS = 2 * 60_000
+
+  /**
+   * Stream only's hold on the download while the buffer is full — see
+   * `streamCap`. Set by the player as it plays, null otherwise; the tighter of
+   * this and the user's own limit is what the engine is given.
+   */
+  const streamLimit = ref<number | null>(null)
+
+  /** The reader holding the next episode's opening first in line — see `preloadNext`. */
+  let preloading: { abort: () => void } | null = null
+
+  /**
+   * The credits are rolling: get the next episode ready. From the same pack
+   * when it is in it — its opening fetched now, so the next Play is a read from
+   * the disk — and otherwise by asking the sources early, so that Play at least
+   * skips the search. Released by the next `start`, or after a minute and a half.
+   */
+  async function preloadNext(key: string, next: { season: number, episode: number }, imdbId?: string | null) {
+    const show = key ? parseKey(key) : null
+    if (!show?.season)
+      return
+    preloading?.abort()
+    preloading = null
+    const pack = lastPack.get(show.title)
+    const primed = pack ? await preloadEpisode(pack.hash, next.season, next.episode).catch(() => null) : null
+    if (primed) {
+      preloading = primed
+      setTimeout(() => {
+        if (preloading === primed) {
+          primed.abort()
+          preloading = null
+        }
+      }, 90_000)
+      return
+    }
+    if (imdbId)
+      searchAhead(imdbId, next.season, next.episode)
+  }
+  const pendingDelete = new Map<string, ReturnType<typeof setTimeout>>()
+
+  /** Delete what a stream-only playback left behind, unless it is playing now. */
+  async function sweepEphemeral() {
+    const due = new Set(ephemeral.value.map(h => h.toLowerCase()))
+    if (!due.size)
+      return
+    for (const t of torrents.value) {
+      if (due.has(t.info_hash.toLowerCase()) && t.id !== focused.value) {
+        await torrentAction(t.id, 'delete').catch(() => {})
+        due.delete(t.info_hash.toLowerCase())
+      }
+    }
+    // What is left is the one playing now; anything the engine no longer
+    // holds has nothing left to delete.
+    ephemeral.value = [...due].filter(h => torrents.value.some(t => t.info_hash.toLowerCase() === h))
+  }
+
   async function refresh() {
     try {
       torrents.value = await listTorrents()
       offline.value = false
       prune()
+      if (!sweptEphemeral) {
+        sweptEphemeral = true
+        await sweepEphemeral()
+      }
     }
     catch {
       offline.value = true
@@ -162,11 +253,28 @@ export const useDownloadsStore = defineStore('downloads', () => {
     // Both ceilings are on the same quantity — the size of the file we'd fetch —
     // so the tighter one wins and `pickBest` needs to know nothing about drives.
     const maxBytes = Math.min(budget.value, fileLimit.value)
-    const started = await startTorrent({ maxBytes, cached: cachedFor(key), ...options })
+    // The torrent this show's last episode came from: the next one may be in it.
+    const show = key ? parseKey(key) : null
+    const pack = show?.season ? lastPack.get(show.title) ?? null : null
+    // The preload's work is done once its episode starts; the player reads now.
+    preloading?.abort()
+    preloading = null
+    const started = await startTorrent({ maxBytes, cached: cachedFor(key), pack, ...options })
+    if (show?.season && started.hash)
+      lastPack.set(show.title, { hash: started.hash, bingeGroup: started.torrent?.bingeGroup ?? pack?.bingeGroup })
+    // Back inside the grace a stream-only copy gets on the way out: keep it.
+    const waiting = started.hash && pendingDelete.get(started.hash.toLowerCase())
+    if (waiting) {
+      clearTimeout(waiting)
+      pendingDelete.delete(started.hash.toLowerCase())
+    }
     // A direct link leaves nothing on the disk to come back to, so there is no
     // offline copy to file — and filing an empty hash would shadow a real one.
-    if (key && started.hash)
+    // Neither does a stream-only torrent: it is deleted when the player closes.
+    if (key && started.hash && !started.ephemeral && !ephemeral.value.includes(started.hash.toLowerCase()))
       cached.value[key] = { hash: started.hash, file: started.index }
+    if (started.ephemeral && started.hash)
+      ephemeral.value = [...new Set([...ephemeral.value, started.hash.toLowerCase()])]
     // The add can land paused (session restore, a metered poll). Download is
     // the ask to pull bytes, so start it and refresh so the list is not a lie.
     if (started.id >= 0 && started.hash) {
@@ -285,6 +393,7 @@ export const useDownloadsStore = defineStore('downloads', () => {
       if (dormant())
         return
       disk.value = await invoke<DiskSpace>('disk_space', { path: settings.downloadDir || null }).catch(() => null)
+      resolvedDir.value = await invoke<string>('download_dir', { path: settings.downloadDir || null }).catch(() => '')
       // Rides along with the free-space poll: the cap belongs to the drive, so
       // it has to follow the storage folder from one to the other exactly as
       // the budget does. Only Android reports one.
@@ -401,6 +510,7 @@ export const useDownloadsStore = defineStore('downloads', () => {
    */
   async function release() {
     generation++
+    streamLimit.value = null
     const id = focused.value
     const restore = paused
     focused.value = null
@@ -412,8 +522,25 @@ export const useDownloadsStore = defineStore('downloads', () => {
     // the player closes — as a background download from here on, so Wi-Fi only
     // still holds it on mobile data. Off, it waits for the next Play, which
     // resumes it from the pieces already on disk.
-    if (!settings.keepDownloading)
+    const own = torrents.value.find(t => t.id === id)
+    if (own && ephemeral.value.includes(own.info_hash.toLowerCase())) {
+      // Stream-only: nothing is kept — but paused for a moment first, in case
+      // the next episode is in this same pack (see `EPHEMERAL_GRACE_MS`). A
+      // restart before then is cleared up by `sweepEphemeral` on the next launch.
+      const hash = own.info_hash.toLowerCase()
+      await torrentAction(id, 'pause').catch(() => {})
+      clearTimeout(pendingDelete.get(hash))
+      pendingDelete.set(hash, setTimeout(() => {
+        pendingDelete.delete(hash)
+        if (torrents.value.find(t => t.info_hash.toLowerCase() === hash)?.id === focused.value)
+          return
+        void torrentAction(id, 'delete').catch(() => {})
+        ephemeral.value = ephemeral.value.filter(h => h !== hash)
+      }, EPHEMERAL_GRACE_MS))
+    }
+    else if (!settings.keepDownloading) {
       await stopFocused(id)
+    }
     await restorePaused(restore)
     await refresh()
   }
@@ -421,9 +548,18 @@ export const useDownloadsStore = defineStore('downloads', () => {
   const filter = ref<FilterKey>('all')
   const query = ref('')
 
+  /**
+   * What the Downloads page lists: everything but a Stream only copy, which is
+   * a cache and not a download — it is gone when the player closes.
+   */
+  const kept = computed(() => {
+    const streaming = new Set(ephemeral.value)
+    return torrents.value.filter(t => !streaming.has(t.info_hash.toLowerCase()))
+  })
+
   const counts = computed(() => {
-    const tally = { all: torrents.value.length, downloading: 0, done: 0, paused: 0, checking: 0, error: 0 }
-    for (const t of torrents.value)
+    const tally = { all: kept.value.length, downloading: 0, done: 0, paused: 0, checking: 0, error: 0 }
+    for (const t of kept.value)
       tally[torrentStatus(t)]++
     return tally as Record<FilterKey, number>
   })
@@ -435,7 +571,7 @@ export const useDownloadsStore = defineStore('downloads', () => {
   // Track previous states so we can fire a notification on transition.
   const prevStates = ref<Record<number, StatusKey>>({})
 
-  watch(torrents, now => {
+  watch(kept, now => {
     for (const t of now) {
       const prev = prevStates.value[t.id]
       const curr = torrentStatus(t)
@@ -498,13 +634,22 @@ export const useDownloadsStore = defineStore('downloads', () => {
   const MB = 1024 ** 2
 
   watch(
-    () => [
-      uploadLimit(peakUp.value, focused.value != null, probing.value, settings.upLimit * MB),
-      settings.downLimit > 0 ? settings.downLimit * MB : null,
-    ] as const,
+    () => {
+      const own = settings.downLimit > 0 ? settings.downLimit * MB : null
+      const cap = streamLimit.value
+      return [
+        uploadLimit(peakUp.value, focused.value != null, probing.value, settings.upLimit * MB),
+        own != null && cap != null ? Math.min(own, cap) : own ?? cap,
+      ] as const
+    },
     ([up, down]) => setLimits(up, down),
     { immediate: true },
   )
+
+  /** Is this torrent a Stream only copy — a cache, not a download? */
+  function isStreamOnly(hash?: string | null) {
+    return !!hash && ephemeral.value.includes(hash.toLowerCase())
+  }
 
   // New torrents land wherever storage says; the engine keeps the folder of the
   // ones it already holds.
@@ -512,7 +657,42 @@ export const useDownloadsStore = defineStore('downloads', () => {
 
   // Searching only ever hits the sources the user configured, so the list has to
   // reach utils/torrents before the first search — hence `immediate`.
-  watch(() => settings.sources, urls => setSources(urls), { immediate: true, deep: true })
+  // Only the sources switched on are searched, and each search reports back
+  // so the Sources page can show which are fast, slow or failing.
+  // Keyed on the list's text, not the array: every search report rewrites
+  // `sourceMeta`, which rebuilds `activeSources`, and `setSources` empties the
+  // search-ahead cache — so watching the array threw each answer away the
+  // moment it landed, and a page that asks again on change searched forever.
+  watch(() => settings.activeSources.join('\n'), () => setSources(settings.activeSources), { immediate: true })
+  watch(() => settings.torrentOnly, on => setTorrentOnly(on), { immediate: true })
+  // Stream only's private cache — see `setStreamDir`. Inside the download
+  // folder rather than the app's own data: that sits on the system drive, which
+  // is the one most likely to be full, and a stream there failed for want of
+  // space with hundreds of GB free on the drive the user had chosen. A hidden
+  // folder of its own keeps it out of sight and apart from what is kept.
+  watch(() => settings.downloadDir || resolvedDir.value, async dir => {
+    const base = dir || await appCacheDir().catch(() => '')
+    if (base)
+      setStreamDir(await join(base, '.rivulet-stream'))
+  }, { immediate: true })
+  // What each source says it covers, so a movie-only addon is not asked for an
+  // episode and an IMDb-only one is not asked for an anime by Kitsu id.
+  // Serialised for the same reason as above: a report's speed and time are
+  // not capabilities, and must not cost the cached search.
+  watch(() => JSON.stringify(Object.entries(settings.sourceMeta).map(([url, m]) => [url, m.types, m.idPrefixes])), () => setSourceCapabilities(Object.fromEntries(
+    Object.entries(settings.sourceMeta).map(([url, m]) => [url, { types: m.types, idPrefixes: m.idPrefixes }]),
+  )), { immediate: true })
+  // A source added before manifests were read has no capabilities on file:
+  // read them once, quietly, so it is filtered like the rest.
+  void Promise.all(settings.sources
+    .filter(url => !settings.sourceMeta[url]?.types)
+    .map(url => fetchManifest(url)
+      .then(m => settings.patchSource(url, { types: m.types, idPrefixes: m.idPrefixes, name: settings.sourceMeta[url]?.name ?? m.name, logo: settings.sourceMeta[url]?.logo ?? m.logo }))
+      .catch(() => {})))
+  // Rank releases in a language the viewer follows first: the app's own, and
+  // English beside it. '' is "the system's", which the browser knows.
+  watch(() => settings.locale, locale => setPreferredLanguages([locale || navigator.language, 'en']), { immediate: true })
+  setSourceReporter(report => settings.noteSourceReport(report))
 
   /**
    * What the sidebar rail and the filter box narrow the list to. Newest first:
@@ -522,7 +702,7 @@ export const useDownloadsStore = defineStore('downloads', () => {
    */
   const list = computed(() => {
     const q = query.value.trim().toLowerCase()
-    return torrents.value.filter(t =>
+    return kept.value.filter(t =>
       (filter.value === 'all' || torrentStatus(t) === filter.value)
       && (!q || (t.name ?? t.info_hash).toLowerCase().includes(q)),
     // The id *is* the added-on order — the engine has no timestamp.
@@ -546,6 +726,11 @@ export const useDownloadsStore = defineStore('downloads', () => {
 
   return {
     torrents,
+    preloadNext,
+    streamLimit,
+    isStreamOnly,
+    resolvedDir,
+    peers,
     offline,
     loaded,
     refresh,

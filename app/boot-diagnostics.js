@@ -310,36 +310,75 @@
    * elements rather than one lump of innerHTML because the ellipsis below has to
    * hold a reference to the line it rewrites.
    */
+  /**
+   * The logo, glowing, over a light that breathes, with a bar that runs under
+   * it — a launch screen rather than a line of text. Every moving part is
+   * `transform` or `opacity`, the two things a TV's GPU animates without
+   * repainting, and all of it is plain CSS keyframes, which every webview old
+   * enough to fail the bundle still has. The ellipsis stays JavaScript: it is
+   * the proof that our code runs, so it must not be something CSS could do on
+   * its own.
+   */
+  var BRAND = '#6FE3FF'
+  var LOGO = '<svg viewBox="0 0 512 512" width="128" height="128" aria-hidden="true" style="display:block;margin:0 auto">'
+    + '<path fill="currentColor" d="M208 152C250 204 250 228 176 256C250 284 250 308 208 360L436 256Z"/></svg>'
+
+  var KEYFRAMES = '@keyframes rv-in{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:none}}'
+    + '@keyframes rv-breathe{0%,100%{opacity:.35;transform:scale(.85)}50%{opacity:.8;transform:scale(1.08)}}'
+    + '@keyframes rv-run{from{transform:translateX(-100%)}to{transform:translateX(250%)}}'
+    + '#rivulet-boot-hint .rv-box{animation:rv-in .5s ease-out both}'
+    + '#rivulet-boot-hint .rv-glow{animation:rv-breathe 2.4s ease-in-out infinite}'
+    + '#rivulet-boot-hint .rv-run{animation:rv-run 1.4s ease-in-out infinite}'
+    + '@media (prefers-reduced-motion:reduce){#rivulet-boot-hint .rv-glow,#rivulet-boot-hint .rv-run{animation:none}}'
+
   function starting() {
     if (hint || panel || !document.body)
       return
 
-    var ink = pale(GROUND_NOW) ? '#1a1a1a' : '#e6e6e6'
-    var quiet = pale(GROUND_NOW) ? '#6a6a6a' : '#8a8a8a'
+    var light = pale(GROUND_NOW)
+    var ink = light ? '#1a1a1a' : '#e6e6e6'
+    var quiet = light ? '#6a6a6a' : '#8a8a8a'
+    // The brand cyan is only safe on the dark grounds it was drawn for; on a
+    // light theme it falls under 3:1 at this size, so the mark goes to ink.
+    var accent = light ? ink : BRAND
 
     hint = document.createElement('div')
     hint.id = 'rivulet-boot-hint'
     hint.setAttribute('style', 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483646;'
       + 'display:flex;align-items:center;justify-content:center;text-align:center;'
       + 'background:' + GROUND_NOW + ';color:' + ink + ';'
-      + 'font:16px/1.5 sans-serif;-webkit-text-size-adjust:none')
+      + 'transition:opacity .3s ease;'
+      + 'font:16px/1.5 Roboto,"Segoe UI",sans-serif;-webkit-text-size-adjust:none')
 
     var box = document.createElement('div')
+    box.setAttribute('class', 'rv-box')
+    box.setAttribute('style', 'position:relative')
 
     var mark = document.createElement('div')
-    // The brand red is only safe on the dark grounds it was drawn for; on a
-    // light theme it falls under 3:1 at this size, so the wordmark goes to ink.
-    mark.setAttribute('style', 'font-size:26px;letter-spacing:0.3em;margin:0 0 10px;'
-      + 'color:' + (pale(GROUND_NOW) ? ink : '#6FE3FF'))
-    mark.innerHTML = 'RIVULET'
+    mark.setAttribute('style', 'position:relative;color:' + accent + ';margin:0 0 18px')
+    mark.innerHTML = (light ? '' : '<div class="rv-glow" style="position:absolute;left:50%;top:64px;width:320px;height:320px;'
+      + 'margin:-160px 0 0 -160px;border-radius:50%;pointer-events:none;'
+      + 'background:radial-gradient(circle,rgba(111,227,255,.45) 0%,rgba(111,227,255,0) 65%)"></div>')
+      + '<div style="position:relative">' + LOGO + '</div>'
+      + '<div style="position:relative;margin-top:16px;font-size:40px;font-weight:700;letter-spacing:.14em;color:' + ink + '">Rivulet</div>'
 
     dots = document.createElement('div')
-    dots.setAttribute('style', 'color:' + quiet)
+    dots.setAttribute('style', 'color:' + quiet + ';font-size:14px;letter-spacing:.06em;min-width:7em')
     dots.innerHTML = 'Starting'
+
+    var track = document.createElement('div')
+    track.setAttribute('style', 'position:relative;width:220px;height:3px;margin:18px auto 0;overflow:hidden;'
+      + 'border-radius:3px;background:' + (light ? 'rgba(0,0,0,.1)' : 'rgba(255,255,255,.1)'))
+    track.innerHTML = '<div class="rv-run" style="width:40%;height:100%;border-radius:3px;background:' + accent + '"></div>'
+
+    var style = document.createElement('style')
+    style.innerHTML = KEYFRAMES
 
     box.appendChild(mark)
     box.appendChild(dots)
+    box.appendChild(track)
     hint.appendChild(box)
+    hint.appendChild(style)
     document.body.appendChild(hint)
 
     pulse()
@@ -358,11 +397,18 @@
     setTimeout(pulse, 400)
   }
 
+  /** Faded out rather than cut, so the app arrives instead of appearing. */
   function unhint() {
-    if (hint && hint.parentNode)
-      hint.parentNode.removeChild(hint)
+    var leaving = hint
     hint = null
     dots = null
+    if (!leaving)
+      return
+    leaving.style.opacity = '0'
+    setTimeout(function () {
+      if (leaving.parentNode)
+        leaving.parentNode.removeChild(leaving)
+    }, 300)
   }
 
   /**

@@ -21,6 +21,7 @@ const tabs = computed(() => [
           :key="tab.to"
           :to="tab.to"
           :prepend-icon="tab.icon"
+          base-color="on-surface"
           rounded="md"
           class="text-label-large font-medium normal-case tracking-normal px-4"
         >

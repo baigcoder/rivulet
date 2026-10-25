@@ -208,8 +208,8 @@ assert.match(
 const detail = read('app/components/MediaDetailView.vue')
 assert.match(
   detail,
-  /setTimeout\(go, 4000\)/,
-  'the YouTube hero iframe must wait after first paint — requestIdleCallback fires too soon',
+  /setTimeout\(go, isDesktop\(\) \? \d+ : 4000\)/,
+  'the YouTube hero iframe must wait 4s after first paint on a TV — requestIdleCallback fires too soon',
 )
 assert.match(
   detail,

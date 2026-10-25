@@ -8,6 +8,7 @@ import {
   mdiFolderOpenOutline,
   mdiMagnify,
   mdiMenu,
+  mdiMovieOpenOutline,
   mdiPause,
   mdiPlay,
   mdiPlayCircleOutline,
@@ -311,9 +312,11 @@ function liveText(t: EngineTorrent) {
           <span class="text-body-medium opacity-70">{{ $t('No torrents match this filter.') }}</span>
         </template>
         <template v-else>
-          <v-icon :icon="mdiTrayArrowDown" size="40" class="opacity-30" />
-          <span class="text-body-medium opacity-70">{{ $t('Nothing downloading.') }}</span>
-          <span class="text-body-small opacity-50">{{ $t('Hit Download on a movie or an episode, or paste a magnet.') }}</span>
+          <empty-state :icon="mdiTrayArrowDown" :title="$t('Nothing downloading.')" :hint="$t('Hit Download on a movie or an episode, or paste a magnet.')">
+            <v-btn :prepend-icon="mdiMovieOpenOutline" variant="tonal" :to="localePath('/')">
+              {{ $t('Find something to watch') }}
+            </v-btn>
+          </empty-state>
         </template>
       </div>
     </div>
@@ -440,9 +443,11 @@ function liveText(t: EngineTorrent) {
             <span class="text-body-medium opacity-70">{{ $t('No torrents match this filter.') }}</span>
           </template>
           <template v-else>
-            <v-icon :icon="mdiTrayArrowDown" size="40" class="opacity-30" />
-            <span class="text-body-medium opacity-70">{{ $t('Nothing downloading.') }}</span>
-            <span class="text-body-small opacity-50">{{ $t('Hit Download on a movie or an episode, or paste a magnet.') }}</span>
+            <empty-state :icon="mdiTrayArrowDown" :title="$t('Nothing downloading.')" :hint="$t('Hit Download on a movie or an episode, or paste a magnet.')">
+              <v-btn :prepend-icon="mdiMovieOpenOutline" variant="tonal" :to="localePath('/')">
+                {{ $t('Find something to watch') }}
+              </v-btn>
+            </empty-state>
           </template>
         </div>
       </template>

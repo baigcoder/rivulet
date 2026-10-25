@@ -280,6 +280,7 @@ pub fn player_stop(app: tauri::AppHandle, state: tauri::State<'_, PlayerState>) 
 
 #[tauri::command]
 pub fn player_ipc(state: tauri::State<'_, PlayerState>, command: String) -> Result<String, String> {
+	crate::player_guard::check(&command)?;
 	let path = state.0.lock().unwrap().ipc.clone().ok_or("player not running")?;
 	player_socket::command(&path, &command)
 }

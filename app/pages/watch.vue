@@ -6,6 +6,7 @@ import {
   mdiAlertCircleOutline,
   mdiArrowLeft,
   mdiDownload,
+  mdiPlay,
   mdiPowerPlugOutline,
   mdiReload,
 } from '@mdi/js'
@@ -52,7 +53,7 @@ const { data: media, error: mediaError } = useMediaDetail(type, id)
 // the title — so the logo is asked for on its own, exactly as the detail page
 // does. Without this the overlay had nothing to draw and fell back to plain
 // text on every pause.
-const { data: titleArt, execute: loadTitleArt } = useTitleImages(type, id)
+const { data: titleArt, execute: loadTitleArt } = useTitleImages(type, id, () => media.value?.lang)
 watch(id, value => {
   if (value && !import.meta.server)
     void loadTitleArt()
@@ -113,6 +114,15 @@ const qualityPromptPending = ref(false)
 
 /** Stream-only mode found nothing to stream — a different message, and fix, than a plain failure. */
 const noServerStream = ref(false)
+
+/**
+ * Every direct link turned out to be the cloud service's error clip. The fix
+ * is the torrent, for this title, without touching How Play works — the
+ * cloud may be back tomorrow.
+ */
+const cloudDown = ref(false)
+/** Set by "Play from the torrent instead"; read by `start`, cleared after. */
+const forceTorrent = ref(false)
 
 const settings = useSettingsStore()
 
@@ -184,12 +194,42 @@ const stats = computed(() => downloads.torrents.find(t => t.id === torrentId.val
 // the connection to something nobody is watching. (The trick useMediaFeed uses.)
 let generation = 0
 
+// --- Stream only with nothing instant ---------------------------------------
+// A cloud (debrid) source hands back a link that plays at once; a torrent-only
+// source can't, whatever the mode says. So instead of quietly streaming the
+// torrent, Play asks — once, if "Always do this" is ticked — whether to keep
+// the film while it plays or stream it from a temporary cache.
+type Fallback = 'download' | 'stream' | 'cancel'
+const fallbackOpen = ref(false)
+const fallbackAlways = ref(false)
+let fallbackAnswer: ((choice: Fallback) => void) | null = null
+
+function askFallback() {
+  fallbackAlways.value = false
+  fallbackOpen.value = true
+  return new Promise<Fallback>(resolve => (fallbackAnswer = resolve))
+}
+
+function answerFallback(choice: Fallback) {
+  fallbackOpen.value = false
+  if (fallbackAlways.value && choice === 'download')
+    settings.allowTorrents = true
+  if (fallbackAlways.value && choice === 'stream')
+    settings.askBeforeTorrentStream = false
+  fallbackAnswer?.(choice)
+  fallbackAnswer = null
+}
+
+/** Where a download made from the question lands, shown in it. */
+const fallbackFolder = computed(() => settings.downloadDir || downloads.resolvedDir)
+
 async function start() {
   const mine = ++generation
   const startedAt = Date.now()
   releasePriming()
   errorMsg.value = ''
   noServerStream.value = false
+  cloudDown.value = false
   src.value = ''
   resolving.value = true
   torrent.value = null
@@ -198,6 +238,21 @@ async function start() {
   userPicked.value = false
   failovers.value = 0
   failoverNotice.value = ''
+
+  // Stream only, no instant source, nothing hand-picked: ask first.
+  let allowTorrents = !!(magnet.value || settings.allowTorrents || forceTorrent.value)
+  forceTorrent.value = false
+  if (!allowTorrents && !link.value && settings.sources.length && !settings.hasInstantSource && settings.askBeforeTorrentStream) {
+    const choice = await askFallback()
+    if (mine !== generation)
+      return
+    if (choice === 'cancel') {
+      resolving.value = false
+      leave()
+      return
+    }
+    allowTorrents = choice === 'download'
+  }
 
   try {
     // ?magnet=… hand-picks the release and skips the lookup — that's how the
@@ -214,6 +269,14 @@ async function start() {
         await until(() => !!media.value || !!mediaError.value).toBe(true, { timeout: 20_000 })
         return media.value?.imdbId
       },
+      // An anime is also known to Kitsu, which some addons index it by — see
+      // utils/kitsu. Looked up only if the IMDb id is missing or finds nothing.
+      altId: async () => {
+        const m = media.value
+        if (!m || kindOf(m) !== 'anime')
+          return null
+        return kitsuIdFor(m.title, { movie: m.type === 'movie', season: season.value || 1, year: Number(m.year) || undefined })
+      },
       // Read only once the lookup above has answered, so a download the app
       // never filed under this title can still be recognised by its name.
       named: () => title.value,
@@ -224,7 +287,7 @@ async function start() {
       fileIndex: fileIndex.value,
       // Default Play follows the toggle. A magnet (or URL) from the picker
       // is a source they named — it plays even while Play is Direct-only.
-      allowTorrents: !!(magnet.value || settings.allowTorrents),
+      allowTorrents,
       // Race the sources: first healthy answer plays, slower ones join the
       // candidate list as they land (see below).
       fast: true,
@@ -233,9 +296,11 @@ async function start() {
           return
         const known = new Set(candidates.value.map(releaseKey))
         candidates.value = [...candidates.value, ...late.filter(r => !known.has(releaseKey(r)))]
-        // Re-ranking may shuffle indexes; the playing URL keeps its place.
-        candidates.value = serverCandidates(candidates.value)
-        activeCandidate.value = Math.max(0, candidates.value.findIndex(r => r.url === src.value))
+        // Re-ranking may shuffle indexes; the playing copy keeps its place. Ranked
+        // with torrents allowed whenever this playback allows them — ranked as
+        // links-only, a late answer used to drop every torrent runner-up at once.
+        candidates.value = serverCandidates(candidates.value, undefined, undefined, !!(magnet.value || settings.allowTorrents))
+        activeCandidate.value = playingIndex()
       },
       onStep: value => (step.value = value),
     })
@@ -257,13 +322,20 @@ async function start() {
 
     resolving.value = false
     step.value = $t('Buffering…')
-    src.value = started.url || streamUrl(started.id, started.index)
+    src.value = started.url ? linkWithHeaders(started.url, started.torrent) : streamUrl(started.id, started.index)
 
     // Both kinds carry their runners-up now: a server stream its other servers,
     // a torrent the other copies the sources answered with. The player's menus
     // and the failover below walk one list either way.
-    candidates.value = started.alternatives ?? []
-    activeCandidate.value = 0
+    // A torrent's runners-up arrive without the copy that is playing; it goes
+    // first, so the list reads "this one, then these" for both kinds. Without
+    // it, the playing torrent's slot was taken by its best runner-up — which a
+    // failure then skipped, and the Server menu showed as the one playing.
+    const others = started.alternatives ?? []
+    candidates.value = started.torrent && !started.url && !others.some(r => releaseKey(r) === releaseKey(started.torrent!))
+      ? [started.torrent, ...others]
+      : others
+    activeCandidate.value = playingIndex()
     // `serverCandidates` already ranks 1080p first (ahead of 4K, which is
     // slower to start and more likely to buffer). Keep that automatic choice
     // visible in the player pill, rather than opening a quality menu over the
@@ -327,7 +399,7 @@ function useCandidate(index: number, manual = true) {
   if (!next.url)
     return
   torrentId.value = null
-  src.value = next.url
+  src.value = linkWithHeaders(next.url, next)
 }
 
 /**
@@ -366,17 +438,51 @@ async function playMagnet(magnetUrl: string) {
   }
 }
 
+/** Where the playing copy sits in `candidates`: by release when there is one, else by URL. */
+function playingIndex() {
+  const playing = torrent.value
+  const at = playing
+    ? candidates.value.findIndex(r => releaseKey(r) === releaseKey(playing))
+    : candidates.value.findIndex(r => r.url === src.value)
+  return Math.max(0, at)
+}
+
 /** Playback of the current server failed — silently move to the next one, if any. */
-function onPlaybackFailed() {
-  if (!candidates.value.length)
+function onPlaybackFailed(reason?: 'stub' | 'dead' | 'refused') {
+  /** Out of links to try, and the last one was an error card: say so, offer the torrent. */
+  const cardsOnly = () => {
+    if (reason !== 'stub')
+      return false
+    cloudDown.value = true
+    src.value = ''
+    errorMsg.value = $t('Your cloud (debrid) service sent its "unavailable" clip instead of the film. It is down or refusing this title right now.')
+    return true
+  }
+  if (!candidates.value.length) {
+    cardsOnly()
     return
-  const following = activeCandidate.value + 1
+  }
+  let following = activeCandidate.value + 1
+  // An error card speaks for the whole service: every other link the same
+  // source gave answers with the same clip, so they are passed over rather
+  // than played one by one for half a minute each.
+  if (reason === 'stub') {
+    const via = candidates.value[activeCandidate.value]?.via
+    if (via) {
+      const other = candidates.value.findIndex((c, i) => i > activeCandidate.value && c.via !== via)
+      following = other === -1 ? candidates.value.length : other
+    }
+  }
   const next = candidates.value[following]
   if (!next) {
+    if (cardsOnly())
+      return
     errorMsg.value = $t('None of the {count} servers for this title would play. Try another quality, or another release.', { count: candidates.value.length })
     return
   }
   if (failovers.value >= MAX_FAILOVERS) {
+    if (cardsOnly())
+      return
     errorMsg.value = $t('Tried {count} servers for this title and none of them played. Pick one by hand from the server menu, or try another release.', { count: failovers.value })
     return
   }
@@ -564,10 +670,18 @@ const backdrop = computed(() => backdropUrl(title.value?.backdrop, 'w1280'))
 
 // What the end-of-playback screen offers. The show's season list carries an
 // episode count per season, which is all the rollover needs.
-const next = computed(() => {
+/** Playing a Stream only copy — the player then fetches as it plays, not to the end. */
+const streamOnly = computed(() => downloads.isStreamOnly(downloads.torrents.find(t => t.id === torrentId.value)?.info_hash))
+
+/** The episode after this one, if the show has one. */
+const nextTarget = computed(() => {
   if (!media.value || !season.value || !episode.value)
     return null
-  const target = nextEpisode(media.value.seasons, { season: season.value, episode: episode.value, watched: true })
+  return nextEpisode(media.value.seasons, { season: season.value, episode: episode.value, watched: true })
+})
+
+const next = computed(() => {
+  const target = nextTarget.value
   if (!target)
     return null
   return {
@@ -575,6 +689,28 @@ const next = computed(() => {
     label: $t('Next · S{season} E{episode}', { season: target.season, episode: target.episode }),
   }
 })
+
+// This episode's name and synopsis for the pause screen — a series pauses on
+// the episode it is, not on the show's blurb. Nothing for a film.
+const episodeInfo = ref<{ name: string, overview: string, runtime: number } | null>(null)
+watch(() => [id.value, season.value, episode.value] as const, async ([showId, s, e]) => {
+  episodeInfo.value = null
+  if (!showId || !s || !e)
+    return
+  const got = await loadEpisode(showId, s, e).catch(() => null)
+  if (got && showId === id.value && s === season.value && e === episode.value)
+    episodeInfo.value = { name: got.name, overview: got.overview, runtime: got.runtime }
+}, { immediate: true })
+
+/** Seconds the title really runs, for spotting a source's error clip. 0 when unknown. */
+const expectedSeconds = computed(() => ((episodeInfo.value?.runtime || media.value?.runtime) ?? 0) * 60)
+
+/** The credits are rolling: get the next episode ready — see `preloadNext`. */
+function onNearEnd() {
+  const target = nextTarget.value
+  if (target)
+    void downloads.preloadNext(key.value, target, String(route.query.imdb ?? '') || media.value?.imdbId)
+}
 
 function leave() {
   if (router.options.history.state.back)
@@ -606,6 +742,9 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
         :fault="fault"
         :media="title"
         :next="next"
+        :episode-title="episodeInfo?.name"
+        :stream-only="streamOnly"
+        :episode-overview="episodeInfo?.overview"
         :imdb-id="media?.imdbId"
         :title="title?.title ?? String(route.query.title ?? '')"
         :year="title?.year"
@@ -617,7 +756,9 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
         :active-candidate="activeCandidate"
         :osd-on-start="failoverNotice"
         :auto-open-quality="qualityPromptPending && !userPicked"
+        :expected-seconds="expectedSeconds"
         @failed="onPlaybackFailed"
+        @near-end="onNearEnd"
         @use-candidate="(i: number) => useCandidate(i)"
         @auto-opened="qualityPromptPending = false"
         @back="leave"
@@ -680,7 +821,7 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
         <div class="relative flex max-w-xl flex-col items-center gap-3 px-6 text-center">
           <v-icon :icon="mdiAlertCircleOutline" color="error" size="40" />
           <div class="text-title-large">
-            {{ noServerStream ? $t('Your sources only provide downloads') : $t('Nothing to play') }}
+            {{ cloudDown ? $t('Your cloud service is unavailable') : noServerStream ? $t('Your sources only provide downloads') : $t('Nothing to play') }}
           </div>
           <p class="text-body-medium opacity-70">
             {{ failure }}
@@ -706,6 +847,17 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
               {{ $t('Back') }}
             </v-btn>
           </div>
+          <div v-else-if="cloudDown" class="mt-2 flex flex-wrap justify-center gap-2">
+            <v-btn color="primary" variant="flat" :prepend-icon="mdiDownload" @click="forceTorrent = true; start()">
+              {{ $t('Play from the torrent instead') }}
+            </v-btn>
+            <v-btn variant="tonal" :prepend-icon="mdiReload" @click="start">
+              {{ $t('Try again') }}
+            </v-btn>
+            <v-btn variant="text" :prepend-icon="mdiArrowLeft" @click="leave">
+              {{ $t('Back') }}
+            </v-btn>
+          </div>
           <div v-else class="mt-2 flex gap-2">
             <v-btn variant="tonal" :prepend-icon="mdiReload" @click="start">
               {{ $t('Try again') }}
@@ -716,6 +868,62 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
           </div>
         </div>
       </v-overlay>
+
+      <!-- Stream only, and no source can stream this instantly: how to play it.
+           Real buttons throughout, so a remote answers it as easily as a mouse;
+           Back is Cancel. -->
+      <v-dialog
+        :model-value="fallbackOpen"
+        max-width="620"
+        persistent
+        @update:model-value="open => !open && fallbackOpen && answerFallback('cancel')"
+      >
+        <v-card rounded="xl" class="pa-2">
+          <v-card-title class="text-title-large font-bold">
+            {{ $t('No instant source for this') }}
+          </v-card-title>
+          <v-card-text class="flex flex-col gap-4">
+            <p class="text-body-medium opacity-85">
+              {{ $t('Your sources answer with torrents only, so this can\'t start instantly the way a cloud (debrid) source does. Choose how to play it:') }}
+            </p>
+
+            <div class="flex flex-col gap-3 rounded-xl border border-outline-variant p-4">
+              <div class="flex flex-wrap items-center gap-3">
+                <v-btn :prepend-icon="mdiDownload" color="primary" size="large" @click="answerFallback('download')">
+                  {{ $t('Play while downloading') }}
+                </v-btn>
+                <v-chip size="small" color="primary" variant="tonal" tabindex="-1">
+                  {{ $t('Recommended') }}
+                </v-chip>
+              </div>
+              <p class="text-body-medium opacity-80">
+                {{ $t('Starts as the first pieces arrive, and keeps the whole file in Downloads.') }}
+              </p>
+              <p v-if="fallbackFolder" class="break-all text-body-small opacity-70">
+                {{ $t('Saving to: {folder}', { folder: fallbackFolder }) }}
+              </p>
+              <drive-picker />
+            </div>
+
+            <div class="flex flex-col gap-3 rounded-xl border border-outline-variant p-4">
+              <v-btn :prepend-icon="mdiPlay" variant="tonal" size="large" class="self-start" @click="answerFallback('stream')">
+                {{ $t('Stream with a temporary cache') }}
+              </v-btn>
+              <p class="text-body-medium opacity-80">
+                {{ $t('Fetches a few minutes ahead of the picture and deletes it when you leave. Nothing is kept.') }}
+              </p>
+            </div>
+
+            <v-checkbox v-model="fallbackAlways" density="compact" hide-details :label="$t('Always do this')" />
+          </v-card-text>
+          <v-card-actions>
+            <v-spacer />
+            <v-btn variant="text" @click="answerFallback('cancel')">
+              {{ $t('Cancel') }}
+            </v-btn>
+          </v-card-actions>
+        </v-card>
+      </v-dialog>
     </v-main>
   </v-app>
 </template>

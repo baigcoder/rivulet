@@ -13,6 +13,6 @@ definePageMeta({ keepalive: true })
     type="movie"
     :initial-category="initialCategory"
     :extra-params="{ with_original_language: lang }"
-    :page-title="label"
+    :page-title="label ?? $t('Movies')"
   />
 </template>

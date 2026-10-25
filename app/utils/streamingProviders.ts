@@ -99,6 +99,21 @@ export function streamingProviders(list: readonly WatchProvider[], region: strin
 }
 
 /** Columns for square provider cards about 128px wide, with the grid's 14px gap. */
+/**
+ * Home's fixed row: the household names the region actually has, in the
+ * pinned order — not the 150-odd services TMDB lists, which made the strip a
+ * catalogue rather than a shortcut. A region where few of those exist is
+ * topped up from its own most prominent services, so the row is never two
+ * cards long; `count` caps it either way.
+ */
+export function popularProviders(list: readonly WatchProvider[], region: string, count = 10): WatchProvider[] {
+  const ranked = streamingProviders(list, region)
+  const pinned = ranked.filter(p => PINNED.some(aliases => aliases.includes(brandOf(p.provider_name))))
+  const MIN = 6
+  const rest = pinned.length >= MIN ? [] : ranked.filter(p => !pinned.includes(p)).slice(0, MIN - pinned.length)
+  return [...pinned, ...rest].slice(0, count)
+}
+
 export function providerColumns(width: number): number {
   if (width <= 0)
     return 5

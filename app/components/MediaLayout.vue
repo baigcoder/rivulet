@@ -57,6 +57,9 @@ const loadingFirstPage = computed(() => props.pending && !props.items.length)
        needs somewhere to sit. scroll-py: keeps the row the d-pad just moved to
        clear of the top and bottom edges. -->
   <div ref="scroller" data-dpad-start class="h-full scroll-py-6 overflow-y-auto px-4 pb-10 pt-1 md:px-6">
+    <!-- Scrolls with the list rather than sitting over it: a banner that
+         stayed put would take half the screen from the posters for good. -->
+    <slot name="header" />
     <div v-if="ui.isGrid" class="grid gap-x-4 gap-y-5" :style="gridStyle">
       <media-card
         v-for="media in items"
@@ -99,8 +102,10 @@ const loadingFirstPage = computed(() => props.pending && !props.items.length)
       </template>
 
       <template v-else-if="!items.length && !pending">
-        <v-icon :icon="mdiMovieOpenOutline" size="40" class="opacity-30" />
-        <span class="text-body-medium opacity-70">{{ $t('Nothing here.') }}</span>
+        <!-- A list that knows what it is for says so in `empty`. -->
+        <slot name="empty">
+          <empty-state :icon="mdiMovieOpenOutline" :title="$t('Nothing here.')" />
+        </slot>
       </template>
 
       <span v-else-if="done" class="text-body-small opacity-45">{{ $t('That\'s everything.') }}</span>

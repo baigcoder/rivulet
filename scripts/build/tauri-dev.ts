@@ -57,6 +57,12 @@ async function main(): Promise<void> {
   const tauri = spawn('bun', ['run', 'tauri', 'dev', '--config', tauriConfig], {
     stdio: 'inherit',
     cwd: process.cwd(),
+    // Node's default heap is too small for this dev server over a long
+    // session: every hot reload keeps a little, and with 72 language catalogs
+    // in the graph it died with "heap out of memory" (exit 134) after an hour
+    // or so of edits — taking the open window's page with it. CI's generate
+    // already asks for more for the same reason.
+    env: { ...process.env, NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --max-old-space-size=6144`.trim() },
     // GDK_BACKEND=x11 (needed so mpv can embed into the window) is set by the
     // Rust side now, so packaged builds get it too — see player::init().
   })

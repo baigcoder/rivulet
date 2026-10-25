@@ -335,7 +335,7 @@ assert.equal(nearestFrame(new Map(), 0, 60), null, 'an empty cache answers nothi
 const tooltipCss = await Bun.file('node_modules/vuetify/lib/components/VTooltip/VTooltip.sass').text()
 assert.match(tooltipCss, /\.v-tooltip\n\s+> \.v-overlay__content/, 'vuetify still nests tooltip content the way the tracker looks for it')
 const mpv = await Bun.file('app/components/MpvPlayer.vue').text()
-assert.match(mpv, /const CUT = '\[data-cut\], \.v-tooltip > \.v-overlay__content'/, 'and the tracker still looks for it')
+assert.match(mpv, /const CUT = '\[data-cut\], [^']*\.v-tooltip > \.v-overlay__content'/, 'and the tracker still looks for it')
 assert.match(mpv, /cutouts: overlay \? cutouts/, 'HUD holes must punch even before the first frame — Win32 hide does not always drop hit testing')
 assert.doesNotMatch(mpv, /cutouts: visible && overlay/, 'empty cutouts while opening left Back/Retry dead under mpv')
 assert.ok(!mpv.includes('rootEl.value?.querySelectorAll'), 'scoped to the player, a teleported tooltip is never found')

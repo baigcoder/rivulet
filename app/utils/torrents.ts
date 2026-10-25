@@ -20,6 +20,17 @@ import { deviceCodecs, hasNativePlayer } from './htmlvideo'
  */
 let sources: string[] = []
 
+/** Who hears about each source's answer — see `setSourceReporter`. */
+let reporter: ((report: SourceReport) => void) | null = null
+/** *Torrents only* — see `setTorrentOnly`. */
+let torrentOnly = false
+/** Searches started early, by path — see `searchAhead`. */
+const ahead = new Map<string, { at: number, result: Promise<Release[]> }>()
+/** What each source's manifest says it looks up — see `setSourceCapabilities`. */
+let capabilities: Record<string, SourceCapabilities> = {}
+/** Sources sitting out after failing in a row — see `noteFailure`. */
+const failing = new Map<string, { count: number, until: number }>()
+
 // A function, not a constant: it is built when this module loads, before `$t`
 // has a locale to read — see SECTIONS in the settings store.
 export const NO_SOURCES = () => $t('No sources configured. Add one in Settings → Sources.')
@@ -27,6 +38,9 @@ export const NO_SOURCES = () => $t('No sources configured. Add one in Settings �
 export function setSources(urls: string[]) {
   // Trailing slashes would produce `//stream/…`, which some servers 404.
   sources = urls.map(u => u.trim().replace(/\/+$/, '')).filter(Boolean)
+  // A search started against the old list would answer for sources that are
+  // no longer asked — or miss one that just was.
+  ahead.clear()
 }
 
 /**
@@ -104,6 +118,19 @@ const SUBTITLE_EXT = /\.(?:srt|ass|ssa|vtt)$/i
 /** Never worth playing, however many seeders it has. */
 const JUNK = /\b(?:cam|hdcam|ts|hdts|telesync|telecine|scr|screener|r5)\b/i
 
+/**
+ * A source saying it can't serve anything right now, in the shape of a
+ * stream: a debrid addon whose service is down answers with one row — name
+ * "… error", title "… is currently unavailable", and a URL to a thirty-second
+ * clip of that sentence (`/videos/failed_unavailable_v1.mp4`). Played, it is
+ * the "film". It is the source's status, not a release.
+ */
+const ERROR_CARD_URL = /\/videos\/(?:failed|downloading|error)[\w-]*\.(?:mp4|mkv|webm)(?:$|[?#])/i
+export function isErrorCard(raw: { url?: string, name?: string, infoHash?: string }) {
+  const url = raw.url ?? ''
+  return !raw.infoHash && (ERROR_CARD_URL.test(url) || (/\berror\b/i.test(raw.name ?? '') && /\.mp4(?:$|[?#])/i.test(url)))
+}
+
 const UNITS: Record<string, number> = { B: 1, KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3, TB: 1024 ** 4 }
 
 /** Resolution token in a release or addon label — "1080p", "4k HDR", … */
@@ -174,6 +201,24 @@ export interface Release {
    * whatever label that addon printed.
    */
   via?: string
+  /**
+   * Audio languages the release says it carries, from its name and the flags
+   * an addon draws beside it. Empty means it says nothing — most English
+   * releases — which is not the same as saying a language nobody asked for.
+   */
+  langs?: string[]
+  /**
+   * The addon's name for "the same release, episode after episode" — a season
+   * pack or one group's run of a show. Next episode prefers a copy with the
+   * same one, which is often the very torrent already playing.
+   */
+  bingeGroup?: string
+  /**
+   * Headers the addon says its link needs (Stremio's `proxyHeaders.request`):
+   * a host that checks the User-Agent or Referer refuses the stream without
+   * them. Sent by the loopback proxy, which is the one thing that can.
+   */
+  headers?: Record<string, string>
 }
 
 interface RawStream {
@@ -187,7 +232,12 @@ interface RawStream {
   fileIdx?: number
   url?: string
   sources?: string[]
-  behaviorHints?: { videoSize?: number, filename?: string, bingeGroup?: string }
+  behaviorHints?: {
+    videoSize?: number
+    filename?: string
+    bingeGroup?: string
+    proxyHeaders?: { request?: Record<string, unknown> }
+  }
 }
 
 const BTIH = /(?:urn:)?btih:([a-f0-9]{40}|[a-z2-7]{32})/i
@@ -310,7 +360,51 @@ export function toRelease(raw: RawStream, base = ''): Release | null {
     source: title.match(/⚙\S*\s+(\S+)/)?.[1] ?? 'unknown',
     quality: releaseQuality({ rawName: raw.name, name, title, file: lines.slice(1).find(line => VIDEO_EXT.test(line)) ?? null }),
     magnet: hash ? magnetFor(hash, name, raw.sources) : '',
+    langs: [...new Set([...releaseLangs(`${name} ${lines.slice(1).join(' ')}`), ...flagLangs(title)])],
+    bingeGroup: typeof raw.behaviorHints?.bingeGroup === 'string' ? raw.behaviorHints.bingeGroup : undefined,
+    headers: url ? requestHeaders(raw.behaviorHints?.proxyHeaders?.request) : undefined,
   }
+}
+
+/**
+ * The URL to hand the player for a release's link. A link that needs headers
+ * goes through the loopback proxy, which sends them on every request — the
+ * playlist and each segment alike; mpv and libVLC can be given a User-Agent at
+ * most, and a <video> element nothing at all. Every other link plays as it is.
+ */
+export function linkWithHeaders(url: string, release?: Pick<Release, 'headers'> | null): string {
+  const headers = release?.headers
+  if (!headers || !/^https?:\/\//i.test(url) || /^https?:\/\/127\.0\.0\.1:3031\//i.test(url))
+    return url
+  const named = (want: string) => Object.entries(headers).find(([k]) => k.toLowerCase() === want)?.[1]
+  const rest = Object.entries(headers).filter(([k]) => !/^(?:user-agent|referer)$/i.test(k))
+  let qs = `url=${encodeURIComponent(url)}`
+  const ua = named('user-agent')
+  const referer = named('referer')
+  if (ua)
+    qs += `&X-Rivulet-Ua=${encodeURIComponent(ua)}`
+  if (referer)
+    qs += `&X-Rivulet-Referer=${encodeURIComponent(referer)}`
+  if (rest.length)
+    qs += `&X-Rivulet-H=${encodeURIComponent(rest.map(([k, v]) => `${k}: ${v}`).join('\n'))}`
+  return `http://127.0.0.1:3031/stream?${qs}`
+}
+
+/**
+ * The headers an addon asks for, kept only when they are plain strings and not
+ * ones a proxy must set itself. Empty is `undefined`, so a release that needs
+ * nothing carries nothing.
+ */
+function requestHeaders(raw?: Record<string, unknown>): Record<string, string> | undefined {
+  if (!raw || typeof raw !== 'object')
+    return undefined
+  const HOP = /^(?:host|connection|content-length|transfer-encoding|upgrade|range)$/i
+  const out: Record<string, string> = {}
+  for (const [name, value] of Object.entries(raw)) {
+    if (typeof value === 'string' && /^[\w-]+$/.test(name) && !HOP.test(name) && !/[\r\n]/.test(value))
+      out[name] = value
+  }
+  return Object.keys(out).length ? out : undefined
 }
 
 /** The host of a configured source URL — the identity the UI shows. */
@@ -358,6 +452,38 @@ export function releaseFileName(t: { name: string, file?: string | null, url?: s
 function rank(t: Release) {
   const i = QUALITY_ORDER.findIndex(q => t.quality.toLowerCase().startsWith(q))
   return i === -1 ? QUALITY_ORDER.length : i
+}
+
+/**
+ * Seeders below which a torrent is unlikely to start quickly at any quality.
+ * Sources report the count they last saw, often hours old, so this is a floor
+ * for "probably dead" rather than a measure of speed.
+ */
+export const WEAK_SWARM = 10
+
+/**
+ * Languages the viewer can follow: the app's own, and English, which most
+ * releases are in whatever else they carry. Set by the downloads store.
+ */
+let preferredLangs: string[] = []
+
+export function setPreferredLanguages(codes: string[]) {
+  preferredLangs = [...new Set(codes.map(c => c.toLowerCase().split('-')[0]!).filter(Boolean))]
+}
+
+/**
+ * A release that names its audio, and names none the viewer follows — the
+ * French dub at the top of a list for someone reading in English. Ranked
+ * below the copies they can follow, never dropped: if it is all there is, it
+ * still plays.
+ */
+export function isOffLanguage(t: Release) {
+  return !!preferredLangs.length && !!t.langs?.length && !t.langs.some(l => preferredLangs.includes(l))
+}
+
+/** A torrent whose swarm is too thin to stream from. A link has no swarm. */
+export function isWeakSwarm(t: Release) {
+  return !t.url && t.seeders < WEAK_SWARM
 }
 
 /** More bytes than this tier needs to look good — a bigger bill for the same picture. */
@@ -471,7 +597,14 @@ export function ranked(list: Release[], maxBytes = MAX_BYTES, compatible = false
     // nothing is written to the disk the budget is protecting.
     .filter(t => !!t.url || (t.seeders > 0 && (!t.bytes || t.bytes <= limit)))
     .sort((a, b) =>
-      rank(a) - rank(b)
+      // Above quality: a 1080p copy with two seeders buffers for minutes while
+      // the 720p one with three hundred is already playing. Only a swarm too
+      // thin to start is moved — past `WEAK_SWARM` seeders, quality decides.
+      Number(isWeakSwarm(a)) - Number(isWeakSwarm(b))
+      // Then a language the viewer follows — a dub they cannot understand is
+      // no better for being 1080p.
+      || Number(isOffLanguage(a)) - Number(isOffLanguage(b))
+      || rank(a) - rank(b)
       || (compatible ? Number(isAwkward(a)) - Number(isAwkward(b)) : 0)
       // Above bloat: a pack that is the right size still cannot start quickly,
       // and starting is what the viewer is waiting for.
@@ -531,10 +664,51 @@ const AUDIO_LANGS = [
   { re: /\bmalayalam\b/i, code: 'ml' },
   { re: /\bkannada\b/i, code: 'kn' },
   { re: /\bspanish\b|\bspa\b|\besp\b/i, code: 'es' },
-  { re: /\bfrench\b|\bfre\b|\bfra\b/i, code: 'fr' },
+  { re: /\b(?:true)?french\b|\bfre\b|\bfra\b|\bvff\b|\bvf[2q]\b/i, code: 'fr' },
   { re: /\bjapanese\b|\bjpn\b/i, code: 'ja' },
   { re: /\bkorean\b|\bkor\b/i, code: 'ko' },
+  { re: /\bitalian\b|\bita\b/i, code: 'it' },
+  { re: /\bgerman\b|\bger\b|\bdeu\b/i, code: 'de' },
+  { re: /\bportuguese\b|\bpor\b|\bdublado\b/i, code: 'pt' },
+  { re: /\brussian\b|\brus\b/i, code: 'ru' },
 ] as const
+
+/**
+ * Flags addons draw beside a release for its audio, by the country they name.
+ * A flag is a pair of regional-indicator letters, so it reads back as an ISO
+ * country code; only the countries whose flag stands for one language here.
+ */
+const FLAG_LANG: Record<string, string> = {
+  GB: 'en',
+  US: 'en',
+  FR: 'fr',
+  ES: 'es',
+  MX: 'es',
+  IT: 'it',
+  DE: 'de',
+  PT: 'pt',
+  BR: 'pt',
+  RU: 'ru',
+  IN: 'hi',
+  JP: 'ja',
+  KR: 'ko',
+  CN: 'zh',
+  NL: 'nl',
+  PL: 'pl',
+  TR: 'tr',
+  UA: 'uk',
+}
+
+function flagLangs(text: string): string[] {
+  const out: string[] = []
+  for (const [, a, b] of text.matchAll(/([\u{1F1E6}-\u{1F1FF}])([\u{1F1E6}-\u{1F1FF}])/gu)) {
+    const country = String.fromCharCode(a!.codePointAt(0)! - 0x1F1E6 + 65, b!.codePointAt(0)! - 0x1F1E6 + 65)
+    const code = FLAG_LANG[country]
+    if (code && !out.includes(code))
+      out.push(code)
+  }
+  return out
+}
 
 /** Languages a release name claims to carry — "Dual Audio Hindi English". */
 export function releaseLangs(text: string): string[] {
@@ -581,12 +755,139 @@ const SOURCE_TIMEOUT = 20_000
 const RACE_TIMEOUT = 8_000
 
 async function searchOne(base: string, path: string, timeoutMs = SOURCE_TIMEOUT): Promise<Release[]> {
-  const res = await fetch(base + path, { signal: AbortSignal.timeout(timeoutMs) })
-  if (!res.ok)
-    throw new Error(`${base} answered HTTP ${res.status}`)
+  const started = Date.now()
+  try {
+    const res = await fetch(base + path, { signal: AbortSignal.timeout(timeoutMs) })
+    if (!res.ok)
+      throw new Error(`HTTP ${res.status}`)
 
-  const data = await res.json() as { streams?: RawStream[] }
-  return (data.streams ?? []).flatMap(s => toRelease(s, base) ?? [])
+    const data = await res.json() as { streams?: RawStream[] }
+    const streams = data.streams ?? []
+    // Its error card is kept as what it said, not offered as something to play.
+    const card = streams.find(isErrorCard)
+    const all = streams.filter(s => !isErrorCard(s)).flatMap(s => toRelease(s, base) ?? [])
+    failing.delete(base)
+    reporter?.({
+      base,
+      ms: Date.now() - started,
+      count: all.length,
+      magnets: all.filter(t => t.magnet).length,
+      links: all.filter(t => t.url).length,
+      // The first line of what it said ("TorBox is currently unavailable!") —
+      // an answer, so the source is not paused for it like a timeout would be.
+      error: card ? (card.title ?? card.description ?? '').split('\n')[0]?.trim() || $t('The source reported an error') : undefined,
+    })
+    return torrentOnly ? torrentsOnly(all) : all
+  }
+  catch (e) {
+    const message = e instanceof DOMException && e.name === 'TimeoutError'
+      ? $t('No answer in {seconds} s', { seconds: Math.round(timeoutMs / 1000) })
+      : e instanceof Error ? e.message : String(e)
+    const until = noteFailure(base)
+    reporter?.({ base, ms: Date.now() - started, count: 0, magnets: 0, links: 0, error: message, pausedUntil: until || undefined })
+    throw new Error(`${base}: ${message}`)
+  }
+}
+
+// --- What each source did, and what it may hand back ---------------------------
+
+/** One source's answer to one search, for the health line on the Sources page. */
+export interface SourceReport {
+  base: string
+  ms: number
+  count: number
+  magnets: number
+  links: number
+  error?: string
+  /** Set when this failure put the source out for a while — see `noteFailure`. */
+  pausedUntil?: number
+}
+
+/** The settings store listens here; nothing in this module keeps the history. */
+export function setSourceReporter(fn: ((report: SourceReport) => void) | null) {
+  reporter = fn
+}
+
+/**
+ * Torrents only*: a link a source answers with — a debrid unlock, a hosted
+ * file — is dropped before anything ranks it, and a release that carries both
+ * keeps only its magnet. That is what makes the setting mean "free sources
+ * only" everywhere at once: Play, the Releases list, the server menu, Download.
+ */
+export function setTorrentOnly(on: boolean) {
+  torrentOnly = on
+  ahead.clear()
+}
+
+function torrentsOnly(list: Release[]): Release[] {
+  return list.flatMap(t => t.magnet ? [{ ...t, url: '' }] : [])
+}
+
+/**
+ * Whether a source looks like one that needs a paid account: a debrid service
+ * named in its address, or in what its manifest says about itself. A guess
+ * from names, so it decides only what *Torrents only* refuses at the door —
+ * the answers a source gives are filtered on their own merits either way.
+ */
+export function isDebridSource(base: string, manifest?: { name?: string, description?: string } | null) {
+  const PAID = /real-?debrid|alldebrid|all-debrid|premiumize|debrid-?link|torbox|offcloud|put\.?io|easydebrid|debrider/i
+  return PAID.test(base) || PAID.test(`${manifest?.name ?? ''} ${manifest?.description ?? ''}`)
+}
+
+/** What a source says about itself in `manifest.json`. */
+export interface SourceManifest extends SourceCapabilities {
+  name: string
+  logo?: string
+  description?: string
+  ms: number
+}
+
+/** Why a URL was not accepted as a source — the page words each one differently. */
+export class NotASource extends Error {
+  constructor(readonly reason: 'unreachable' | 'not-addon' | 'no-streams', message: string) {
+    super(message)
+  }
+}
+
+/**
+ * Ask a source for its manifest: proof it speaks the protocol at all, its own
+ * name and logo for the list, and whether it offers streams — an addon that
+ * only serves catalogs or subtitles would answer every search with nothing.
+ */
+export async function fetchManifest(base: string, timeoutMs = 10_000): Promise<SourceManifest> {
+  const started = Date.now()
+  let data: unknown
+  try {
+    const res = await fetch(`${base}/manifest.json`, { signal: AbortSignal.timeout(timeoutMs) })
+    if (!res.ok)
+      throw new NotASource('not-addon', $t('It answered HTTP {status} for its manifest.', { status: res.status }))
+    data = await res.json()
+  }
+  catch (e) {
+    if (e instanceof NotASource)
+      throw e
+    if (e instanceof SyntaxError)
+      throw new NotASource('not-addon', $t('That address does not answer with an addon manifest.'))
+    throw new NotASource('unreachable', $t('Could not reach it. Check the address and your connection.'))
+  }
+  const m = data as { id?: unknown, name?: unknown, logo?: unknown, description?: unknown, resources?: unknown, types?: unknown, idPrefixes?: unknown }
+  if (typeof m?.id !== 'string' || !Array.isArray(m.resources))
+    throw new NotASource('not-addon', $t('That address does not answer with an addon manifest.'))
+  const streams = m.resources.some(r => r === 'stream' || (typeof r === 'object' && r && (r as { name?: unknown }).name === 'stream'))
+  if (!streams)
+    throw new NotASource('no-streams', $t('That addon offers no streams, so it would never find anything to play.'))
+  // The stream resource's own lists win over the manifest-wide ones: an addon
+  // that serves catalogs for everything may stream only some of it.
+  const strings = (v: unknown) => Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : undefined
+  const resource = m.resources.find(r => typeof r === 'object' && r && (r as { name?: unknown }).name === 'stream') as { types?: unknown, idPrefixes?: unknown } | undefined
+  return {
+    types: strings(resource?.types) ?? strings(m.types),
+    idPrefixes: strings(resource?.idPrefixes) ?? strings(m.idPrefixes),
+    name: typeof m.name === 'string' && m.name.trim() ? m.name.trim() : sourceHost(base),
+    logo: typeof m.logo === 'string' && /^https:\/\//i.test(m.logo) ? m.logo : undefined,
+    description: typeof m.description === 'string' ? m.description : undefined,
+    ms: Date.now() - started,
+  }
 }
 
 /**
@@ -602,8 +903,74 @@ async function searchOne(base: string, path: string, timeoutMs = SOURCE_TIMEOUT)
 
 function searchPath(imdbId: string, season: number, episode: number) {
   const series = season > 0 && episode > 0
-  const id = series ? `${imdbId}:${season}:${episode}` : imdbId
+  // Kitsu gives every season its own entry and numbers episodes within it, so
+  // its series path has no season: `kitsu:<entry>:<episode>`.
+  const id = !series ? imdbId : imdbId.startsWith('kitsu:') ? `${imdbId}:${episode}` : `${imdbId}:${season}:${episode}`
   return `/stream/${series ? 'series' : 'movie'}/${id}.json`
+}
+
+// --- Which sources a search asks -----------------------------------------------
+
+/** What a manifest says its streams cover; absent means "it did not say". */
+export interface SourceCapabilities {
+  types?: string[]
+  idPrefixes?: string[]
+}
+
+/**
+ * The settings store hands over what each source's manifest declared. A source
+ * with nothing on file is asked about everything, exactly as before.
+ */
+export function setSourceCapabilities(map: Record<string, SourceCapabilities>) {
+  capabilities = map
+  ahead.clear()
+}
+
+/** Does this source say it can answer for this kind of title, by this kind of id? */
+export function handles(base: string, type: string, id: string) {
+  const caps = capabilities[base]
+  if (caps?.types?.length && !caps.types.includes(type))
+    return false
+  if (caps?.idPrefixes?.length && !caps.idPrefixes.some(p => id.startsWith(p)))
+    return false
+  return true
+}
+
+/** After this many failures in a row a source sits out, for this long. */
+const FAIL_LIMIT = 3
+const FAIL_PAUSE_MS = 10 * 60_000
+
+function noteFailure(base: string) {
+  const was = failing.get(base)
+  const count = (was?.count ?? 0) + 1
+  const until = count >= FAIL_LIMIT ? Date.now() + FAIL_PAUSE_MS : 0
+  failing.set(base, { count, until })
+  return until
+}
+
+/** When a source that kept failing is next asked again; 0 when it is not sitting out. */
+export function pausedUntil(base: string) {
+  const until = failing.get(base)?.until ?? 0
+  return until > Date.now() ? until : 0
+}
+
+/** Give a sitting-out source another chance now — a manual check that reached it. */
+export function resumeSource(base: string) {
+  failing.delete(base)
+}
+
+/**
+ * The sources a search goes to: those that say they handle it, minus any
+ * sitting out after failing in a row — unless that would leave none, when the
+ * paused ones are tried anyway rather than searching nothing.
+ */
+function askedFor(path: string): string[] {
+  const [, type = '', id = ''] = path.match(/^\/stream\/([^/]+)\/(.+)\.json$/) ?? []
+  const able = sources.filter(base => handles(base, type, id))
+  if (!able.length)
+    throw new Error($t('None of your sources look this kind of title up.'))
+  const awake = able.filter(base => !pausedUntil(base))
+  return awake.length ? awake : able
 }
 
 async function runSources(
@@ -616,8 +983,9 @@ async function runSources(
   // Racing mode shortens the per-source leash: a server that hasn't answered
   // in eight seconds is a dead candidate as far as this playback is concerned.
   const timeoutMs = wait.mode === 'first' ? RACE_TIMEOUT : SOURCE_TIMEOUT
-  const tasks = sources.map(base => searchOne(base, path, timeoutMs))
-  const batches: (Release[] | null)[] = sources.map(() => null)
+  const asked = askedFor(path)
+  const tasks = asked.map(base => searchOne(base, path, timeoutMs))
+  const batches: (Release[] | null)[] = asked.map(() => null)
   let anyAnswered = false
   let anyFailed = false
 
@@ -654,7 +1022,7 @@ async function runSources(
   // preference order, and it also decides whose copy a duplicate belongs to.
   const seen = new Map<string, Release>()
   const takeLanded = () => {
-    for (let i = 0; i < sources.length; i++) {
+    for (let i = 0; i < asked.length; i++) {
       const batch = batches[i]
       if (!batch)
         continue
@@ -662,7 +1030,7 @@ async function runSources(
       for (const t of batch) {
         if (!seen.has(releaseKey(t))) {
           seen.set(releaseKey(t), t)
-          t.via = sources[i]
+          t.via = asked[i]
         }
       }
     }
@@ -679,6 +1047,53 @@ async function runSources(
   })
 
   return { releases: [...seen.values()], rest }
+}
+
+// --- Search ahead -------------------------------------------------------------
+//
+// The detail page knows what Play will ask for long before Play is pressed:
+// the IMDb id, and for a show the episode the button names. Asking the sources
+// then, while the viewer reads the synopsis, takes the slowest step out of
+// pressing Play — "Searching your sources…" is usually over before it starts.
+
+/** How long an early answer is good for. Seeders move; a stale list ranks badly. */
+const AHEAD_TTL_MS = 2 * 60_000
+
+/**
+ * Start the search Play would make for this title, if one is not already
+ * fresh. Fire and forget: nothing waits on it, and a failure costs nothing —
+ * Play just searches as it always did.
+ */
+export function searchAhead(imdbId: string, season = 0, episode = 0) {
+  if (!sources.length || !imdbId)
+    return
+  const path = searchPath(imdbId, season, episode)
+  const known = ahead.get(path)
+  if (known && Date.now() - known.at < AHEAD_TTL_MS)
+    return
+  const result = runSources(path, { mode: 'all' }).then(r => r.releases).catch(() => [] as Release[])
+  ahead.set(path, { at: Date.now(), result })
+}
+
+/**
+ * The early answer for this search without using it up — for a page that wants
+ * to say what Play will find before Play is pressed. `null` when nothing has
+ * been asked for, or the answer has gone stale.
+ */
+export function peekAhead(imdbId: string, season = 0, episode = 0): Promise<Release[]> | null {
+  const known = ahead.get(searchPath(imdbId, season, episode))
+  return known && Date.now() - known.at < AHEAD_TTL_MS ? known.result : null
+}
+
+/** An early answer for this search, used once: a retry after it must ask afresh. */
+async function takeAhead(imdbId: string, season: number, episode: number): Promise<Release[] | null> {
+  const path = searchPath(imdbId, season, episode)
+  const known = ahead.get(path)
+  if (!known || Date.now() - known.at >= AHEAD_TTL_MS)
+    return null
+  ahead.delete(path)
+  const found = await known.result
+  return found.length ? found : null
 }
 
 /** Patient: every source answers (or times out) before anything is returned. */
@@ -808,6 +1223,19 @@ export function setDownloadDir(path: string) {
 }
 
 /**
+ * Where Stream only keeps a torrent while it plays: the app's own cache, never
+ * the Downloads folder. A torrent has to hold the pieces it is playing
+ * somewhere — that is what streaming one *is*, here and in every other player
+ * — so what Stream only promises is that the somewhere is private and brief:
+ * this folder, deleted with the torrent when the player closes.
+ */
+let streamDir = ''
+
+export function setStreamDir(path: string) {
+  streamDir = path.trim()
+}
+
+/**
  * What is inside a magnet, without starting it.
  *
  * `list_only` resolves the metadata from peers and stops there: no files
@@ -866,12 +1294,28 @@ export const PIECE_CEILING = 8 * 1024 ** 2
  */
 export const PROBE_LIMIT = 3
 
-export async function listTorrentFiles(magnet: string): Promise<TorrentShape> {
+/**
+ * How long a release gets to hand over its file list. A healthy swarm answers
+ * in a second or two; one with no live peers never answers at all, and with no
+ * deadline "Fetching metadata from peers…" was the end of the attempt.
+ */
+export const PROBE_TIMEOUT_MS = 15_000
+
+/**
+ * How long the best-ranked copy is probed alone before the runners-up are
+ * probed beside it. Long enough that a healthy swarm costs no extra lookups,
+ * short enough that a dead one does not hold the others back.
+ */
+export const PROBE_HEDGE_MS = 4_000
+
+export async function listTorrentFiles(magnet: string, timeoutMs = PROBE_TIMEOUT_MS): Promise<TorrentShape> {
   let res: Response
   try {
-    res = await fetch(`${ENGINE}/torrents?list_only=true`, { method: 'POST', body: magnet })
+    res = await fetch(`${ENGINE}/torrents?list_only=true`, { method: 'POST', body: magnet, signal: AbortSignal.timeout(timeoutMs) })
   }
-  catch {
+  catch (e) {
+    if (e instanceof DOMException && e.name === 'TimeoutError')
+      throw new Error($t('No peers answered for this release.'))
     throw new Error($t('Torrent engine offline. Launch the native desktop or Android app to play torrents.'))
   }
   if (!res.ok)
@@ -910,10 +1354,11 @@ export const PEER_CONNECT_TIMEOUT_S = 4
  * starts fetching the instant it is added, and a selection that arrives after
  * that is a selection for the pieces it has not written yet.
  */
-export async function addTorrent(magnet: string, onlyFiles?: number[]) {
+export async function addTorrent(magnet: string, onlyFiles?: number[], into?: string) {
   // Only new torrents move: the engine remembers an existing one's folder, and
   // its data is already sitting in it.
-  const folder = downloadDir ? `&output_folder=${encodeURIComponent(downloadDir)}` : ''
+  const target = into || downloadDir
+  const folder = target ? `&output_folder=${encodeURIComponent(target)}` : ''
   const only = onlyFiles?.length ? `&only_files=${onlyFiles.join(',')}` : ''
   // See `PEER_CONNECT_TIMEOUT_S`: the ten-second default leaves a phone holding
   // most of its connection slots open on peers that never answer.
@@ -1008,6 +1453,17 @@ export function pickVideoFile(
   const included = videos.filter(f => f.included)
   const from = included.length && included.length < videos.length ? included : videos
   return from.sort((a, b) => b.length - a.length)[0]!.index
+}
+
+/**
+ * The file for exactly this episode, or null — never the largest-file guess
+ * `pickVideoFile` falls back to. Reusing a torrent for the next episode is only
+ * right when the episode is really in it.
+ */
+export function episodeFileIn(files: EngineFile[], season: number, episode: number): number | null {
+  const pattern = episodePattern(season, episode)
+  const at = files.findIndex(f => VIDEO_EXT.test(f.name) && pattern.test(filePath(f)))
+  return at < 0 ? null : at
 }
 
 /** Full path inside the torrent — a `Subs/` folder spells the episode there. */
@@ -1226,6 +1682,26 @@ export interface Priming {
 }
 
 /**
+ * Start fetching the next episode while this one's credits roll, when it is in
+ * the same torrent: its file joins the selection and a reader on its opening
+ * bytes puts them first in the queue — so the next Play finds them already on
+ * the disk. Null when the episode is not in that torrent, which is the caller's
+ * cue to search ahead for it instead.
+ */
+export async function preloadEpisode(hash: string, season: number, episode: number): Promise<Priming | null> {
+  const held = (await listTorrents().catch(() => [])).find(t => t.info_hash.toLowerCase() === hash.toLowerCase())
+  if (!held)
+    return null
+  const files = (await torrentDetails(held.id))?.files ?? []
+  const index = episodeFileIn(files, season, episode)
+  if (index == null)
+    return null
+  const included = files.flatMap((f, i) => f.included ? [i] : [])
+  await limitToFiles(held.id, [...new Set([...included, index, ...pickSubtitleFiles(files, index)])])
+  return primeHead(held.id, index)
+}
+
+/**
  * Hold a reader on the *first* bytes of the file from the moment the torrent
  * has an id.
  *
@@ -1414,6 +1890,42 @@ export function haveAt(map: PieceMap, haves: Uint8Array, fraction: number) {
  * Counted in pieces rather than bytes because pieces are what the engine has or
  * has not got; a slice smaller than one piece is 0% until that piece lands.
  */
+/**
+ * How much of the file, as a share of it, is on the disk without a gap from
+ * `fraction` onwards — the part a player can read before it would have to wait.
+ */
+export function contiguousAhead(map: PieceMap, haves: Uint8Array, fraction: number) {
+  const at = (byte: number) => Math.min(map.pieces - 1, Math.floor((byte / map.total) * map.pieces))
+  const last = at(map.start + map.length)
+  const from = at(map.start + Math.max(0, Math.min(1, fraction)) * map.length)
+  let i = from
+  while (i <= last && haves[i >> 3]! & (0x80 >> (i & 7)))
+    i++
+  const pieceBytes = map.total / map.pieces
+  return Math.max(0, Math.min(1, ((i - from) * pieceBytes) / map.length))
+}
+
+/**
+ * Stream only fetches as you watch rather than racing to the end of the file.
+ *
+ * Below `STREAM_BUFFER_LOW_S` of gap-free film ahead of the playhead the engine
+ * runs flat out — that is a start, a seek or a thin patch, and waiting there is
+ * what buffering is. Past it the download is held to a multiple of the film's
+ * own bitrate, and past `STREAM_BUFFER_HIGH_S` to just above it: enough to keep
+ * the buffer topped up, not enough to pull the whole film down in the first ten
+ * minutes. Returns bytes/s, or null for "no cap".
+ */
+export const STREAM_BUFFER_LOW_S = 120
+export const STREAM_BUFFER_HIGH_S = 240
+
+export function streamCap(aheadSeconds: number, bitrateBps: number): number | null {
+  if (!bitrateBps || aheadSeconds < STREAM_BUFFER_LOW_S)
+    return null
+  // Never so low that a swarm's peers stop treating us as worth sending to.
+  const floor = 256 * 1024
+  return Math.max(floor, Math.round(bitrateBps * (aheadSeconds < STREAM_BUFFER_HIGH_S ? 2 : 1.15)))
+}
+
 export function headFill(map: PieceMap, haves: Uint8Array, bytes = PRIME_BYTES) {
   const at = (byte: number) => Math.min(map.pieces - 1, Math.floor((byte / map.total) * map.pieces))
   const first = at(map.start)
@@ -1518,6 +2030,11 @@ export interface Started {
    * already-held copies.
    */
   alternatives?: Release[]
+  /**
+   * Stream-only mode played a torrent because no source had a link: the
+   * caller deletes it when playback ends and never files it as an offline copy.
+   */
+  ephemeral?: boolean
 }
 
 /**
@@ -1622,6 +2139,20 @@ export async function startTorrent(options: {
    * would otherwise be held up by.
    */
   imdbId?: string | null | (() => Promise<string | null | undefined>)
+  /**
+   * Another id to look the title up by — `kitsu:<entry>` for an anime. Asked
+   * for only when there is no IMDb id, or when the IMDb search found nothing:
+   * some addons index anime by Kitsu alone, and IMDb's seasons rarely match
+   * how a show was released.
+   */
+  altId?: () => Promise<string | null | undefined>
+  /**
+   * The copy the previous episode of this show played from. When the episode
+   * asked for is in that same torrent — a season pack — it plays from there:
+   * no search, no new swarm, and the peers already connected. Otherwise its
+   * `bingeGroup` steers the pick towards the same release group's copy.
+   */
+  pack?: { hash: string, bingeGroup?: string } | null
   /** Skips the source lookup entirely. */
   magnet?: string
   /** Ditto, for a release that was a direct link rather than a torrent. */
@@ -1680,10 +2211,27 @@ export async function startTorrent(options: {
   let hint: number | null = null
   /** Ranked alternatives to fall back to when the pick cannot start. */
   let queue: Release[] = []
+  /** Stream-only playing a torrent: nothing of it is kept — see below. */
+  let ephemeral = false
 
   // Nothing to add, nothing to fetch, nothing to keep — the link is the stream.
   if (options.url)
     return { id: -1, index: -1, hash: '', url: options.url, torrent: null }
+
+  // Next episode, same pack: the episode is already in the torrent the last
+  // one played from — see `pack`. Taken before the cached copy and the search
+  // alike, since it is the one start that needs neither.
+  if (!magnet && options.pack?.hash && options.season && options.episode) {
+    const held = (await listTorrents().catch(() => [])).find(t => t.info_hash.toLowerCase() === options.pack!.hash.toLowerCase())
+    const files = held ? (await torrentDetails(held.id))?.files ?? [] : []
+    const index = held ? episodeFileIn(files, options.season, options.episode) : null
+    if (held && index != null) {
+      step($t('Next episode, from the same release…'))
+      const included = files.flatMap((f, i) => f.included ? [i] : [])
+      await limitToFiles(held.id, [...new Set([...included, index, ...pickSubtitleFiles(files, index)])])
+      return { id: held.id, index, hash: held.info_hash, url: '', torrent: null }
+    }
+  }
 
   // A magnet the caller named is a release someone chose by hand, so it beats
   // whatever is already on the disk. Asked before the id lookup below, because
@@ -1722,7 +2270,8 @@ export async function startTorrent(options: {
       magnet = magnetForHash(adopted)
     }
     else {
-      if (!imdbId)
+      const lookup = imdbId || await options.altId?.()
+      if (!lookup)
         throw new Error($t('TMDB has no IMDb id for this title, so there is nothing to look it up with.'))
 
       // Fast mode races the sources: playback starts on the first healthy
@@ -1731,13 +2280,14 @@ export async function startTorrent(options: {
       // caches). A generous grace on the first attempt catches the second
       // and third source answering a beat after the first; retries shrink
       // the window because the sources are warm by then.
-      let found: Release[] = []
-      const MAX_SEARCH_ATTEMPTS = options.fast ? 2 : 3
+      // Asked already, from the detail page — see `searchAhead`.
+      let found: Release[] = (await takeAhead(lookup, options.season ?? 0, options.episode ?? 0)) ?? []
+      const MAX_SEARCH_ATTEMPTS = found.length ? 0 : options.fast ? 2 : 3
       for (let attempt = 1; attempt <= MAX_SEARCH_ATTEMPTS; attempt++) {
         step(attempt === 1 ? $t('Searching your sources…') : $t('Retrying sources…'))
         try {
           found = options.fast
-            ? await findReleasesFast(imdbId, options.season ?? 0, options.episode ?? 0, {
+            ? await findReleasesFast(lookup, options.season ?? 0, options.episode ?? 0, {
                 // Engine on: start on the first magnet, don't wait 2s for a
                 // Direct URL. Engine off: first link plays at once — no extra
                 // grace for a second server that is still resolving.
@@ -1749,7 +2299,7 @@ export async function startTorrent(options: {
                     options.onAlternativesLate?.(more)
                 },
               })
-            : await findReleases(imdbId, options.season, options.episode)
+            : await findReleases(lookup, options.season, options.episode)
         }
         catch (searchError) {
           if (attempt < MAX_SEARCH_ATTEMPTS) {
@@ -1768,15 +2318,43 @@ export async function startTorrent(options: {
           await new Promise(r => setTimeout(r, options.fast ? 200 : 600))
       }
 
+      // Nothing by IMDb id: ask again by the other one, if there is one.
+      if (!found.length && imdbId && options.altId) {
+        const alt = await options.altId()
+        if (alt) {
+          step($t('Searching your sources…'))
+          found = await findReleases(alt, options.season, options.episode).catch(() => [])
+        }
+      }
+
       // Stream-only mode narrows before ranking: a torrent release is not a
       // worse pick, it is no pick at all. A save is the opposite — a link
       // keeps nothing, so only magnets count.
-      const pool = options.save
+      let pool = options.save
         ? found.filter(t => t.magnet)
         : allowTorrents ? found : found.filter(t => !!t.url)
       picked = options.save
         ? pickBest(pool, options.maxBytes, options.compatible ?? !hasNativePlayer(), true)
         : pickPlay(pool, options.maxBytes, options.compatible ?? !hasNativePlayer(), allowTorrents)
+      // Stream-only, and the sources answered with torrents alone — the free
+      // kind. Rather than send the viewer off to find a paid source, stream the
+      // torrent and keep nothing: the copy is marked `ephemeral` and deleted the
+      // moment the player closes (see `release` in the downloads store).
+      if (!picked && !allowTorrents && !options.save) {
+        const magnets = found.filter(t => t.magnet)
+        picked = pickPlay(magnets, options.maxBytes, options.compatible ?? !hasNativePlayer(), true)
+        if (picked) {
+          pool = magnets
+          ephemeral = true
+        }
+      }
+      // The same release group as the last episode, when it has a healthy copy:
+      // same encode, same subtitles, and often a pack the engine already knows.
+      const group = options.pack?.bingeGroup
+      if (group && picked && picked.bingeGroup !== group) {
+        const same = pool.filter(t => t.bingeGroup === group && !isWeakSwarm(t))
+        picked = (same.length ? pickPlay(same, options.maxBytes, options.compatible ?? !hasNativePlayer(), allowTorrents || ephemeral) : null) ?? picked
+      }
       if (!picked) {
         if (options.save && found.length)
           throw new Error($t('Nothing here is a download — these sources only stream this title.'))
@@ -1877,18 +2455,34 @@ export async function startTorrent(options: {
   let chosen = magnet
   let fallback: { magnet: string, files: EngineFile[], index: number, release: Release | null } | null = null
 
+  // Hedged: the best copy is probed alone, and only once it has kept us
+  // waiting `PROBE_HEDGE_MS` do the runners-up start beside it. They are still
+  // *taken* in rank order — a runner-up that answered first only saves the wait
+  // when the better copy turns out dead, which is the case this is for.
+  const probes: (Promise<TorrentShape> | undefined)[] = []
+  const probe = (i: number) => {
+    probes[i] ??= listTorrentFiles(shortlist[i]!)
+    // Settled here so an early start that nobody awaits is never "unhandled".
+    probes[i]!.catch(() => {})
+    return probes[i]!
+  }
+  const hedge = setTimeout(() => shortlist.forEach((_, i) => probe(i)), PROBE_HEDGE_MS)
+
   for (const [attempt, candidate] of shortlist.entries()) {
     let shape: TorrentShape
     try {
-      shape = await listTorrentFiles(candidate)
+      shape = await probe(attempt)
     }
     catch (engineError) {
       // Engine offline (browser mode) — fall back to the direct URL if available.
       const directFallback = picked?.url || options.url
-      if (directFallback && !options.save)
+      if (directFallback && !options.save) {
+        clearTimeout(hedge)
         return { id: -1, index: -1, hash: '', url: directFallback, torrent: picked }
+      }
       if (attempt < shortlist.length - 1)
         continue
+      clearTimeout(hedge)
       throw engineError
     }
 
@@ -1913,6 +2507,8 @@ export async function startTorrent(options: {
     step($t('Looking for a copy that starts faster…'))
   }
 
+  clearTimeout(hedge)
+
   if (index == null) {
     if (!fallback)
       throw new Error($t('That torrent holds no video file.'))
@@ -1927,7 +2523,7 @@ export async function startTorrent(options: {
   // each, and the engine only serves a file it was told to download.
   const wanted = [index, ...pickSubtitleFiles(files, index)]
 
-  const added = await addTorrent(magnet, wanted)
+  const added = await addTorrent(magnet, wanted, ephemeral ? streamDir : undefined)
   // Adding a magnet the engine already holds hands back its current selection,
   // so a pack you're part-way through keeps downloading what it was told to and
   // gains this file — rather than being reset to it. `only_files` on the add
@@ -1950,6 +2546,9 @@ export async function startTorrent(options: {
     // torrent had nothing, so a dead swarm was the end of the attempt however
     // many other copies of the same film the sources had answered with.
     alternatives: queue.filter(t => t.magnet && t.magnet !== magnet),
+    // Only a torrent added *here* — one the engine already held is somebody's
+    // download, and deleting it on the way out would be deleting their film.
+    ephemeral,
   }
 }
 

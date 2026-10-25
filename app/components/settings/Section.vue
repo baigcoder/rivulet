@@ -9,7 +9,7 @@ defineProps<{ title: string, hint?: string }>()
       <h2 class="text-title-medium">
         {{ title }}
       </h2>
-      <p v-if="hint" class="text-body-small opacity-70">
+      <p v-if="hint" class="text-body-medium opacity-80">
         {{ hint }}
       </p>
     </div>

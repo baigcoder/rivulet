@@ -14,9 +14,13 @@ const route = useRoute()
 const routeName = useRouteBaseName()
 const { mobile } = useDisplay()
 
-// `settings-language`, `settings-appearance-background` — the section is the
-// segment after `settings`, which is exactly a SECTIONS value.
-const section = computed(() => routeName(route)?.split('-')[1])
+// `settings-language`, `settings-appearance-background` — the section is what
+// follows `settings-`, matched whole: a section's own name can hold a hyphen
+// (`premium-tv`), and splitting on them headed that page "Settings".
+const section = computed(() => {
+  const rest = routeName(route)?.replace(/^settings-/, '') ?? ''
+  return SECTIONS.find(s => rest === s.value || rest.startsWith(`${s.value}-`))?.value
+})
 const title = computed(() => SECTIONS.find(s => s.value === section.value)?.title() ?? $t('Settings'))
 </script>
 

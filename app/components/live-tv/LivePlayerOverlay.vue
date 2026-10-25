@@ -192,6 +192,10 @@ const prevEntry = computed(() => props.hasPrev ? props.channelList[props.channel
 const nextEntry = computed(() => props.hasNext ? props.channelList[props.channelIndex + 1] ?? null : null)
 
 const clock = useNow({ interval: 30_000 })
+/** The time of day, as a set shows it in the corner. */
+const clockText = computed(() => clock.value.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+/** Where this channel sits — its country or category — for a guide-less channel's second line. */
+const channelGroup = computed(() => props.channelList[props.channelIndex]?.group ?? '')
 const nowTimeline = computed(() => {
   if (!props.nowStart)
     return null
@@ -306,8 +310,12 @@ function hide() {
 const drawerOrError = computed(() =>
   showQuickZap.value || !!props.error || props.connecting)
 
+// Not `chromeUp`: in live mode the player's own poll keeps that flag up for
+// good (see `pollNativePointer` below), so counting it here meant the bars
+// never hid and covered the top and bottom of every channel. Its rising edge
+// still calls `show()`, which arms the idle timer like any other activity.
 const softShow = computed(() =>
-  onBar.value || nudged.value || props.chromeUp)
+  onBar.value || nudged.value)
 
 const visible = computed(() =>
   drawerOrError.value || (softShow.value && !forceHidden.value))
@@ -349,6 +357,26 @@ watch(edgeSwiping, on => {
 // enough to catch every wiggle, slow enough not to tax the IPC.
 let pointerPollHandle: ReturnType<typeof setInterval> | null = null
 let lastPointerKey: string | null = null
+const headerEl = ref<HTMLElement | null>(null)
+const footerEl = ref<HTMLElement | null>(null)
+
+/**
+ * Is the cursor on one of the bars? `mouseleave` can't be trusted for this
+ * here: moving off a bar onto the picture moves onto mpv's window, which the
+ * webview does not always hear about, and a bar that thinks it is still
+ * hovered pins the HUD up. The native pointer is in mpv's client pixels, and
+ * the live player's box is the whole viewport, so dividing by the device
+ * pixel ratio gives page coordinates to test the bars' own rectangles with.
+ */
+function pointerOnBar(x: number, y: number) {
+  const ratio = window.devicePixelRatio || 1
+  const px = x / ratio
+  const py = y / ratio
+  return [headerEl.value, footerEl.value].some(el => {
+    const r = el?.getBoundingClientRect()
+    return !!r && r.height > 0 && px >= r.left && px <= r.right && py >= r.top && py <= r.bottom
+  })
+}
 
 async function pollNativePointer() {
   if (!overlay)
@@ -358,8 +386,10 @@ async function pollNativePointer() {
     if (!pointer)
       return
     const key = `${pointer.x},${pointer.y},${pointer.over ? 1 : 0}`
-    if (lastPointerKey != null && key !== lastPointerKey)
+    if (lastPointerKey != null && key !== lastPointerKey) {
+      onBar.value = visible.value && pointerOnBar(pointer.x, pointer.y)
       show()
+    }
     lastPointerKey = key
   }
   catch {
@@ -535,6 +565,7 @@ defineExpose({ show, hide, visible })
          meta line. A second Close next to Hide duplicated Back and sat
          under the window controls. -->
     <header
+      ref="headerEl"
       data-cut
       class="pointer-events-auto flex items-center gap-3 px-5 py-3 transition-transform duration-300 sm:px-6 sm:py-3.5"
       :class="[
@@ -562,13 +593,13 @@ defineExpose({ show, hide, visible })
 
       <div
         v-if="channelLogo"
-        class="grid size-11 shrink-0 place-items-center overflow-hidden rounded-lg bg-zinc-950 ring-1 ring-white/10"
+        class="grid size-12 shrink-0 place-items-center overflow-hidden rounded-xl bg-zinc-950 ring-1 ring-white/10"
       >
         <img :src="proxyLogo(channelLogo)" alt="" class="size-full object-contain p-1">
       </div>
 
       <div class="min-w-0 flex-1">
-        <h1 class="truncate text-title-medium font-semibold tracking-tight text-white">
+        <h1 class="truncate text-title-large font-bold tracking-tight text-white">
           {{ channelName }}
         </h1>
         <p class="mt-0.5 flex min-w-0 items-center gap-2 text-label-small text-white/55">
@@ -596,13 +627,13 @@ defineExpose({ show, hide, visible })
               v-if="qualityBadge"
               class="shrink-0 rounded bg-amber-300/12 px-1.5 text-[10px] font-bold uppercase leading-4 tracking-wider text-amber-200 ring-1 ring-amber-300/30"
             >{{ qualityBadge }}</span>
-            <span v-if="channelTotal > 0" class="shrink-0 tabular-nums text-white/50">
-              {{ $t('{n} of {total}', { n: channelIndex + 1, total: channelTotal }) }}
-            </span>
+            <span v-if="channelGroup" class="min-w-0 truncate text-white/55">{{ channelGroup }}</span>
           </template>
           <span v-else-if="timeLine" class="shrink-0 font-mono tabular-nums text-white/70">{{ timeLine }}</span>
         </p>
       </div>
+
+      <span class="hidden shrink-0 font-mono text-title-medium tabular-nums text-white/80 sm:block" aria-hidden="true">{{ clockText }}</span>
 
       <button
         type="button"
@@ -770,6 +801,7 @@ defineExpose({ show, hide, visible })
     <!-- BOTTOM CONTROL BAR — live channels only. VOD uses MpvPlayer's seek bar. -->
     <footer
       v-if="isLiveVariant"
+      ref="footerEl"
       data-cut
       class="pointer-events-auto px-5 pb-5 pt-8 transition-transform duration-300 sm:px-6 sm:pb-6"
       :class="[

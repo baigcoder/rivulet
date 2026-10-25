@@ -72,6 +72,9 @@ async function readHiddenOffline(): Promise<void> {
   catch { /* browser dev server: no Tauri, nothing hidden */ }
 }
 
+/** What the rail calls "All channels": the ones that are not hidden as offline. */
+const onlineTotal = computed(() => Math.max(0, liveTv.totalChannels - hiddenOffline.value))
+
 const statusMeta = computed(() => {
   if (hiddenOffline.value)
     return $t('{count} offline hidden', { count: hiddenOffline.value.toLocaleString() })
@@ -143,50 +146,20 @@ function pickCategory(name: string): void {
   sheetOpen.value = false
 }
 
+const { play } = useFreeChannelPlayer()
+
+/**
+ * The front of the library — what you were watching and what you starred —
+ * above the full list, but only on the plain "All channels" view: inside a
+ * search, a category or Favourites itself they would be in the way.
+ */
+const showShelves = computed(() =>
+  liveTv.view === 'all' && !liveTv.searchQuery && !liveTv.selectedCategory
+  && (liveTv.recentChannels.length > 0 || liveTv.favoriteChannels.length > 0))
+
+/** The zap list is what is on screen: up/down walks the order just read. */
 function playChannel(ch: LiveChannel): void {
-  // "undefined"/"null" are real values in a public M3U — a channel with no
-  // URL would navigate to a blank player.
-  if (!ch.streamUrl || ch.streamUrl === 'undefined' || ch.streamUrl === 'null')
-    return
-  liveTv.rememberChannel(ch.id)
-  // The zap list is what is on screen: up/down on the player walks the
-  // same order the viewer was just reading. It lives on the store so a
-  // zap is a small query change, not a 60-channel JSON rewrite.
-  const zapList = channels.value
-    .filter(c => c.streamUrl && c.streamUrl !== 'undefined' && c.streamUrl !== 'null')
-    .slice(0, 200)
-    .map(c => ({
-      id: c.id,
-      name: c.name,
-      logoUrl: c.logoUrl,
-      streamUrl: c.streamUrl,
-      userAgent: c.userAgent,
-      referer: c.referer,
-    }))
-  liveTv.setZapList(zapList)
-  saveLivePlay({
-    id: ch.id,
-    title: ch.name,
-    logo: ch.logoUrl ?? '',
-    sourceId: liveTv.activeSourceId || 'free:iptv-org',
-    streamUrl: ch.streamUrl,
-    userAgent: ch.userAgent,
-    referer: ch.referer,
-    zapList,
-  })
-  // Identity only — the stream URL stays on the zap list. Putting it in
-  // the query broke on `&` in the path and blew the address bar up.
-  void router.push({
-    path: localePath('/live-tv/watch'),
-    query: {
-      id: ch.id,
-      title: ch.name,
-      logo: ch.logoUrl ?? '',
-      type: 'live',
-      sourceId: liveTv.activeSourceId || 'free:iptv-org',
-      from: route.fullPath,
-    },
-  })
+  play(ch, channels.value)
 }
 
 /**
@@ -358,7 +331,7 @@ watch(liveCategory, name => {
           :view="liveTv.view"
           :selected-category="liveTv.selectedCategory"
           :categories="liveTv.categories"
-          :total-channels="liveTv.totalChannels"
+          :total-channels="onlineTotal"
           :favorite-count="liveTv.favKeys.size"
           :recent-count="liveTv.recentChannels.length"
           categories-open
@@ -432,7 +405,26 @@ watch(liveCategory, name => {
             @load-more="liveTv.loadMore()"
             @play="playChannel"
             @toggle-favorite="liveTv.toggleFavorite($event)"
-          />
+          >
+            <template v-if="showShelves" #header>
+              <div class="-mx-4 flex flex-col gap-6 pb-6 md:-mx-6">
+                <live-tv-live-channel-tile-row
+                  :title="$t('Recently watched')"
+                  :channels="liveTv.recentChannels"
+                  @play="play($event, liveTv.recentChannels)"
+                />
+                <live-tv-live-channel-tile-row
+                  :title="$t('Favourites')"
+                  :channels="liveTv.favoriteChannels"
+                  starred
+                  @play="play($event, liveTv.favoriteChannels)"
+                />
+              </div>
+              <h2 class="pb-3 text-title-large font-bold">
+                {{ $t('All channels') }}
+              </h2>
+            </template>
+          </live-tv-live-channel-grid>
         </template>
       </section>
     </div>
@@ -461,7 +453,7 @@ watch(liveCategory, name => {
             :view="liveTv.view"
             :selected-category="liveTv.selectedCategory"
             :categories="liveTv.categories"
-            :total-channels="liveTv.totalChannels"
+            :total-channels="onlineTotal"
             :favorite-count="liveTv.favKeys.size"
             :recent-count="liveTv.recentChannels.length"
             categories-open

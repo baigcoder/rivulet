@@ -338,6 +338,31 @@ export function inIntro(key: string, position: number): { target: number } | nul
   return null
 }
 
+/**
+ * Chapter titles that name an opening or the end credits. Releases from most
+ * groups carry them, so an intro nobody marked by hand is still skippable.
+ * Anchored and short on purpose: "Opening Night" is a chapter of a film, not
+ * its title sequence.
+ */
+const INTRO_CHAPTER = /^(?:intro(?:duction)?|opening(?: credits| titles| theme)?|op|title sequence|main titles?)$/i
+const CREDITS_CHAPTER = /^(?:(?:end(?:ing)? )?credits|ending|ed|outro|closing credits)$/i
+
+/** The intro chapter the playhead is in, from the file's own chapter titles. */
+export function chapterIntro(chapters: readonly { time: number, title?: string }[], position: number): { target: number } | null {
+  for (let i = 0; i < chapters.length; i++) {
+    const ch = chapters[i]!
+    const next = chapters[i + 1]
+    if (next && INTRO_CHAPTER.test((ch.title ?? '').trim()) && position >= ch.time && position < next.time)
+      return { target: next.time }
+  }
+  return null
+}
+
+/** Whether the playhead has reached a chapter titled as the end credits. */
+export function chapterCredits(chapters: readonly { time: number, title?: string }[], position: number): boolean {
+  return chapters.some(ch => CREDITS_CHAPTER.test((ch.title ?? '').trim()) && position >= ch.time)
+}
+
 /** Are we past the credits start? */
 export function inCredits(key: string, position: number, duration: number): boolean {
   const data = getSkipData(key)

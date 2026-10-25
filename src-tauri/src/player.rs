@@ -434,7 +434,9 @@ pub fn player_start(
 	if let Some(rf) = rf.as_deref() {
 		command.arg(format!("--referrer={rf}"));
 	}
-	let spawn = command.arg(&url).spawn();
+	// `--` ends the options: a "URL" beginning with `--script=` is a file name
+	// here, never an instruction to mpv.
+	let spawn = command.arg("--").arg(&url).spawn();
 
 	match spawn {
 		Ok(mpv) => {
@@ -461,6 +463,7 @@ pub fn player_stop(state: tauri::State<'_, PlayerState>) {
 /// `command` is a full mpv IPC object, e.g. `{"command":["cycle","pause"]}`.
 #[tauri::command]
 pub fn player_ipc(state: tauri::State<'_, PlayerState>, command: String) -> Result<String, String> {
+	crate::player_guard::check(&command)?;
 	let path = state.0.lock().unwrap().ipc.clone().ok_or("player not running")?;
 	player_socket::command(&path, &command)
 }

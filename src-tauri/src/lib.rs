@@ -5,12 +5,12 @@ use tauri::{
     tray::TrayIconBuilder,
 };
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use librqbit::{
-    api::Api, dht::DhtPersistenceConfig, http_api::HttpApi, DhtSessionConfig, ListenerMode,
+    api::Api, dht::DhtPersistenceConfig, http_api::{HttpApi, HttpApiOptions}, DhtSessionConfig, ListenerMode,
     ListenerOptions, Session, SessionOptions, SessionPersistenceConfig,
 };
 use librqbit_dualstack_sockets::TcpListener;
@@ -33,6 +33,11 @@ use crate::api::ApiState;
 )]
 mod player;
 
+/// Which mpv commands and properties the page may send — every backend that
+/// has an mpv to send them to checks here first.
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+mod player_guard;
+
 /// Direct HTTP vs torrent-engine mpv cache flags.
 mod player_direct;
 
@@ -51,6 +56,15 @@ mod api;
 /// Why a local server did not start, so the page can say so instead of
 /// waiting for one that is not there.
 mod startup;
+
+/// The folders the page may write into or open — see `download_url`.
+mod folders;
+
+/// The Origin/Host rule every loopback server applies before it acts.
+mod local_guard;
+
+/// Port 3030: the torrent engine's HTTP API, behind that rule.
+mod engine_front;
 
 /// Credential redaction for mpv's log tail. Every platform's
 /// `player_status` reads that log, and a live stream's URL carries the
@@ -326,6 +340,7 @@ async fn audio_envelope(
     start: f64,
     duration: f64,
 ) -> Result<Vec<f32>, String> {
+    media_url(&url)?;
     let exe = ffmpeg(&app);
     tauri::async_runtime::spawn_blocking(move || {
         // A 5.1 mix puts the dialogue in the centre channel and the score around
@@ -411,6 +426,7 @@ async fn thumbnail(
     // Same wrap mpv uses: ffmpeg on a debrid resolver sits on each 302, and
     // a hover would wait the same 40s the picture used to. Loopback is a no-op.
     let url = crate::player_direct::play_url(&url, Some(crate::player_direct::STREAM_UA), None);
+    media_url(&url)?;
     let exe = ffmpeg(&app);
     tauri::async_runtime::spawn_blocking(move || {
         let out = ffmpeg_command(exe)
@@ -647,6 +663,11 @@ fn reveal_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
     } else {
         PathBuf::from(trimmed)
     };
+    // Only somewhere the app writes to: the file manager is asked to open
+    // whatever it is handed, and on Windows that can mean running it.
+    if !folders::may_reveal(&candidate) {
+        return Err("that folder is not one this app uses".into());
+    }
     let target = match existing_path_for_reveal(&candidate.to_string_lossy()) {
         Ok(p) => p,
         Err(_) => {
@@ -682,6 +703,17 @@ mod reveal_path_tests {
     }
 }
 
+/// The folder a download lands in when it names none: the setting if there is
+/// one, else the default this side picks (see `default_download_dir`). The
+/// Downloads page shows it and opens it, so it has to be the real answer.
+#[tauri::command]
+fn download_dir(app: tauri::AppHandle, path: Option<String>) -> String {
+    match path.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+        Some(p) => p.to_string(),
+        None => default_download_dir(&app).to_string_lossy().into_owned(),
+    }
+}
+
 #[derive(serde::Serialize)]
 struct DiskSpace {
     /// Bytes a normal process may still write.
@@ -703,32 +735,155 @@ fn disk_space(app: tauri::AppHandle, path: Option<String>) -> Result<DiskSpace, 
         Some(p) => PathBuf::from(p),
         None => cache_dir(&app).join("rivulet-torrents"),
     };
-    #[cfg(unix)]
+    // A folder not made yet is measured by the nearest one that exists — the
+    // drive is the same either way.
+    let mut probe = dir.clone();
+    while !probe.exists() && probe.pop() {}
+    space_of(&probe).ok_or_else(|| format!("could not read the free space of {}", dir.display()))
+}
+
+/// Free and total bytes on the filesystem holding `dir`.
+#[cfg(unix)]
+fn space_of(dir: &Path) -> Option<DiskSpace> {
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
+    let mut raw = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    if unsafe { libc::statvfs(path.as_ptr(), raw.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    let s = unsafe { raw.assume_init() };
+    // f_frsize is the unit both block counts are in. f_bavail (not f_bfree)
+    // is what an unprivileged process may use — the difference is the
+    // filesystem's own root-only reserve.
+    let unit = s.f_frsize as u64;
+    Some(DiskSpace {
+        free: s.f_bavail as u64 * unit,
+        total: s.f_blocks as u64 * unit,
+    })
+}
+
+/// The same question asked of Windows. It used to have no answer here at all,
+/// so the storage budget never evicted and no screen could say a drive was full
+/// — which is how a stream failed on a C: drive with 3 GB left.
+#[cfg(windows)]
+fn space_of(dir: &Path) -> Option<DiskSpace> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    let wide: Vec<u16> = dir.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let (mut free, mut total) = (0u64, 0u64);
+    // The first figure is what this user may write, quotas included.
+    let ok = unsafe { GetDiskFreeSpaceExW(wide.as_ptr(), &mut free, &mut total, std::ptr::null_mut()) };
+    (ok != 0).then_some(DiskSpace { free, total })
+}
+
+/// A drive downloads can go to, for the Storage page's buttons.
+#[derive(serde::Serialize)]
+struct Drive {
+    name: String,
+    path: String,
+    free: u64,
+    total: u64,
+}
+
+/// Every drive a download could go to, with its free space: the fixed and
+/// removable ones on Windows, and on Linux and macOS the home folder's drive
+/// plus whatever is mounted where those systems mount drives. A full system
+/// drive is fixed by picking another one here, not by knowing where it lives.
+fn drives() -> Vec<Drive> {
+    let mut out = Vec::new();
+    #[cfg(windows)]
     {
-        use std::os::unix::ffi::OsStrExt;
-        let path = std::ffi::CString::new(dir.as_os_str().as_bytes()).map_err(|e| e.to_string())?;
-        let mut raw = std::mem::MaybeUninit::<libc::statvfs>::uninit();
-        if unsafe { libc::statvfs(path.as_ptr(), raw.as_mut_ptr()) } != 0 {
-            return Err(format!("statvfs({}) failed", dir.display()));
+        use windows_sys::Win32::Storage::FileSystem::{GetDriveTypeW, GetLogicalDrives};
+        const DRIVE_REMOVABLE: u32 = 2;
+        const DRIVE_FIXED: u32 = 3;
+        let mask = unsafe { GetLogicalDrives() };
+        for i in 0..26u32 {
+            if mask & (1 << i) == 0 {
+                continue;
+            }
+            let letter = char::from(b'A' + i as u8);
+            let root = format!("{letter}:\\");
+            let wide: Vec<u16> = root.encode_utf16().chain(std::iter::once(0)).collect();
+            let kind = unsafe { GetDriveTypeW(wide.as_ptr()) };
+            if kind != DRIVE_FIXED && kind != DRIVE_REMOVABLE {
+                continue;
+            }
+            if let Some(space) = space_of(Path::new(&root)) {
+                out.push(Drive { name: format!("{letter}:"), path: root, free: space.free, total: space.total });
+            }
         }
-        let s = unsafe { raw.assume_init() };
-        // f_frsize is the unit both block counts are in. f_bavail (not f_bfree)
-        // is what an unprivileged process may use — the difference is the
-        // filesystem's own root-only reserve.
-        let unit = s.f_frsize as u64;
-        Ok(DiskSpace {
-            free: s.f_bavail as u64 * unit,
-            total: s.f_blocks as u64 * unit,
-        })
     }
-    #[cfg(not(unix))]
+    #[cfg(all(unix, not(target_os = "android")))]
     {
-        let _ = dir;
-        Err("disk space is only implemented for unix targets".into())
+        let mut roots: Vec<PathBuf> = std::env::var_os("HOME").map(PathBuf::from).into_iter().collect();
+        let user = std::env::var("USER").unwrap_or_default();
+        for parent in [format!("/media/{user}"), format!("/run/media/{user}"), "/mnt".into(), "/Volumes".into()] {
+            if let Ok(entries) = std::fs::read_dir(&parent) {
+                roots.extend(entries.flatten().map(|e| e.path()).filter(|p| p.is_dir()));
+            }
+        }
+        let mut seen = std::collections::HashSet::new();
+        for root in roots {
+            let Some(space) = space_of(&root) else { continue };
+            // Two folders on one filesystem are one drive.
+            if !seen.insert((space.total, space.free / (1 << 20))) {
+                continue;
+            }
+            let name = root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| root.display().to_string());
+            out.push(Drive { name, path: root.to_string_lossy().into_owned(), free: space.free, total: space.total });
+        }
     }
+    out
+}
+
+#[tauri::command(async)]
+fn list_drives() -> Vec<Drive> {
+    drives()
+}
+
+/// Download to this drive: a `Rivulet` folder at its root, made if need be and
+/// approved for writing in one step. Only a drive this side just listed is
+/// accepted, so the page cannot name a folder of its own choosing through here.
+#[tauri::command(async)]
+fn folders_use_drive(root: String) -> Result<String, String> {
+    let known = drives().into_iter().find(|d| d.path == root).ok_or("not a drive this computer has")?;
+    let folder = Path::new(&known.path).join("Rivulet");
+    std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+    folders::approve_folder(folder.clone());
+    Ok(folder.to_string_lossy().into_owned())
 }
 
 /// Strip path separators so a release name cannot write outside `dir`.
+/// What a download may be called once it lands: a film, its audio, its
+/// subtitles, or the archive they came in. Anything else keeps its name with
+/// `.download` after it, so nothing this writes is something Windows or a
+/// desktop will run on a double-click — or from a Startup folder.
+fn media_file_name(name: &str) -> String {
+    const MEDIA: &[&str] = &[
+        "mkv", "mp4", "m4v", "avi", "mov", "webm", "ts", "m2ts", "mts", "wmv", "flv", "mpg",
+        "mpeg", "vob", "iso", "srt", "ass", "ssa", "vtt", "sub", "idx", "sup", "mka", "mp3",
+        "flac", "aac", "m4a", "opus", "ogg", "wav", "ac3", "dts", "eac3", "zip", "rar", "7z",
+    ];
+    let ext = Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase);
+    match ext {
+        Some(e) if MEDIA.contains(&e.as_str()) => name.to_string(),
+        _ => format!("{name}.download"),
+    }
+}
+
+/// `ffmpeg` reads whatever it is pointed at — `file:`, `concat:`, a pipe — so
+/// the two commands that hand it a URL from the page take the web only.
+fn media_url(url: &str) -> Result<(), String> {
+    if url.starts_with("http://") || url.starts_with("https://") {
+        Ok(())
+    } else {
+        Err("not an http url".into())
+    }
+}
+
 fn safe_download_name(name: &str) -> String {
     let mut out = String::new();
     for c in name.chars() {
@@ -773,10 +928,15 @@ async fn download_url(
         Some(p) => PathBuf::from(p),
         None => cache_dir(&app).join("rivulet-torrents"),
     };
+    // A folder the user never chose here is refused, and so is a name that is
+    // not media — see `folders` and `media_file_name`.
+    if !folders::may_write(&folder) {
+        return Err("that folder has not been chosen for downloads".into());
+    }
     tokio::fs::create_dir_all(&folder)
         .await
         .map_err(|e| e.to_string())?;
-    let dest = folder.join(safe_download_name(&filename));
+    let dest = folder.join(media_file_name(&safe_download_name(&filename)));
 
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(30))
@@ -833,6 +993,22 @@ mod download_url_tests {
         assert!(!escaped.contains('\\'), "{escaped}");
         assert_eq!(super::safe_download_name(".."), "download.mkv");
         assert_eq!(super::safe_download_name("Film.mkv"), "Film.mkv");
+    }
+
+    #[test]
+    fn only_media_keeps_its_name() {
+        assert_eq!(super::media_file_name("Film.2024.MKV"), "Film.2024.MKV");
+        assert_eq!(super::media_file_name("Film.srt"), "Film.srt");
+        assert_eq!(super::media_file_name("setup.exe"), "setup.exe.download");
+        assert_eq!(super::media_file_name("run.bat"), "run.bat.download");
+        assert_eq!(super::media_file_name("Film"), "Film.download");
+    }
+
+    #[test]
+    fn ffmpeg_takes_the_web_only() {
+        assert!(super::media_url("http://127.0.0.1:3030/torrents/0/stream/1").is_ok());
+        assert!(super::media_url("file:///C:/x.mkv").is_err());
+        assert!(super::media_url("concat:a|b").is_err());
     }
 }
 
@@ -1012,13 +1188,35 @@ async fn run_torrent_server(
     };
     let api = Api::new(session, None, None);
 
+    // The engine itself listens where the OS puts it, behind a password made
+    // this launch; 3030 is `engine_front`, which checks who is asking first.
+    let hidden = TcpListener::bind_tcp(
+        (std::net::Ipv4Addr::LOCALHOST, 0).into(),
+        Default::default(),
+    )?;
+    let hidden_addr = hidden.socket().local_addr()?;
+    let (user, pass) = (engine_front::secret(), engine_front::secret());
+    let engine = HttpApi::new(
+        api,
+        Some(HttpApiOptions {
+            basic_auth: Some((user.clone(), pass.clone())),
+            ..Default::default()
+        }),
+    )
+    .make_http_api_and_run(hidden, None);
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = engine.await {
+            eprintln!("[rivulet] torrent engine HTTP API stopped: {e:#}");
+        }
+    });
+
     let addr: std::net::SocketAddr = TORRENT_API_ADDR.parse()?;
     // On a dev hot-restart the previous process can still hold the port for a
     // moment. Binding once and giving up leaves the app running with no engine
     // ("Engine offline" and nothing plays), so retry briefly before failing.
     let mut listener = None;
     for attempt in 0..20 {
-        match TcpListener::bind_tcp(addr, Default::default()) {
+        match tokio::net::TcpListener::bind(addr).await {
             Ok(l) => {
                 listener = Some(l);
                 break;
@@ -1034,9 +1232,15 @@ async fn run_torrent_server(
     }
     let listener = listener.expect("loop either binds or returns early");
 
-    HttpApi::new(api, None)
-        .make_http_api_and_run(listener, None)
-        .await
+    engine_front::serve(
+        listener,
+        engine_front::Hidden {
+            addr: hidden_addr,
+            user,
+            pass,
+        },
+    )
+    .await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1104,6 +1308,11 @@ pub fn run() {
             download_url,
             can_self_update,
             reveal_path,
+            download_dir,
+            list_drives,
+            folders_use_drive,
+            folders::folders_migrate,
+            folders::folders_approve,
             // Free TV IPTV — DB-backed query surface. Premium TV (Xtream +
             // user-added M3U) has moved to a separate `premium/` module and
             // a local HTTP API at 127.0.0.1:3032; nothing here touches that
@@ -1146,6 +1355,15 @@ pub fn run() {
             api::commands::premium_entitlement,
         ])
         .setup(|app| {
+            // Before any command can ask which folders the page may use.
+            {
+                let handle = app.handle();
+                folders::init(
+                    handle,
+                    vec![cache_dir(handle).join("rivulet-torrents"), default_download_dir(handle)],
+                );
+            }
+
             // WebKitGTK's default user agent looks like Safari's, so YouTube
             // serves an embed the Safari player config — which WebKitGTK then
             // fails to run, and every trailer on a detail page dies with

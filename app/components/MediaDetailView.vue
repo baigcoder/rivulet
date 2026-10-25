@@ -4,7 +4,7 @@
  * Play is a torrent watch link unless `providerPlay` is set, in which
  * case it stays on the caller's stream.
  */
-import type { Media, MediaType } from '~/utils/tmdb'
+import type { Media, MediaType, Person } from '~/utils/tmdb'
 import { mdiAlertCircleOutline, mdiBookmark, mdiBookmarkOutline, mdiClose, mdiEye, mdiEyeOutline, mdiHeart, mdiHeartOutline, mdiOpenInNew, mdiPlay, mdiShieldLockOutline, mdiStar, mdiVolumeHigh, mdiVolumeOff, mdiYoutube } from '@mdi/js'
 import { useTitleImages } from '~/utils/titleImages'
 
@@ -74,7 +74,7 @@ const cover = computed(() => {
 /** No snapshot and no TMDB yet — skeleton, never an empty page. */
 const heroPending = computed(() => !cover.value && !error.value)
 
-const { data: titleArt, execute: loadTitleArt } = useTitleImages(() => props.type, () => props.id)
+const { data: titleArt, execute: loadTitleArt } = useTitleImages(() => props.type, () => props.id, () => media.value?.lang)
 const sectionStage = ref(0)
 let artFrame = 0
 let sectionFrame = 0
@@ -118,6 +118,19 @@ watch(media, value => {
 const stills = computed(() => titleArt.value?.stills ?? [])
 const coverLogo = computed(() => media.value?.logo || titleArt.value?.logo || null)
 
+// A show whose latest season lists only a name or two gets its whole run's cast,
+// fetched after the page is up — see `loadShowCast`. A film's list is complete.
+const runCast = ref<Person[] | null>(null)
+watch(() => [props.type, props.id, media.value?.cast?.length ?? -1] as const, async ([type, id, count]) => {
+  runCast.value = null
+  if (type !== 'tv' || count < 0 || count >= 6)
+    return
+  const got = await loadShowCast(id).catch(() => null)
+  if (got && id === props.id && got.length > count)
+    runCast.value = got
+}, { immediate: true })
+const cast = computed(() => runCast.value ?? media.value?.cast ?? [])
+
 /** Pinned on first paint so TMDB replacing the snapshot does not swap hero URLs. */
 const pinnedPoster = ref('')
 const pinnedBackdrop = ref('')
@@ -127,6 +140,19 @@ watch(() => `${props.type}-${props.id}`, () => {
   pinnedBackdrop.value = ''
   heroArtReady.value = false
 }, { flush: 'sync' })
+/**
+ * w780 is what the first frame can afford (check:perf) and on a TV that is the
+ * end of it. A desktop window is twice that wide, where w780 reads as a soft,
+ * washed-out picture — so once it is up, a full-size copy fades in over it.
+ */
+const heroSharp = computed(() => heroArtReady.value && isDesktop() && cover.value?.backdrop
+  ? backdropUrl(cover.value.backdrop, 'original') ?? ''
+  : '')
+const heroSharpReady = ref(false)
+watch(heroSharp, () => {
+  heroSharpReady.value = false
+})
+
 watch([cover, () => props.fallbackPoster], ([c, fb]) => {
   if (!c && !fb)
     return
@@ -175,7 +201,10 @@ watch(() => trailerKeys.value.join(',') || media.value?.trailer || '', keys => {
   const go = () => {
     heroIdle.value = true
   }
-  idleHandle = window.setTimeout(go, 4000)
+  // Four seconds is the TV's number (check:perf): a set's GPU is still
+  // painting the page when a video lands on it. A desktop paints this in a
+  // frame, and four seconds there is just a trailer that seems late.
+  idleHandle = window.setTimeout(go, isDesktop() ? 900 : 4000)
 }, { immediate: true })
 
 const heroSrc = computed(() => {
@@ -194,16 +223,27 @@ const heroSrc = computed(() => {
 })
 
 const heroFrame = ref<HTMLIFrameElement | null>(null)
+
+// The embed is two or three cold TLS handshakes before it can draw a frame.
+// Start them while the page is still painting, so the wait above is the only
+// one: a preconnect is a socket, not a download.
+useHead({
+  link: ['https://www.youtube.com', 'https://i.ytimg.com', 'https://www.google.com', 'https://jnn-pa.googleapis.com']
+    .map(href => ({ rel: 'preconnect', href, crossorigin: '' })),
+})
 const heroPlaying = ref(false)
 let showHero = 0
 watch(heroSrc, src => {
   heroPlaying.value = false
   clearTimeout(showHero)
   if (src) {
+    // As long as the dialog waits. Five seconds was shorter than a cold
+    // YouTube load on a slow line, so a trailer that was about to start was
+    // thrown away and the next one started again from nothing.
     showHero = window.setTimeout(() => {
       if (!heroPlaying.value)
         nextTrailer()
-    }, 5000)
+    }, 9000)
   }
 })
 
@@ -247,7 +287,14 @@ const trailerFrame = ref<HTMLIFrameElement | null>(null)
  * so being skipped for the hero must not cost a key its turn here.
  */
 const dialogPick = ref(0)
-const dialogKey = computed(() => trailerKeys.value[dialogPick.value] ?? '')
+/** A video picked from the Videos row: played as asked, with no walk through the list. */
+const videoKey = ref('')
+const dialogKey = computed(() => videoKey.value || (trailerKeys.value[dialogPick.value] ?? ''))
+
+function playVideo(key: string) {
+  videoKey.value = key
+  trailer.value = true
+}
 
 /**
  * The trailer embed never got as far as playing.
@@ -312,7 +359,7 @@ function armTrailerWait() {
 function trailerFailed() {
   if (!trailer.value)
     return
-  if (dialogPick.value + 1 < trailerKeys.value.length) {
+  if (!videoKey.value && dialogPick.value + 1 < trailerKeys.value.length) {
     dialogPick.value += 1
     armTrailerWait()
     return
@@ -331,6 +378,8 @@ function trailerFailed() {
 watch(trailer, open => {
   clearTimeout(trailerWait)
   trailerBroken.value = false
+  if (!open)
+    videoKey.value = ''
   if (!open || import.meta.server)
     return
   // From the top: the hero may have retired keys on a five-second budget this
@@ -492,6 +541,16 @@ const handoff = computed(() => ({
   year: cover.value?.year,
 }))
 
+const downloadsStore = useDownloadsStore()
+
+// Ask the sources now, while the page is being read, for exactly what Play
+// will want — so pressing it skips the search. Not for a title already on the
+// disk: that one plays with no search at all.
+watch(() => [media.value?.imdbId, target.value?.season, target.value?.episode] as const, ([imdb, season, episode]) => {
+  if (imdb && !downloadsStore.cachedFor(progressKey(props.type, props.id, season, episode)))
+    searchAhead(imdb, season ?? 0, episode ?? 0)
+}, { immediate: true })
+
 const playLink = computed(() =>
   target.value
     ? watchLink('tv', props.id, target.value.season, target.value.episode, handoff.value)
@@ -514,6 +573,20 @@ const playLabel = computed(() => [
 
 const showPlay = computed(() => props.providerPlay || props.type === 'movie' || !!target.value)
 
+/** How far into what Play resumes, 0–1 — drawn as a bar along the button. */
+const startedFraction = computed(() => started.value?.duration ? Math.min(1, started.value.position / started.value.duration) : 0)
+
+const playKey = computed(() => progressKey(props.type, props.id, target.value?.season, target.value?.episode))
+
+// The page's lower half (where it streams, videos, keywords, studios, reviews)
+// in one request, started with the rows that show it rather than with the title.
+const region = useWatchRegion()
+const { data: extras, execute: loadExtras } = useTitleExtras(() => props.type, () => props.id, region)
+watch(() => sectionStage.value >= 2 && !!media.value, go => go && void loadExtras(), { immediate: true })
+
+/** This title's own colour, from its artwork — see `useArtAccent`. */
+const accent = useArtAccent(() => cover.value?.backdrop)
+
 const scroller = ref<HTMLElement>()
 provide('detailScroller', scroller)
 
@@ -531,7 +604,7 @@ watch(() => props.id, () => {
   <div
     ref="scroller"
     class="h-full min-h-0 overflow-y-auto pb-12 [scrollbar-gutter:stable]"
-    style="background-color: rgb(var(--v-theme-background))"
+    :style="{ 'background-color': 'rgb(var(--v-theme-background))', '--title-accent': accent || undefined }"
   >
     <div v-if="error && !fallbackTitle" class="flex h-full flex-col items-center justify-center gap-2">
       <v-icon :icon="mdiAlertCircleOutline" color="error" size="40" />
@@ -587,7 +660,7 @@ watch(() => props.id, () => {
       <section
         v-if="cover || heroPending"
         ref="heroBox"
-        class="relative mb-6 h-[50vh] min-h-[380px] overflow-hidden rounded-b-3xl md:h-[60vh] md:min-h-[460px]"
+        class="relative h-[56vh] min-h-[380px] overflow-hidden md:h-[78vh] md:min-h-[520px]"
       >
         <template v-if="heroPending">
           <div class="absolute inset-0 animate-pulse bg-surface-container/35" />
@@ -614,6 +687,15 @@ watch(() => props.id, () => {
             :class="heroArtReady ? 'opacity-100' : 'opacity-0'"
             @load="heroArtReady = true"
           >
+          <img
+            v-if="heroSharp"
+            :src="heroSharp"
+            :alt="cover!.title"
+            decoding="async"
+            class="absolute inset-0 h-full w-full object-cover transition-opacity duration-500"
+            :class="heroSharpReady ? 'opacity-100' : 'opacity-0'"
+            @load="heroSharpReady = true"
+          >
           <div
             v-if="heroSrc"
             class="absolute inset-0 overflow-hidden"
@@ -631,8 +713,19 @@ watch(() => props.id, () => {
               @load="onHeroReady"
             />
           </div>
-          <div class="absolute inset-0 bg-gradient-to-t from-black/95 via-black/40 to-black/20" />
-          <div class="absolute inset-0 bg-gradient-to-r from-black/80 via-transparent to-transparent" />
+          <!-- Dark only where the words sit; the bottom fades into the page
+               itself, so the hero ends in the page's own colour, not a band. -->
+          <div class="absolute inset-0 bg-gradient-to-r from-black/85 via-black/35 to-transparent" />
+          <!-- The title's own colour, low behind the words. Static: painted once. -->
+          <div
+            v-if="accent"
+            class="absolute inset-0"
+            :style="{ background: `radial-gradient(ellipse at 12% 88%, color-mix(in srgb, ${accent} 38%, transparent), transparent 62%)` }"
+          />
+          <div
+            class="absolute inset-x-0 bottom-0 h-3/4"
+            style="background: linear-gradient(to top, rgb(var(--v-theme-background)) 2%, rgba(var(--v-theme-background), 0.85) 25%, transparent)"
+          />
 
           <p
             v-if="sourceLabel"
@@ -659,32 +752,39 @@ watch(() => props.id, () => {
               <v-icon :icon="mdiClose" size="18" />
             </button>
           </div>
-
-          <div class="absolute inset-x-0 bottom-0 p-4 md:p-8">
-            <img
-              v-if="coverLogo"
-              :src="logoUrl(coverLogo)!"
-              :alt="cover!.title"
-              class="h-16 w-auto max-w-md object-contain drop-shadow-[0_2px_24px_rgba(0,0,0,0.8)] md:h-24 md:max-w-lg"
-            >
-            <h1 v-else class="text-headline-large font-bold text-white drop-shadow-[0_2px_24px_rgba(0,0,0,0.7)]">
-              {{ cover!.title }}
-            </h1>
-            <p v-if="media?.tagline" class="mt-1 max-w-3xl text-body-medium italic text-white/70">
-              {{ media.tagline }}
-            </p>
-          </div>
         </template>
       </section>
 
-      <section class="px-4 pb-8 pt-4 md:px-6">
+      <!-- Pulled up over the hero's fade, so the title, the facts and Play are
+           all on the first screen: on a 900px window the old full-height hero
+           left Play below the fold, and a title page whose one job is "watch
+           this" made you scroll to do it. -->
+      <section
+        class="relative z-10 px-4 pb-8 md:px-6"
+        :class="cover || heroPending ? '-mt-40 md:-mt-[46vh]' : 'pt-4'"
+      >
         <div class="flex flex-col gap-6 sm:flex-row sm:items-end">
-          <div class="aspect-2/3 w-32 shrink-0 overflow-hidden rounded-2xl shadow-2xl sm:w-44 lg:w-52">
+          <div
+            class="aspect-2/3 w-32 shrink-0 overflow-hidden rounded-2xl shadow-2xl sm:w-44"
+            :class="pinnedBackdrop ? 'md:hidden' : 'lg:w-52'"
+          >
             <media-poster eager :src="posterUrl(cover?.poster, ui.posterSize) || fallbackPoster" :alt="cover?.title" />
           </div>
 
-          <div v-if="cover && !heroPending" class="flex min-w-0 flex-1 flex-col gap-3">
-            <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-body-small opacity-75">
+          <div v-if="cover && !heroPending" class="flex min-w-0 max-w-4xl flex-1 flex-col gap-4">
+            <img
+              v-if="coverLogo"
+              :src="logoUrl(coverLogo)!"
+              :alt="cover.title"
+              class="max-h-20 w-auto max-w-[min(100%,34rem)] self-start object-contain object-left drop-shadow-[0_4px_30px_rgba(0,0,0,0.75)] md:max-h-36"
+            >
+            <h1 v-else class="text-display-small font-black leading-none tracking-tight drop-shadow-[0_4px_30px_rgba(0,0,0,0.7)] md:text-display-medium">
+              {{ cover.title }}
+            </h1>
+            <p v-if="media?.tagline" class="max-w-3xl text-title-medium font-medium italic text-[var(--title-accent,currentColor)] opacity-90">
+              {{ media.tagline }}
+            </p>
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-body-large opacity-90">
               <media-reviews
                 v-if="id"
                 :id="id"
@@ -696,7 +796,7 @@ watch(() => props.id, () => {
                 <v-icon :icon="mdiStar" size="14" class="text-amber-400" />
                 <span class="font-medium">{{ cover.rating.toFixed(1) }}</span>
               </span>
-              <span v-if="media?.certification" class="rounded border border-outline-variant px-1.5 py-0.5 text-label-small">
+              <span v-if="media?.certification" class="rounded border border-current px-1.5 py-0.5 text-label-medium font-semibold opacity-90">
                 {{ media.certification }}
               </span>
               <span v-for="part in meta" :key="part">{{ part }}</span>
@@ -704,7 +804,7 @@ watch(() => props.id, () => {
             </div>
 
             <div v-if="media" class="flex flex-wrap gap-1.5">
-              <v-chip v-for="genre in media.genres" :key="genre.id" size="small" :text="genre.name" />
+              <v-chip v-for="genre in media.genres" :key="genre.id" size="small" variant="outlined" :text="genre.name" />
               <v-chip
                 v-if="media.collection"
                 size="small"
@@ -717,27 +817,40 @@ watch(() => props.id, () => {
               <div v-for="n in 3" :key="n" class="h-7 w-16 animate-pulse rounded-full bg-surface-container/60" />
             </div>
 
-            <p class="max-w-3xl text-body-medium opacity-85">
+            <p class="max-w-3xl text-body-large leading-relaxed opacity-90">
               {{ cover.overview || $t('No overview.') }}
             </p>
 
-            <dl v-if="credits.length" class="grid grid-cols-1 gap-x-6 gap-y-1 text-body-small sm:grid-cols-2 lg:max-w-2xl">
+            <dl v-if="credits.length" class="grid grid-cols-1 gap-x-8 gap-y-1.5 text-body-medium sm:grid-cols-2 lg:max-w-3xl">
               <div v-for="row in credits" :key="row.label" class="flex gap-2">
                 <dt class="shrink-0 opacity-50">
                   {{ row.label }}
                 </dt>
-                <dd class="truncate opacity-85">
+                <dd class="ms-0 truncate opacity-85">
                   {{ row.value }}
                 </dd>
               </div>
             </dl>
 
-            <div class="flex flex-wrap items-center gap-2 pt-2">
+            <title-status
+              v-if="!providerPlay && media && (type === 'movie' || target)"
+              :progress-key="playKey"
+              :imdb-id="media.imdbId"
+              :season="target?.season"
+              :episode="target?.episode"
+              class="mt-1"
+            />
+
+            <div class="flex flex-wrap items-center gap-3 pt-1">
               <v-btn
                 v-if="showPlay && providerPlay"
                 :prepend-icon="mdiPlay"
-                :size="mobile ? 'default' : 'large'"
+                :size="mobile ? 'large' : 'x-large'"
                 :block="mobile"
+                color="white"
+                variant="flat"
+                rounded="lg"
+                class="px-8 font-bold text-black"
                 @click="emit('play')"
               >
                 {{ playLabel }}
@@ -745,11 +858,18 @@ watch(() => props.id, () => {
               <v-btn
                 v-else-if="showPlay"
                 :prepend-icon="mdiPlay"
-                :size="mobile ? 'default' : 'large'"
+                :size="mobile ? 'large' : 'x-large'"
                 :block="mobile"
+                color="white"
+                variant="flat"
+                rounded="lg"
+                class="relative overflow-hidden px-8 font-bold text-black"
                 :to="playLink"
               >
                 {{ playLabel }}
+                <span v-if="startedFraction" class="absolute inset-x-0 bottom-0 h-1 bg-black/15" aria-hidden="true">
+                  <span class="block h-full bg-[var(--title-accent,rgb(var(--v-theme-primary)))]" :style="{ width: `${Math.round(startedFraction * 100)}%` }" />
+                </span>
               </v-btn>
               <download-button
                 v-if="!providerPlay && media && (type === 'movie' || target)"
@@ -830,8 +950,18 @@ watch(() => props.id, () => {
         </div>
       </section>
 
-      <div class="flex flex-col gap-8">
+      <div class="flex flex-col gap-10">
         <slot name="below" />
+
+        <next-up-card
+          v-if="sectionStage >= 1 && type === 'tv' && !providerPlay && target && media?.seasons?.length"
+          :show-id="id"
+          :season="target.season"
+          :episode="target.episode"
+          :to="playLink"
+          :returning="!!library.lastEpisode(id)"
+          :progress="startedFraction"
+        />
 
         <media-seasons
           v-if="sectionStage >= 1 && !hideSeasons && type === 'tv' && media?.seasons?.length"
@@ -843,9 +973,22 @@ watch(() => props.id, () => {
         />
 
         <cast-row
-          v-if="sectionStage >= 2 && media?.cast?.length"
+          v-if="sectionStage >= 2 && cast.length"
           :title="$t('Cast')"
-          :people="media.cast"
+          :people="cast"
+        />
+
+        <videos-row
+          v-if="sectionStage >= 3 && extras?.videos.length"
+          :videos="extras.videos"
+          @play="playVideo"
+        />
+
+        <collection-row
+          v-if="sectionStage >= 3 && media?.collection"
+          :id="media.collection.id"
+          :name="media.collection.name"
+          :current="Number(id)"
         />
 
         <media-images
@@ -855,6 +998,16 @@ watch(() => props.id, () => {
           :type="type"
           :stills="stills"
         />
+
+        <title-facts
+          v-if="sectionStage >= 3 && media"
+          :type="type"
+          :media="media"
+          :extras="extras ?? null"
+          :region="region"
+        />
+
+        <reviews-preview v-if="sectionStage >= 4 && extras?.reviews.length" :reviews="extras.reviews" />
 
         <media-slider
           v-if="sectionStage >= 4 && id"

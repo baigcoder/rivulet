@@ -1,7 +1,12 @@
 // TMDB v3 — https://developer.themoviedb.org/reference/intro/getting-started
-// The token in TMDB_API is the v4 "API Read Access Token" (sent as a Bearer).
+// The token in TMDB_API is the v4 "API Read Access Token" (sent as a Bearer),
+// or the 32-character v3 "API Key" beside it on the same TMDB page — sent as
+// `api_key`, because TMDB answers a v3 key in the Bearer header with a 401.
 
+/** A v3 key is 32 hex characters; a v4 read token is a long JWT. */
 import { stripProviderPrefix } from './providerTitle'
+
+const V3_KEY = /^[0-9a-f]{32}$/i
 
 export type MediaType = 'movie' | 'tv'
 
@@ -66,7 +71,8 @@ export interface Media {
 export function tmdb<T>(path: string, params?: Record<string, unknown>) {
   // The user's own token wins when they have set one — see `tmdbKey` in the
   // settings store for why that escape hatch exists.
-  const key = useSettingsStore().tmdbKey || useRuntimeConfig().public.TMDB_API
+  const key = String(useSettingsStore().tmdbKey || useRuntimeConfig().public.TMDB_API || '')
+  const v3 = V3_KEY.test(key)
 
   return $fetch<T>(path, {
     baseURL: 'https://api.themoviedb.org/3',
@@ -74,8 +80,8 @@ export function tmdb<T>(path: string, params?: Record<string, unknown>) {
     // regional tag TMDB wants (`pt-BR` for the `pt` the URL carries) — see
     // `tmdbLanguage`. TMDB falls back to English per field, so a language it
     // has nothing in still returns a usable record.
-    params: { language: tmdbLanguage(), ...params },
-    headers: { Authorization: `Bearer ${key}` },
+    params: { language: tmdbLanguage(), ...params, ...(v3 ? { api_key: key } : {}) },
+    headers: v3 ? {} : { Authorization: `Bearer ${key}` },
   })
 }
 
@@ -511,6 +517,18 @@ function trailerOf(raw: RawDetail) {
   return trailersOf(raw)[0] ?? null
 }
 
+/**
+ * A show's cast across its whole run. Its plain `credits` are the *latest
+ * season's*, which for a show between seasons can be a name or two — Lupin's
+ * page listed one actor. Asked for on its own, after the page is up and only
+ * when that list is short: the run's list is the fat payload the first title
+ * request is kept free of.
+ */
+export async function loadShowCast(id: string | number): Promise<Person[]> {
+  const raw = await tmdb<{ cast?: (RawCredit & { roles?: { character?: string }[] })[] }>(`/tv/${id}/aggregate_credits`)
+  return (raw.cast ?? []).slice(0, 20).map(c => toPerson({ ...c, character: c.character ?? c.roles?.[0]?.character }))
+}
+
 function toPerson(c: RawCredit): Person {
   return { id: c.id, name: c.name, role: c.character ?? c.job ?? '', profile: c.profile_path ?? null }
 }
@@ -599,6 +617,17 @@ function reviewAvatar(path?: string | null) {
   return profileUrl(path, 'w45')
 }
 
+function toReview(r: RawReview): Review {
+  return {
+    id: r.id,
+    author: r.author_details?.name || r.author_details?.username || r.author,
+    avatar: reviewAvatar(r.author_details?.avatar_path),
+    rating: r.author_details?.rating ?? null,
+    content: r.content.replace(/<[^>]+>/g, ''),
+    created: r.created_at,
+  }
+}
+
 /** Fetched when the rating menu opens, not with the title — reviews are not first paint. */
 export function useReviews(type: MaybeRefOrGetter<MediaType>, id: MaybeRefOrGetter<string | number>) {
   return useAsyncData(
@@ -608,14 +637,7 @@ export function useReviews(type: MaybeRefOrGetter<MediaType>, id: MaybeRefOrGett
       lazy: true,
       immediate: false,
       watch: [() => toValue(type), () => toValue(id)],
-      transform: (page): Review[] => (page.results ?? []).map(r => ({
-        id: r.id,
-        author: r.author_details?.name || r.author_details?.username || r.author,
-        avatar: reviewAvatar(r.author_details?.avatar_path),
-        rating: r.author_details?.rating ?? null,
-        content: r.content.replace(/<[^>]+>/g, ''),
-        created: r.created_at,
-      })),
+      transform: (page): Review[] => (page.results ?? []).map(toReview),
     },
   )
 }
@@ -737,6 +759,112 @@ export function peekPremiumTmdb(kind: 'movie' | 'tv', providerId: string): strin
   catch {
     return ''
   }
+}
+
+/** One video a title has — trailer, teaser, featurette, clip. */
+export interface TitleVideo {
+  key: string
+  name: string
+  type: string
+}
+
+/** Everything the title page shows below its first screen, in one request. */
+export interface TitleExtras {
+  originalTitle: string
+  /** ISO 639-1. */
+  originalLanguage: string
+  released: string
+  /** Subscription services carrying it in the region — TMDB metadata, nothing to do with sources. */
+  providers: { id: number, name: string, logo: string | null }[]
+  videos: TitleVideo[]
+  keywords: { id: number, name: string }[]
+  companies: { id: number, name: string, logo: string | null }[]
+  reviews: Review[]
+}
+
+interface RawExtras {
+  'original_title'?: string
+  'original_name'?: string
+  'original_language'?: string
+  'release_date'?: string
+  'first_air_date'?: string
+  'production_companies'?: { id: number, name: string, logo_path?: string | null }[]
+  'networks'?: { id: number, name: string, logo_path?: string | null }[]
+  'watch/providers'?: { results?: Record<string, { flatrate?: { provider_id: number, provider_name: string, logo_path?: string | null }[] }> }
+  'videos'?: { results?: (RawVideo & { name?: string })[] }
+  'keywords'?: { keywords?: { id: number, name: string }[], results?: { id: number, name: string }[] }
+  'reviews'?: { results?: RawReview[] }
+}
+
+const VIDEO_ORDER = ['Trailer', 'Teaser', 'Clip', 'Featurette', 'Behind the Scenes', 'Bloopers']
+
+/**
+ * Where it streams, every video, keywords, studios and a few reviews — the
+ * page's lower half, asked for once and only after the first screen is up.
+ * The core request is kept lean (see DETAIL_CORE); this one is the opposite on
+ * purpose, because by the time it runs nothing is waiting on it.
+ */
+export function useTitleExtras(type: MaybeRefOrGetter<MediaType>, id: MaybeRefOrGetter<string | number>, region: MaybeRefOrGetter<string>) {
+  return useAsyncData(
+    () => `extras-${toValue(type)}-${toValue(id)}-${toValue(region)}`,
+    () => tmdb<RawExtras>(`/${toValue(type)}/${toValue(id)}`, {
+      append_to_response: 'watch/providers,videos,keywords,reviews',
+      include_video_language: 'en,null',
+    }),
+    {
+      lazy: true,
+      server: false,
+      immediate: false,
+      transform: (raw): TitleExtras => {
+        const area = raw['watch/providers']?.results?.[toValue(region)]
+        const companies = toValue(type) === 'tv' && raw.networks?.length ? raw.networks : raw.production_companies ?? []
+        return {
+          originalTitle: raw.original_title ?? raw.original_name ?? '',
+          originalLanguage: raw.original_language ?? '',
+          released: raw.release_date ?? raw.first_air_date ?? '',
+          providers: (area?.flatrate ?? []).slice(0, 6).map(p => ({ id: p.provider_id, name: p.provider_name, logo: p.logo_path ?? null })),
+          videos: (raw.videos?.results ?? [])
+            .filter(v => v.site === 'YouTube' && v.key)
+            .map(v => ({ key: v.key, name: v.name ?? v.type, type: v.type }))
+            .sort((a, b) => {
+              const at = (t: string) => {
+                const i = VIDEO_ORDER.indexOf(t)
+                return i < 0 ? VIDEO_ORDER.length : i
+              }
+              return at(a.type) - at(b.type)
+            })
+            .slice(0, 16),
+          keywords: (raw.keywords?.keywords ?? raw.keywords?.results ?? []).slice(0, 12),
+          companies: companies.slice(0, 6).map(c => ({ id: c.id, name: c.name, logo: c.logo_path ?? null })),
+          reviews: (raw.reviews?.results ?? []).map(toReview).filter(r => r.content.trim()).slice(0, 2),
+        }
+      },
+    },
+  )
+}
+
+const trailerCache = new Map<string, Promise<string[]>>()
+
+/**
+ * A title's YouTube keys, best first. The core request no longer carries
+ * videos, so anything that wants a trailer outside the title page (the Home
+ * spotlight) asks here — once per title.
+ */
+export function loadTrailers(type: MediaType, id: string | number) {
+  const key = `${type}-${id}`
+  const hit = trailerCache.get(key)
+  if (hit)
+    return hit
+  const pending = tmdb<{ results: RawVideo[] }>(`/${type}/${id}/videos`, {
+    include_video_language: 'en,null,es,pt,fr,de,it,ja,ko,zh,hi,ar',
+  })
+    .then(page => trailersOf({ videos: page }))
+    .catch(() => {
+      trailerCache.delete(key)
+      return [] as string[]
+    })
+  trailerCache.set(key, pending)
+  return pending
 }
 
 /** Never blocks navigation — the page renders its skeleton while this resolves. */
@@ -877,7 +1005,7 @@ function peekEpisode(id: string | number, season: string | number, episode: stri
   return episodeSync.get(`episode-${id}-${season}-${episode}`)
 }
 
-function loadEpisode(id: string | number, season: string | number, episode: string | number) {
+export function loadEpisode(id: string | number, season: string | number, episode: string | number) {
   const key = `episode-${id}-${season}-${episode}`
   const hit = episodeCache.get(key)
   if (hit)

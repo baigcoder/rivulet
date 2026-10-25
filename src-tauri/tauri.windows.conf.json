@@ -3,8 +3,7 @@
 		"resources": [
 			"mpv/mpv.exe",
 			"mpv/ffmpeg.exe",
-			"mpv/LICENSE.txt",
-			"ytdlp/yt-dlp.exe"
+			"mpv/LICENSE.txt"
 		]
 	}
 }

@@ -1,6 +1,7 @@
 import assert from 'node:assert'
 import process from 'node:process'
-import { diskBudget, ENGINE, engineFault, findReleases, haveAt, headFill, isAwkward, isPack, normalizeSource, NoServerStream, parseRelease, pickBest, pickPlay, pickSubtitleFiles, pickVideoFile, PIECE_CEILING, pieceBytes, planEviction, planNetwork, PRIME_BYTES, primeHead, primeTail, PROBE_LIMIT, ranked, releaseFileName, releaseKey, releaseLangs, releaseQuality, serverCandidates, setSources, startTorrent, streamParts, toRelease, uploadLimit, usedBytes, withoutUhd } from '../app/utils/torrents'
+import { pickKitsuEntry } from '../app/utils/kitsu'
+import { contiguousAhead, diskBudget, ENGINE, engineFault, episodeFileIn, findReleases, handles, haveAt, headFill, isAwkward, isErrorCard, isOffLanguage, isPack, isWeakSwarm, linkWithHeaders, normalizeSource, NoServerStream, parseRelease, pausedUntil, pickBest, pickPlay, pickSubtitleFiles, pickVideoFile, PIECE_CEILING, pieceBytes, planEviction, planNetwork, PRIME_BYTES, primeHead, primeTail, PROBE_LIMIT, ranked, releaseFileName, releaseKey, releaseLangs, releaseQuality, resumeSource, serverCandidates, setPreferredLanguages, setSourceCapabilities, setSources, startTorrent, STREAM_BUFFER_HIGH_S, STREAM_BUFFER_LOW_S, streamCap, streamParts, toRelease, uploadLimit, usedBytes, withoutUhd } from '../app/utils/torrents'
 // Self-check for the torrent parser/ranker: `bun scripts/check-torrents.ts`.
 // The fixture is the response shape a source answers with, filled in with a
 // public-domain film. `--live <source-url> <imdb-id>` also searches for real.
@@ -533,8 +534,8 @@ await assert.rejects(() => findReleases('tt0000001'), /No sources configured/)
 const sourcesPage = await Bun.file('app/pages/settings/sources.vue').text()
 assert.ok(!/strem\.fun/i.test(sourcesPage), 'Settings → Sources names no particular source host')
 assert.ok(!sourcesPage.includes('Quick Presets'), 'and offers no bundled addons to click')
-assert.ok(sourcesPage.includes('Torrent engine'), 'and names the engine Play mode')
-assert.ok(sourcesPage.includes('Direct play'), 'and the Direct play mode')
+assert.ok(sourcesPage.includes('Download while watching'), 'and names the engine Play mode')
+assert.ok(sourcesPage.includes('Stream only'), 'and the stream-only Play mode')
 assert.ok(!sourcesPage.includes('Best available (Torrent Engine ON)'), 'old switch labels are gone')
 
 // Whatever a user copies has to end up as a base we can append /stream/… to.
@@ -1181,6 +1182,101 @@ assert.deepEqual(ranges, [], 'nothing to prime on a file that is shorter than th
 globalThis.fetch = realFetch
 setSources([])
 
+// --- A swarm too thin to start loses to a healthy copy, whatever its quality --
+const thin = toRelease({ name: 'Example\n1080p', title: 'Film.2020.1080p.BluRay\n👤 3 💾 2 GB ⚙️ a', infoHash: 'thin' })!
+const healthy = toRelease({ name: 'Example\n720p', title: 'Film.2020.720p.BluRay\n👤 300 💾 1 GB ⚙️ a', infoHash: 'live' })!
+assert.ok(isWeakSwarm(thin) && !isWeakSwarm(healthy))
+assert.equal(pickBest([thin, healthy])!.hash, 'live', 'three seeders at 1080p do not start; three hundred at 720p do')
+assert.equal(pickBest([thin])!.hash, 'thin', 'and the thin one still plays when it is the only copy')
+
+// --- A dub the viewer cannot follow loses to one they can -----------------------
+// Addons draw the audio as a flag on a line of its own, as well as in the name.
+const dub = toRelease({ name: 'Example\n1080p', title: 'Film.2020.TRUEFRENCH.1080p.WEB\n👤 400 💾 2 GB ⚙️ a\n🇫🇷', infoHash: 'dub' })!
+const flagOnly = toRelease({ name: 'Example\n1080p', title: 'Film.2020.1080p.WEB\n👤 400 💾 2 GB ⚙️ a\n🇮🇹', infoHash: 'ita' })!
+const plain = toRelease({ name: 'Example\n720p', title: 'Film.2020.720p.WEB\n👤 400 💾 1 GB ⚙️ a', infoHash: 'eng' })!
+assert.deepEqual(dub.langs, ['fr'])
+assert.deepEqual(flagOnly.langs, ['it'], 'a flag alone names the language')
+assert.deepEqual(plain.langs, [], 'saying nothing is not saying a language')
+setPreferredLanguages(['en-GB', 'en'])
+assert.ok(isOffLanguage(dub) && !isOffLanguage(plain))
+assert.equal(pickBest([dub, flagOnly, plain])!.hash, 'eng', 'the 720p they can follow beats two 1080p dubs')
+setPreferredLanguages(['fr', 'en'])
+assert.equal(pickBest([dub, plain])!.hash, 'dub', 'for a French reader the French 1080p wins')
+setPreferredLanguages([])
+
+// --- An addon is asked only for what its manifest says it covers ------------
+setSourceCapabilities({ 'https://movies.example': { types: ['movie'], idPrefixes: ['tt'] }, 'https://anime.example': { types: ['series'], idPrefixes: ['kitsu'] } })
+assert.ok(handles('https://movies.example', 'movie', 'tt1727587'))
+assert.ok(!handles('https://movies.example', 'series', 'tt1748166:1:1'), 'a movie-only addon is not asked for an episode')
+assert.ok(!handles('https://anime.example', 'series', 'tt1748166:1:1'), 'a Kitsu-only addon is not asked by IMDb id')
+assert.ok(handles('https://anime.example', 'series', 'kitsu:46474:3'))
+assert.ok(handles('https://unknown.example', 'series', 'kitsu:1:1'), 'nothing on file: asked about everything, as before')
+setSourceCapabilities({})
+
+// --- A source that keeps failing sits out, and a check brings it back --------
+setSources(['https://down.example'])
+globalThis.fetch = (async () => {
+  throw new TypeError('network down')
+}) as unknown as typeof fetch
+for (let i = 0; i < 3; i++)
+  await findReleases('tt1727587').catch(() => {})
+assert.ok(pausedUntil('https://down.example') > Date.now(), 'three failures in a row: paused')
+resumeSource('https://down.example')
+assert.equal(pausedUntil('https://down.example'), 0)
+globalThis.fetch = realFetch
+setSources([])
+
+// --- A link that needs headers plays through the proxy, which sends them -----
+const plainLink = 'https://cdn.example/film.mkv'
+assert.equal(linkWithHeaders(plainLink, null), plainLink, 'no headers: the link as it is')
+const withHeaders = toRelease({ name: 'Example\n1080p', title: 'Film.2020.1080p.WEB', url: plainLink, behaviorHints: { proxyHeaders: { request: { 'User-Agent': 'Agent/1', 'Referer': 'https://site.example/', 'Cookie': 'a=1', 'Host': 'evil' } } } })!
+assert.deepEqual(withHeaders.headers, { 'User-Agent': 'Agent/1', 'Referer': 'https://site.example/', 'Cookie': 'a=1' }, 'Host is never forwarded')
+const proxied = new URL(linkWithHeaders(withHeaders.url, withHeaders))
+assert.equal(proxied.origin, 'http://127.0.0.1:3031')
+assert.equal(proxied.searchParams.get('url'), plainLink)
+assert.equal(proxied.searchParams.get('X-Rivulet-Ua'), 'Agent/1')
+assert.equal(proxied.searchParams.get('X-Rivulet-Referer'), 'https://site.example/')
+assert.equal(proxied.searchParams.get('X-Rivulet-H'), 'Cookie: a=1')
+
+// --- Next episode: only a file that is really that episode is reused ---------
+const packFiles = [
+  { name: 'Show.S01E01.mkv', length: 1, included: true },
+  { name: 'Show.S01E02.mkv', length: 1, included: false },
+  { name: 'Show.S01E03.nfo', length: 1, included: false },
+]
+assert.equal(episodeFileIn(packFiles, 1, 2), 1)
+assert.equal(episodeFileIn(packFiles, 1, 3), null, 'not a video')
+assert.equal(episodeFileIn(packFiles, 1, 9), null, 'not in the pack — never the largest file instead')
+
+// --- Anime: the Kitsu entry for the season asked for ------------------------
+const frieren = [
+  { id: '46474', titles: ['Sousou no Frieren', 'Frieren: Beyond Journey’s End'], subtype: 'TV', year: 2023 },
+  { id: '49240', titles: ['Sousou no Frieren 2nd Season', 'Frieren: Beyond Journey\'s End Season 2'], subtype: 'TV', year: 2026 },
+  { id: '48105', titles: ['Sousou no Frieren: Marumaru no Mahou'], subtype: 'ONA', year: 2023 },
+]
+assert.equal(pickKitsuEntry(frieren, { movie: false, season: 1, year: 2023 }), '46474')
+assert.equal(pickKitsuEntry(frieren, { movie: false, season: 2 }), '49240')
+assert.equal(pickKitsuEntry(frieren, { movie: false, season: 5 }), null, 'no such season: no answer rather than the wrong one')
+assert.equal(pickKitsuEntry(frieren, { movie: true, season: 0 }), null, 'a film is never a series entry')
+
+// --- Stream only fetches as you watch ------------------------------------------
+// One 100-piece file; pieces 0-29 are on the disk, 30 is not, 31-59 are.
+const film = { start: 0, length: 100, total: 100, pieces: 100 }
+const filled = new Uint8Array(13)
+for (let i = 0; i < 60; i++) {
+  if (i !== 30)
+    filled[i >> 3]! |= 0x80 >> (i & 7)
+}
+assert.equal(contiguousAhead(film, filled, 0), 0.3, 'counts up to the first gap')
+assert.equal(contiguousAhead(film, filled, 0.31), 0.29, 'and from wherever the playhead is')
+assert.equal(contiguousAhead(film, filled, 0.3), 0, 'standing on the gap: nothing to read')
+const bitrate = 1_000_000
+assert.equal(streamCap(STREAM_BUFFER_LOW_S - 1, bitrate), null, 'short of the buffer: flat out')
+assert.equal(streamCap(STREAM_BUFFER_LOW_S, bitrate), 2_000_000, 'filling: twice the film')
+assert.equal(streamCap(STREAM_BUFFER_HIGH_S, bitrate), 1_150_000, 'full: just keep pace')
+assert.equal(streamCap(STREAM_BUFFER_HIGH_S, 10_000), 256 * 1024, 'never below what keeps peers sending')
+assert.equal(streamCap(600, 0), null, 'no bitrate known: no cap')
+
 // `--live <source-url> <imdb-id>`: no source is baked in, so both are required.
 const live = process.argv.indexOf('--live')
 if (live !== -1) {
@@ -1191,6 +1287,16 @@ if (live !== -1) {
   const best = pickBest(found)
   console.log(`live: ${found.length} results, best = ${best?.quality} ${best?.size} ${best?.seeders} seeders (${best?.source})`)
   assert.ok(best, 'the source returned something playable')
+}
+
+// A debrid addon whose service is down answers with its error card as the only
+// "stream" — played, it was a thirty-second orange clip in place of the film.
+{
+  const card = { name: 'Addon\nTB error', title: 'TorBox is currently unavailable!\nPlease try again later.', url: 'https://addon.example/videos/failed_unavailable_v1.mp4' }
+  assert.ok(isErrorCard(card), 'a source\'s "unavailable" clip is its status, not a release')
+  assert.ok(isErrorCard({ name: 'RD error', url: 'https://addon.example/videos/downloading_v2.mp4' }), 'and so is its "still downloading" one')
+  assert.ok(!isErrorCard({ name: 'Addon\n1080p', url: 'https://cdn.example/resolve/abc/Sintel.2010.1080p.mkv' }), 'a real link is not')
+  assert.ok(!isErrorCard({ name: 'Addon\n1080p', infoHash: 'a'.repeat(40) }), 'nor is a torrent')
 }
 
 console.log('torrents: ok')

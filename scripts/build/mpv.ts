@@ -19,7 +19,8 @@
  *
  * Bumping them: pick a release from the repo below, then update `BUILD.tag` and
  * each binary's asset name and hash out of that release's sha256.txt. Every
- * download is checked against it.
+ * download is checked against it. Then run `bun scripts/build/mpv.ts --mirror`
+ * once, so builds survive that repo pruning the tag — see `sourcesFor`.
  */
 import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -39,12 +40,12 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
  * from drifting apart.
  */
 const BUILD = {
-  tag: '2026-08-26-182fa6ca49',
+  tag: '2026-10-24-a39482e7a5',
   binaries: [
     {
       member: 'mpv.exe',
-      asset: 'mpv-x86_64-20260826-git-182fa6ca49.7z',
-      sha256: '6f0f3f91b978dc75dc5b0a78da58e69c5c3704a2aacc40311a4bab4442ef24bf',
+      asset: 'mpv-x86_64-20261024-git-a39482e7a5.7z',
+      sha256: '6ef5b11a52907b8c8a57bc417840a21e111eede53f1b10e7d7a50d9b126967d8',
     },
     /**
      * mpv links ffmpeg statically but exposes no CLI, and the seek previews and
@@ -54,8 +55,8 @@ const BUILD = {
      */
     {
       member: 'ffmpeg.exe',
-      asset: 'ffmpeg-x86_64-git-56c3d963e.7z',
-      sha256: 'e568ed0b1aebbda552e92c09f0d596fb571d9fe09de661dcc201cb9e3a7628f8',
+      asset: 'ffmpeg-x86_64-git-1d83e7145.7z',
+      sha256: 'e365f10e5f4126b5e9f3c9cf5dbe41ff29bd06d625b04d9fe9cd9f7921169955',
     },
   ],
 }
@@ -136,7 +137,7 @@ function sha256(path: string) {
 }
 
 /**
- * Fetch one asset, and keep trying — see the same note in `ytdlp.ts`.
+ * Fetch one asset, and keep trying.
  *
  * A bare `fetch` in a release build is one CDN hiccup away from failing the
  * whole desktop job, and a release has three runners each taking that bet.
@@ -149,6 +150,10 @@ async function download(url: string, to: string) {
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       const res = await fetch(url)
+      // Gone is gone: a 404 is a release that was pruned, not a server having
+      // a moment, and five backed-off retries of it is half a minute of nothing.
+      if (res.status === 404)
+        throw new Gone(`${url} → HTTP 404`)
       if (!res.ok)
         throw new Error(`${url} → HTTP ${res.status}`)
       writeFileSync(to, new Uint8Array(await res.arrayBuffer()))
@@ -156,11 +161,33 @@ async function download(url: string, to: string) {
     }
     catch (e) {
       last = e
+      if (e instanceof Gone)
+        break
       if (attempt < attempts)
         await new Promise(r => setTimeout(r, attempt * 2000))
     }
   }
   throw last instanceof Error ? last : new Error(String(last))
+}
+
+class Gone extends Error {}
+
+const MIRROR_REPO = 'baigcoder/rivulet'
+const MIRROR_TAG = `mpv-${BUILD.tag}`
+
+/**
+ * Where an asset can be fetched from, in order. The community repo prunes old
+ * releases — a pinned tag goes 404 within weeks, and every fresh Windows build
+ * with it — so the same archive is also kept on this project's own releases
+ * under `mpv-<tag>`. The checksum is what makes a second address safe:
+ * whichever one answers, the bytes are the pinned ones or the build stops.
+ * `bun scripts/build/mpv.ts --mirror` puts them there.
+ */
+function sourcesFor(asset: string) {
+  return [
+    `https://github.com/zhongfly/mpv-winbuild/releases/download/${BUILD.tag}/${asset}`,
+    `https://github.com/${MIRROR_REPO}/releases/download/${MIRROR_TAG}/${asset}`,
+  ]
 }
 
 /** One binary out of the release, downloaded, checked and unpacked. */
@@ -173,9 +200,23 @@ async function ensure(binary: typeof BUILD.binaries[number]): Promise<string> {
   const archive = join(CACHE, binary.asset)
 
   if (!existsSync(archive)) {
-    const url = `https://github.com/zhongfly/mpv-winbuild/releases/download/${BUILD.tag}/${binary.asset}`
     console.log(`→ Fetching ${binary.member} for Windows (${binary.asset}, ~30 MB)`)
-    await download(url, archive)
+    const failures: string[] = []
+    for (const url of sourcesFor(binary.asset)) {
+      try {
+        await download(url, archive)
+        break
+      }
+      catch (e) {
+        failures.push(e instanceof Error ? e.message : String(e))
+      }
+    }
+    if (!existsSync(archive)) {
+      throw new Error(
+        `${binary.asset} is not at any of its addresses:\n  ${failures.join('\n  ')}\n`
+        + `  Pick a current release (see the top of scripts/build/mpv.ts) and update BUILD.`,
+      )
+    }
   }
 
   // A truncated or tampered download would otherwise surface as a mystery
@@ -233,10 +274,29 @@ export function mpvVersion(exe: string): string {
   }
 }
 
-// Also usable on its own: `bun scripts/build/mpv.ts`
+/**
+ * Put the pinned archives on this project's own release `mpv-<tag>`, so a build
+ * still finds them once the community repo prunes the tag. Run by a maintainer
+ * after bumping BUILD; it needs the GitHub CLI signed in with push access. The
+ * archives go up exactly as downloaded — and checksum-checked first.
+ */
+async function mirror() {
+  for (const binary of BUILD.binaries)
+    await ensure(binary)
+  const files = BUILD.binaries.map(b => join(CACHE, b.asset))
+  const exists = spawnSync('gh', ['release', 'view', MIRROR_TAG, '--repo', MIRROR_REPO], { stdio: 'ignore' }).status === 0
+  const args = exists
+    ? ['release', 'upload', MIRROR_TAG, ...files, '--clobber', '--repo', MIRROR_REPO]
+    : ['release', 'create', MIRROR_TAG, ...files, '--repo', MIRROR_REPO, '--title', `mpv ${BUILD.tag}`, '--notes', `Mirror of https://github.com/zhongfly/mpv-winbuild/releases/tag/${BUILD.tag} for reproducible Windows builds. GPLv2+; the licence and source offer ship as mpv/LICENSE.txt in every Rivulet bundle.`]
+  if (spawnSync('gh', args, { stdio: 'inherit' }).status !== 0)
+    throw new Error('gh could not publish the mirror — is it installed and signed in?')
+  return MIRROR_TAG
+}
+
+// Also usable on its own: `bun scripts/build/mpv.ts` (or `--mirror`, above)
 if (import.meta.main) {
-  ensureMpv()
-    .then(path => console.log(path))
+  (process.argv.includes('--mirror') ? mirror() : ensureMpv())
+    .then(out => console.log(out))
     .catch((e: Error) => {
       console.error(`\n✗ ${e.message}\n`)
       process.exit(1)

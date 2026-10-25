@@ -80,14 +80,14 @@ const search = defineModel<string>('search', { required: true })
 
     <div class="flex shrink-0 items-center gap-0.5 rounded-xl bg-surface-container-high p-0.5">
       <div
-        class="hidden min-h-11 max-w-52 items-center gap-2 px-2.5 md:flex"
+        class="hidden min-h-11 items-center gap-2 px-2.5 md:flex"
         role="status"
         :aria-label="statusLabel"
         :title="statusLabel"
       >
         <span class="size-2 shrink-0 rounded-full" :class="statusTone" />
-        <span class="min-w-0 truncate text-body-medium">{{ statusText }}</span>
-        <span v-if="statusMeta" class="shrink-0 text-body-medium opacity-55">{{ statusMeta }}</span>
+        <span class="shrink-0 whitespace-nowrap text-body-medium">{{ statusText }}</span>
+        <span v-if="statusMeta" class="hidden shrink-0 whitespace-nowrap text-body-medium opacity-55 lg:inline">{{ statusMeta }}</span>
       </div>
       <span
         class="mx-2 size-2 shrink-0 rounded-full md:hidden"

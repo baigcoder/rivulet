@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { mdiAlertCircleOutline } from '@mdi/js'
+import { invoke } from '@tauri-apps/api/core'
 import { applyTheme, paintedTheme } from '~/theme/themes'
 import { pushEntitlement } from '~/utils/premiumTv'
 
@@ -169,6 +170,11 @@ watch(
   },
   { immediate: true },
 )
+
+// Folders now need the user's say-so on the Rust side before anything is
+// written there. A download folder chosen before that rule existed is carried
+// over once, on the first launch that has it; Rust ignores every later call.
+void invoke('folders_migrate', { path: settings.downloadDir || null }).catch(() => {})
 
 // One check a launch, for the badge in the toolbar. Deliberately not awaited and
 // never fatal: it is a GitHub request, and being offline is the ordinary case.

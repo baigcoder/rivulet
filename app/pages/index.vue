@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { TmdbPage } from '~/utils/tmdb'
-import { mdiArrowRight, mdiArrowUp, mdiBookmark, mdiBookmarkOutline, mdiChevronLeft, mdiChevronRight, mdiClose, mdiHeart, mdiHeartOutline, mdiInformationOutline, mdiPlay, mdiStar, mdiTelevision } from '@mdi/js'
+import { mdiArrowRight, mdiArrowUp, mdiBookmark, mdiBookmarkOutline, mdiChevronLeft, mdiChevronRight, mdiClose, mdiHeart, mdiHeartOutline, mdiInformationOutline, mdiMovieOpenPlayOutline, mdiPlay, mdiStar, mdiTelevision } from '@mdi/js'
 
 definePageMeta({ keepalive: true })
 
@@ -24,24 +24,37 @@ const featured = computed(() =>
     ? spotlight.value[Math.min(at.value, spotlight.value.length - 1)]
     : undefined)
 
+/** The next slide, shown as a picture beside the progress. */
+const upNext = computed(() => spotlight.value.length > 1 ? spotlight.value[(at.value + 1) % spotlight.value.length] : undefined)
+
 // Update ambient background when featured title changes
 watch(featured, media => media && ui.ambient(media), { immediate: true })
 
 // Fetch detail for the featured item (for logo, trailer, runtime, certification)
-const featuredDetail = ref<{ logo: string | null, trailer: string | null, runtime: number, certification: string, genres: { name: string }[] } | null>(null)
+const featuredDetail = ref<{ logo: string | null, trailer: string | null, runtime: number, certification: string, genres: { name: string }[], overview?: string } | null>(null)
 watch(featured, async m => {
   if (!m) {
     featuredDetail.value = null
     return
   }
+  // The shared detail request is lean (no images, no videos), so its logo and
+  // trailer are always empty: those two come from their own cached lookups,
+  // all three at once. A slide that moved on meanwhile drops the answer.
   try {
-    const data = await loadMediaDetail(m.type, m.id)
+    const [data, logo, trailers] = await Promise.all([
+      loadMediaDetail(m.type, m.id),
+      loadTitleLogo(m.type, m.id, m.lang),
+      loadTrailers(m.type, m.id),
+    ])
+    if (featured.value?.id !== m.id)
+      return
     featuredDetail.value = {
-      logo: data.logo,
-      trailer: data.trailer,
+      logo: logo ?? data.logo,
+      trailer: trailers[0] ?? data.trailer,
       runtime: data.runtime,
       certification: data.certification,
       genres: data.genres,
+      overview: data.overview,
     }
   }
   catch {
@@ -212,175 +225,170 @@ const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
     ref="scroller"
     class="h-full overflow-y-auto pb-10"
   >
-    <!-- Cover Banner Hero Section -->
+    <!-- Spotlight. Full-bleed rather than a card: the picture is the point, so
+         it runs to the edges and fades into the app's own background through a
+         mask instead of being boxed in black. A mask is painted once — on a TV
+         the cost is the crossfade, and that is opacity only. -->
     <section
       v-if="featured"
-      class="group/hero relative mx-4 mt-2 h-[62vh] min-h-[480px] overflow-hidden rounded-2xl md:mx-6 md:h-[68vh]"
+      class="group/hero relative flex min-h-[max(520px,74vh)] flex-col overflow-hidden md:min-h-[max(560px,80vh)]"
       @mouseenter="isHovered = true"
       @mouseleave="isHovered = false"
+      @focusin="isHovered = true"
+      @focusout="isHovered = false"
     >
-      <!-- Backdrop Image with Smooth Fade & Scale Zoom. Only transform/opacity
-           animate — the crossfade runs on a full-window element and
-           `transition-all` there repaints the whole hero for 700ms. -->
-      <transition
-        enter-active-class="transition-[opacity,transform] duration-700 ease-out"
-        leave-active-class="transition-[opacity,transform] duration-700 ease-in"
-        enter-from-class="opacity-0 scale-105"
-        leave-to-class="opacity-0 scale-95"
-      >
-        <div v-if="featured" :key="featured.id" class="absolute inset-0 transform transition-transform duration-1000 ease-out hover:scale-105">
-          <media-poster :src="backdropUrl(featured.backdrop, 'w1280')" :alt="featured.title" class="[&_img]:object-top" />
-        </div>
-      </transition>
+      <div class="hero-mask absolute inset-0">
+        <transition
+          enter-active-class="transition-opacity duration-700 ease-out"
+          leave-active-class="transition-opacity duration-700 ease-in"
+          enter-from-class="opacity-0"
+          leave-to-class="opacity-0"
+        >
+          <div :key="featured.id" class="absolute inset-0">
+            <media-poster
+              :src="backdropUrl(featured.backdrop, 'original')"
+              :alt="featured.title"
+              class="[&_img]:object-[70%_25%]"
+            />
+          </div>
+        </transition>
+        <!-- Legibility where the words sit, and nowhere else: the right of
+             the picture stays as bright as it was shot. -->
+        <div class="absolute inset-0 bg-gradient-to-r from-black/85 via-black/45 to-transparent md:via-black/25" />
+        <div class="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-black/70 to-transparent" />
+      </div>
 
-      <!-- Gradient Overlays for High Legibility -->
-      <div class="absolute inset-0 bg-gradient-to-t from-black/95 via-black/50 to-black/20" />
-      <div class="absolute inset-0 bg-gradient-to-r from-black/90 via-black/40 to-transparent" />
-
-      <!-- Left / Right Carousel Navigation Arrows -->
       <button
         v-if="spotlight.length > 1"
         type="button"
-        class="absolute left-3 top-1/2 z-10 grid size-11 -translate-y-1/2 place-items-center rounded-full border border-white/10 bg-black/60 text-white opacity-0 transition-[opacity,transform,background-color] hover:scale-110 hover:bg-primary hover:text-on-primary group-hover/hero:opacity-100 focus-visible:opacity-100"
+        class="absolute left-3 top-1/2 z-10 grid size-12 -translate-y-1/2 place-items-center rounded-full bg-black/40 text-white opacity-0 transition-[opacity,background-color] hover:bg-white/25 group-hover/hero:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary"
         :aria-label="$t('Previous')"
         @click="prevSlide"
       >
-        <v-icon :icon="mdiChevronLeft" size="28" />
+        <v-icon :icon="mdiChevronLeft" size="30" />
       </button>
-
       <button
         v-if="spotlight.length > 1"
         type="button"
-        class="absolute right-3 top-1/2 z-10 grid size-11 -translate-y-1/2 place-items-center rounded-full border border-white/10 bg-black/60 text-white opacity-0 transition-[opacity,transform,background-color] hover:scale-110 hover:bg-primary hover:text-on-primary group-hover/hero:opacity-100 focus-visible:opacity-100"
+        class="absolute right-3 top-1/2 z-10 grid size-12 -translate-y-1/2 place-items-center rounded-full bg-black/40 text-white opacity-0 transition-[opacity,background-color] hover:bg-white/25 group-hover/hero:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary"
         :aria-label="$t('Next')"
         @click="nextSlide"
       >
-        <v-icon :icon="mdiChevronRight" size="28" />
+        <v-icon :icon="mdiChevronRight" size="30" />
       </button>
 
-      <!-- Banner Content Layout (Poster + Details) -->
-      <div v-if="featured" class="relative h-full flex flex-col justify-end p-4 text-white md:p-8">
-        <div class="flex items-end gap-5 md:gap-7">
-          <!-- Featured Vertical Poster Card -->
-          <nuxt-link
-            :to="mediaLink(featured)"
-            no-prefetch
-            class="group/poster relative hidden sm:block w-32 shrink-0 overflow-hidden rounded-xl border border-white/20 bg-surface-container shadow-[0_16px_40px_rgba(0,0,0,0.8)] transition-[transform,border-color] duration-300 md:w-44 lg:w-48 aspect-2/3 hover:scale-105 hover:border-primary hover:shadow-[0_20px_50px_rgba(111,227,255,0.3)] focus-visible:scale-105 focus-visible:ring-2 focus-visible:ring-primary"
-            @pointerdown="armDetailPress($event, featured)"
-            @click="openDetail($event, featured)"
-          >
-            <media-poster :src="posterUrl(featured.poster, 'w342')" :alt="featured.title" />
-            <div class="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-0 transition-opacity group-hover/poster:opacity-100 flex items-end justify-center pb-3">
-              <v-icon :icon="mdiPlay" size="36" color="primary" />
-            </div>
-          </nuxt-link>
+      <!-- Grows with what it holds rather than clipping it: a fixed height
+           cut the logo off the top on an 819px-tall window. -->
+      <div class="relative flex flex-1 flex-col justify-end gap-6 px-6 pb-8 pt-20 text-white md:px-14 md:pb-10">
+        <!-- Keyed on the title, so every line plays its reveal again. -->
+        <div :key="featured.id" class="flex max-w-2xl flex-col gap-4">
+          <div class="motion-reveal flex items-center gap-2" style="--i: 0">
+            <span class="grid h-7 min-w-7 place-items-center rounded-md bg-primary px-1.5 text-label-large font-black text-on-primary">
+              {{ at + 1 }}
+            </span>
+            <span class="text-label-large font-semibold uppercase tracking-[0.18em] text-white/90">
+              {{ $t('Trending today') }} · {{ featured.type === 'movie' ? $t('Movie') : $t('TV Show') }}
+            </span>
+          </div>
 
-          <!-- Text Details -->
-          <div class="min-w-0 flex-1 flex flex-col justify-end gap-2.5">
-            <div class="motion-reveal flex flex-wrap items-center gap-2" style="--i: 0">
-              <v-chip size="small" :prepend-icon="mdiStar" class="font-medium bg-primary/20 text-primary border border-primary/30">
-                {{ featured.rating.toFixed(1) }}
-              </v-chip>
-              <span class="text-label-medium uppercase tracking-wider opacity-85">
-                {{ featured.type === 'movie' ? $t('Movie') : $t('TV Show') }} · {{ featured.year || $t('unknown') }}
-              </span>
-              <template v-if="featuredDetail?.runtime">
-                <span class="text-label-medium opacity-60">·</span>
-                <span class="text-label-medium uppercase tracking-wider opacity-85">{{ runtimeText(featuredDetail.runtime) }}</span>
-              </template>
-              <template v-if="featuredDetail?.certification">
-                <span class="text-label-medium opacity-60">·</span>
-                <span class="rounded border border-white/30 px-1 text-label-small font-semibold opacity-85">{{ featuredDetail.certification }}</span>
-              </template>
-            </div>
+          <div class="motion-reveal drop-shadow-[0_4px_30px_rgba(0,0,0,0.7)]" style="--i: 1">
+            <img
+              v-if="featuredDetail?.logo"
+              :src="logoUrl(featuredDetail.logo, 'w500') ?? ''"
+              :alt="featured.title"
+              class="max-h-28 w-auto max-w-[min(100%,460px)] object-contain object-left md:max-h-36"
+            >
+            <h1 v-else class="text-display-small font-black leading-none tracking-tight md:text-display-large">
+              {{ featured.title }}
+            </h1>
+          </div>
 
-            <div class="motion-clip-box -my-1 py-1 drop-shadow-[0_2px_24px_rgba(0,0,0,0.8)]">
-              <!-- Logo treatment if available, otherwise text title -->
-              <img
-                v-if="featuredDetail?.logo"
-                :src="logoUrl(featuredDetail.logo, 'w500') ?? ''"
-                :alt="featured.title"
-                class="h-10 md:h-14 lg:h-16 w-auto object-contain"
-              >
-              <h1 v-else class="motion-clip max-w-3xl text-headline-medium font-bold md:text-display-small" style="--i: 1">
-                {{ featured.title }}
-              </h1>
-            </div>
+          <div class="motion-reveal flex flex-wrap items-center gap-x-3 gap-y-1 text-body-large text-white/90" style="--i: 2">
+            <span class="flex items-center gap-1 font-semibold text-amber-300">
+              <v-icon :icon="mdiStar" size="18" />{{ featured.rating.toFixed(1) }}
+            </span>
+            <span v-if="featured.year">{{ featured.year }}</span>
+            <span v-if="featuredDetail?.runtime">{{ runtimeText(featuredDetail.runtime) }}</span>
+            <span v-if="featuredDetail?.certification" class="rounded border border-white/50 px-1.5 text-label-medium font-semibold">
+              {{ featuredDetail.certification }}
+            </span>
+            <span v-if="featuredDetail?.genres?.length" class="text-white/75">
+              {{ featuredDetail.genres.slice(0, 3).map(g => g.name).join(' · ') }}
+            </span>
+          </div>
 
-            <div class="motion-trace h-0.5 w-20 bg-primary shadow-[0_0_12px_rgba(111,227,255,0.8)]" style="--i: 2" />
+          <p class="motion-reveal line-clamp-3 text-body-large text-white/85" style="--i: 3">
+            {{ featuredDetail?.overview || featured.overview }}
+          </p>
 
-            <!-- Genre tags -->
-            <div v-if="featuredDetail?.genres?.length" class="motion-reveal flex flex-wrap gap-1.5" style="--i: 3">
+          <div class="motion-reveal flex flex-wrap items-center gap-3 pt-1" style="--i: 4">
+            <v-btn :prepend-icon="mdiPlay" size="x-large" color="white" variant="flat" rounded="lg" class="px-8 font-bold text-black" :to="library.resumeLink(featured)">
+              {{ $t('Play') }}
+            </v-btn>
+            <v-btn :prepend-icon="mdiInformationOutline" size="x-large" variant="flat" rounded="lg" class="bg-white/20! px-6 font-semibold text-white" :to="mediaLink(featured)" @pointerdown="armDetailPress($event, featured)" @click="openDetail($event, featured)">
+              {{ $t('More info') }}
+            </v-btn>
+            <v-btn v-if="trailerKey" :prepend-icon="mdiMovieOpenPlayOutline" size="x-large" variant="text" rounded="lg" class="text-white" @click="trailerDialog = true">
+              {{ $t('Trailer') }}
+            </v-btn>
+            <v-btn icon variant="outlined" size="large" class="border-white/40! text-white" :aria-label="library.inWatchlist(featured) ? $t('Remove from watchlist') : $t('Add to watchlist')" @click="library.toggleWatchlist(featured)">
+              <v-icon :icon="library.inWatchlist(featured) ? mdiBookmark : mdiBookmarkOutline" :color="library.inWatchlist(featured) ? 'primary' : undefined" />
+              <v-tooltip activator="parent" :text="library.inWatchlist(featured) ? $t('Remove from watchlist') : $t('Add to watchlist')" />
+            </v-btn>
+            <v-btn icon variant="outlined" size="large" class="border-white/40! text-white" :aria-label="library.isFavourite(featured) ? $t('Remove from favourites') : $t('Favourite')" @click="library.toggleFavourite(featured)">
+              <v-icon :icon="library.isFavourite(featured) ? mdiHeart : mdiHeartOutline" :color="library.isFavourite(featured) ? 'primary' : undefined" />
+              <v-tooltip activator="parent" :text="library.isFavourite(featured) ? $t('Remove from favourites') : $t('Favourite')" />
+            </v-btn>
+          </div>
+        </div>
+
+        <div class="flex items-end justify-between gap-6">
+          <!-- One segment per title, the current one filling over its turn.
+               Each is a real button, so the remote can step through them. -->
+          <div v-if="spotlight.length > 1" class="flex max-w-md flex-1 items-center gap-1.5">
+            <button
+              v-for="(media, index) in spotlight"
+              :key="media.id"
+              type="button"
+              class="group/seg flex-1 py-2 outline-none"
+              :aria-label="media.title"
+              :aria-current="index === at"
+              @click="at = index"
+            >
               <span
-                v-for="g in featuredDetail.genres.slice(0, 3)"
-                :key="g.name"
-                class="rounded-full bg-white/10 px-2.5 py-0.5 text-label-small text-white/80"
+                class="block h-1 overflow-hidden rounded-full transition-[background-color] group-hover/seg:bg-white/70 group-focus-visible/seg:bg-white group-focus-visible/seg:ring-2 group-focus-visible/seg:ring-primary"
+                :class="index < at ? 'bg-white/85' : 'bg-white/30'"
               >
-                {{ g.name }}
+                <span
+                  v-if="index === at"
+                  :key="at"
+                  class="block h-full w-full origin-left bg-white"
+                  :style="{ animation: `trace-x ${DURATION}ms linear both`, animationPlayState: isHovered ? 'paused' : 'running' }"
+                />
               </span>
-            </div>
+            </button>
+          </div>
 
-            <p class="motion-reveal line-clamp-2 max-w-2xl text-body-medium text-white/90" style="--i: 4">
-              {{ featured.overview }}
-            </p>
-
-            <!-- Action Buttons + Spotlight Poster Thumbnails -->
-            <div class="motion-reveal flex flex-wrap items-end gap-x-3 gap-y-3 pt-2" style="--i: 5">
-              <v-btn :prepend-icon="mdiPlay" size="large" color="primary" class="font-semibold px-6 shadow-lg shadow-primary/25" :to="library.resumeLink(featured)">
-                {{ $t('Play') }}
-              </v-btn>
-              <v-btn :prepend-icon="mdiInformationOutline" size="large" variant="tonal" class="bg-white/10 hover:bg-white/20" :to="mediaLink(featured)" @pointerdown="armDetailPress($event, featured)" @click="openDetail($event, featured)">
-                {{ $t('Details') }}
-              </v-btn>
-              <v-btn v-if="trailerKey" size="large" variant="tonal" class="bg-white/10 hover:bg-white/20" @click="trailerDialog = true">
-                <v-icon :icon="mdiPlay" size="18" class="mr-1" />
-                {{ $t('Watch Trailer') }}
-              </v-btn>
-              <v-btn icon variant="text" color="white" size="large" @click="library.toggleWatchlist(featured)">
-                <v-icon :icon="library.inWatchlist(featured) ? mdiBookmark : mdiBookmarkOutline" :color="library.inWatchlist(featured) ? 'primary' : undefined" />
-                <v-tooltip activator="parent" :text="library.inWatchlist(featured) ? $t('Remove from watchlist') : $t('Add to watchlist')" />
-              </v-btn>
-              <v-btn icon variant="text" color="white" size="large" @click="library.toggleFavourite(featured)">
-                <v-icon :icon="library.isFavourite(featured) ? mdiHeart : mdiHeartOutline" :color="library.isFavourite(featured) ? 'primary' : undefined" />
-                <v-tooltip activator="parent" :text="library.isFavourite(featured) ? $t('Remove from favourites') : $t('Favourite')" />
-              </v-btn>
-
-              <v-spacer />
-
-              <!-- Animated Spotlight Thumbnails Strip (10 Banner Slides) -->
-              <div class="flex max-w-[360px] sm:max-w-[480px] md:max-w-[560px] items-center gap-2 overflow-x-auto py-1 scrollbar-none">
-                <button
-                  v-for="(media, index) in spotlight"
-                  :key="media.id"
-                  type="button"
-                  class="group/thumb relative h-16 w-11 shrink-0 overflow-hidden rounded-xl outline-none transition-[transform,box-shadow] duration-300 md:h-20 md:w-14 hover:scale-110 hover:ring-2 hover:ring-white focus-visible:ring-2 focus-visible:ring-primary"
-                  :class="index === at ? 'ring-2 ring-primary shadow-[0_0_20px_rgba(111,227,255,0.5)] opacity-100 scale-105' : 'opacity-60 hover:opacity-100'"
-                  :aria-label="media.title"
-                  :aria-current="index === at"
-                  @click="at = index"
-                  @focus="at = index"
-                >
-                  <media-poster :src="posterUrl(media.poster, 'w185')" :alt="media.title" />
-                  <v-tooltip activator="parent" location="top" :text="media.title" />
-
-                  <!-- Active item timer. CSS scaleX, not a Vue tick: the old
-                       rAF wrote a reactive every frame and the home page
-                       re-rendered for a 6px bar. `trace-x` is already the
-                       compositor-only fill this design uses. -->
-                  <div v-if="index === at" class="absolute inset-x-0 bottom-0 h-1.5 bg-black/70">
-                    <div
-                      :key="at"
-                      class="h-full w-full origin-left bg-primary shadow-[0_0_8px_rgba(111,227,255,0.8)]"
-                      :style="{
-                        animation: `trace-x ${DURATION}ms linear both`,
-                        animationPlayState: isHovered ? 'paused' : 'running',
-                      }"
-                    />
-                  </div>
-                </button>
+          <!-- What comes next, as a picture rather than a dot. -->
+          <button
+            v-if="upNext"
+            type="button"
+            class="group/next hidden w-64 shrink-0 overflow-hidden rounded-xl bg-black/50 text-start outline-none ring-1 ring-white/15 transition-[transform,box-shadow] hover:scale-[1.03] hover:ring-white/50 focus-visible:scale-[1.03] focus-visible:ring-2 focus-visible:ring-primary lg:block"
+            @click="nextSlide"
+          >
+            <div class="relative aspect-video">
+              <media-poster :src="backdropUrl(upNext.backdrop, 'w780')" :alt="upNext.title" />
+              <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
+              <div class="absolute inset-x-3 bottom-2">
+                <p class="text-label-small font-semibold uppercase tracking-widest text-white/70">
+                  {{ $t('Up next') }}
+                </p>
+                <p class="truncate text-title-small font-bold text-white">
+                  {{ upNext.title }}
+                </p>
               </div>
             </div>
-          </div>
+          </button>
         </div>
       </div>
     </section>
@@ -422,6 +430,9 @@ const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
         />
       </scroll-row>
 
+      <!-- Today's chart, from the trending list the hero already has. -->
+      <top10-row class="motion-reveal" :items="trending ?? []" />
+
       <!-- Because you watched… (recommendations) -->
       <v-lazy v-if="recommendations?.length" :min-height="rowHeight" transition="fade-transition">
         <scroll-row class="motion-reveal" :title="$t('Because you watched {title}', { title: recommendationSource?.title ?? '' })">
@@ -435,6 +446,9 @@ const rowHeight = computed(() => Math.round(ui.cardWidth * 1.5) + 92)
           />
         </scroll-row>
       </v-lazy>
+
+      <!-- A choice of mood rather than a list of titles. -->
+      <genre-tiles class="motion-reveal" />
 
       <!-- TMDB data rows (trending, popular, top rated, genres, etc.) -->
       <v-lazy

@@ -8,8 +8,9 @@
 <h3>A media library and BitTorrent player for the desktop and Android TV</h3>
 
 Keeps track of what you're watching, and plays torrents in a real mpv window rather than a
-browser `<video>` tag — so half-downloaded MKVs, HEVC, AV1 and DTS all just play. Built with
-Nuxt and Tauri, driven as happily by a TV remote as by a mouse.
+browser `<video>` tag — so half-downloaded MKVs, HEVC, AV1 and DTS all just play. Free torrent
+sources stream with no paid account; a cloud (debrid) source you already have starts instantly.
+Built with Nuxt and Tauri, driven as happily by a TV remote as by a mouse.
 
 <br/>
 
@@ -56,6 +57,7 @@ Nuxt and Tauri, driven as happily by a TV remote as by a mouse.
 - [Why Rivulet](#why-rivulet)
 - [Feature Tour](#feature-tour)
   - [Rooms and views](#rooms-and-views)
+  - [Title, season and episode pages](#title-season-and-episode-pages)
   - [The player](#the-player)
   - [Playback and codecs](#playback-and-codecs)
   - [Downloads](#downloads)
@@ -63,6 +65,8 @@ Nuxt and Tauri, driven as happily by a TV remote as by a mouse.
   - [Themes and appearance](#themes-and-appearance)
   - [Built for a remote](#built-for-a-remote)
 - [Sources](#sources)
+  - [How Play works](#how-play-works)
+  - [Managing sources](#managing-sources)
   - [Adding a source by link](#adding-a-source-by-link)
 - [Live TV](#live-tv)
 - [Your library](#your-library)
@@ -95,6 +99,10 @@ shows. Rivulet embeds the real thing and keeps the library around it honest and 
   file pickers, seeding, speed limits and a disk budget, not a hidden cache.
 - **Streaming while it downloads.** Playback starts on the first bytes; already-downloaded
   titles replay with no TMDB lookup, no source search and no peers.
+- **No paid account needed.** A free torrent source plays two ways — *Download while watching*
+  keeps the file, *Stream only* fetches a few minutes ahead into a temporary cache and deletes it
+  when you leave. A cloud (debrid) source is detected and starts instantly; without one, Play asks
+  which of the two you want, and where the file should go.
 - **One player, three backends.** Where mpv can't be embedded, libVLC (Android) or the
   webview's `<video>` answers the *same* command protocol, so there is one player component and
   one set of controls rather than three.
@@ -150,22 +158,42 @@ Premium TV with EPG, categories, favourites and recent channels.
 <table>
 <tr>
 <td width="50%" align="center">
-<img src="public/app-home.jpg" width="100%" alt="Home screen with featured title and streaming services"><br/>
-<sub><b>Home</b> &middot; trending, popular and top rated rows, a featured title, and continue watching.</sub>
+<img src="public/app-home.jpg" width="100%" alt="Home spotlight with the title logo, rank and Up next card"><br/>
+<sub><b>Home</b> &middot; a full-width spotlight of today's trending titles, each with its own logo, rank and trailer.</sub>
 </td>
 <td width="50%" align="center">
-<img src="public/app-detail.jpg" width="100%" alt="Title detail page with backdrop, cast and ratings"><br/>
-<sub><b>Title details</b> &middot; backdrop, synopsis, cast, trailer, seasons and episodes.</sub>
+<img src="public/app-home-rows.jpg" width="100%" alt="Streaming services, Top 10 and genre tiles"><br/>
+<sub><b>Below the spotlight</b> &middot; the popular services, today's Top 10, and a row of genres to jump into.</sub>
 </td>
 </tr>
 <tr>
 <td width="50%" align="center">
-<img src="public/live-free.jpg" width="100%" alt="Free TV channel guide"><br/>
-<sub><b>Free TV</b> &middot; public channels from around the world, with channel health and EPG.</sub>
+<img src="public/app-detail.jpg" width="100%" alt="Title page with full-width backdrop, logo and Play"><br/>
+<sub><b>Title page</b> &middot; the backdrop edge to edge, the title's logo, and a status badge saying what Play will find.</sub>
+</td>
+<td width="50%" align="center">
+<img src="public/app-detail-more.jpg" width="100%" alt="Where it streams, keywords, details and studios"><br/>
+<sub><b>Further down</b> &middot; where it streams, keywords that lead to similar titles, the facts, and studio logos.</sub>
+</td>
+</tr>
+<tr>
+<td width="50%" align="center">
+<img src="public/app-season.jpg" width="100%" alt="Season page with progress bar and episode cards"><br/>
+<sub><b>Season</b> &middot; how far through you are, every season one press away, and episodes as cards.</sub>
+</td>
+<td width="50%" align="center">
+<img src="public/app-episode.jpg" width="100%" alt="Episode page with the episode's own still and previous/next"><br/>
+<sub><b>Episode</b> &middot; the episode's own frame, credits, and the ones either side of it.</sub>
+</td>
+</tr>
+<tr>
+<td width="50%" align="center">
+<img src="public/app-sources.jpg" width="100%" alt="Sources settings, empty, with the two Play modes"><br/>
+<sub><b>Sources</b> &middot; empty on purpose. Add your own, then choose how Play behaves.</sub>
 </td>
 <td width="50%" align="center">
 <img src="public/app-appearance.jpg" width="100%" alt="Appearance settings with theme presets"><br/>
-<sub><b>Themes</b> &middot; 26 curated presets, plus one from any colour.</sub>
+<sub><b>Themes</b> &middot; curated presets, plus one built from any colour.</sub>
 </td>
 </tr>
 </table>
@@ -176,14 +204,44 @@ Premium TV with EPG, categories, favourites and recent channels.
 
 | Room | What you get |
 | --- | --- |
-| **Home** | Continue watching, Trending today, Popular movies and shows, Top rated, In cinemas |
+| **Home** | A spotlight of today's trending titles, the popular streaming services, Continue watching, Top 10 today, Because you watched…, genre tiles, then Popular, Top rated, Upcoming and more |
 | **Movies** / **TV** / **Anime** | Browse rows with grid or list layout, remembered per session |
 | **Search** | One box across TMDB; results carry straight through to a source search |
 | **Favourites** / **Watchlist** / **History** | The three local lists |
-| **Detail** | Backdrop, synopsis, cast, trailer, seasons and episodes with per-episode state |
+| **Title** | Full-width backdrop and logo, what Play will find, Next up, seasons, cast, videos, the rest of a collection, stills, where it streams, facts, keywords, reviews |
+| **Season** / **Episode** | Progress through the season, episodes as cards with a *Next up*, and an episode page with previous and next |
 | **Downloads** | The engine's UI — add, pick files, pause, seed, limit, evict |
 | **Live TV** | Free channels via iptv-org, or connect a Premium IPTV provider (Xtream / M3U) with EPG, categories and favourites |
 | **Settings** | Appearance, Sources, Subtitles, Network, Storage, Account, About |
+
+<p align="right"><a href="#readme-top">&#9650; back to top</a></p>
+
+### Title, season and episode pages
+
+A title page has one job — *watch this* — so Play is on the first screen and everything else is
+below it.
+
+| | |
+| --- | --- |
+| **Hero** | The backdrop edge to edge and faded into the page, the title's own logo, tagline, rating, age rating, runtime and genres. On desktop a full-size copy of the backdrop fades in over the first one; a TV keeps the small one. |
+| **What Play will find** | A badge beside Play, read from the search the page already ran ahead: *Downloaded · plays offline*, *Instant · 1080p*, *1080p · 240 seeders*, *Your sources found nothing*, or *Add a source to play*. It costs no request of its own. |
+| **Resume** | *Resume S1 E3 · 23 min left*, with a bar along the button showing how far in. |
+| **Next up** | For a series, the next unwatched episode as a picture — one press from the top of the page. |
+| **Videos** | Every trailer, teaser and featurette, played in the same dialog as the Trailer button. |
+| **Collection** | The rest of a franchise in release order, the ones you've seen ticked. |
+| **Where it streams** | The subscription services that carry it in your region — TMDB listings, nothing to do with your sources. |
+| **Facts and keywords** | Original title and language, release date, status, runtime, budget and box office, studio logos, and TMDB's keywords, each opening everything else tagged with it. |
+| **Reviews** | Two reviews on the page; the full list stays behind the rating. |
+| **Its own colour** | One colour picked from the artwork tints the page, so every title looks like itself. |
+
+A **season page** shows the show's backdrop, the season's poster, total runtime and average rating,
+a progress bar through it, and every season as a tab. Episodes are cards with the still, the number
+and a *Next up* on the first one you haven't seen; an episode not out yet says when it airs instead
+of offering Play. An **episode page** opens on that episode's own frame, with its credits, guest
+stars, and the episodes either side of it.
+
+Everything below the first screen mounts a frame at a time and starts its requests after the page
+is up, so none of it slows the first paint — `bun run check:perf` holds that shape.
 
 <p align="right"><a href="#readme-top">&#9650; back to top</a></p>
 
@@ -200,6 +258,11 @@ One component, one set of controls, three backends underneath.
 | **Subtitle styling** | Font, size, colour, outline, position, applied to mpv and to the page-drawn cues alike, previewing live from Settings |
 | **Auto-sync** | A file cut for another release is slid onto the audio's silence map (desktop only — it needs ffmpeg, which Windows bundles) |
 | **Resume** | Progress recorded as it plays, per episode, and picked back up from the card or the detail page |
+| **Next episode** | Its opening is fetched during the credits, from the same season pack when the release is one, so it starts in a couple of seconds |
+| **Skip Intro** | From an intro you marked, or a chapter the file names as its opening |
+| **Pause screen** | The title's logo, year, runtime, rating, episode name and synopsis, and when it will end if resumed now |
+| **Sound** | Volume to 130% on mpv, audio delay in 0.1 s steps, and the file's own audio tracks by language |
+| **Picture** | Fit, fill or stretch, for a scope film on a 16:9 screen |
 | **Fullscreen** | Held for as long as the player is mounted; Android goes landscape and immersive |
 
 The native mpv surface paints *above* the webview, so the controls can't just be stacked over it
@@ -269,6 +332,7 @@ The engine runs inside the app process, which has consequences worth knowing.
 | **Files** | Pick what to fetch inside a torrent; season packs download the one episode |
 | **Seeding** | On by default, with upload and download limits |
 | **Disk budget** | Oldest-watched evicted first when the cache limit is reached; nothing playing is ever touched |
+| **Drive** | *Settings → Storage* lists every drive with its free space and warns when the one in use is nearly full; one press moves downloads, and Stream only's cache with them, to another |
 | **Wi-Fi only** | Pauses background torrents on a metered connection and restarts exactly the ones it paused — never one you paused, never the film being watched |
 | **Android** | A foreground service keeps the process alive while something is downloading; without it, "the user opened another app" means "the download stopped" |
 
@@ -360,6 +424,32 @@ itself: they live in the source URL you added, the same as any other addon setti
 Because it's that protocol, **any Stremio addon URL works**. Paste the `stremio://` link or the
 `…/manifest.json` address; Rivulet trims it to the base it needs and keeps any configuration the
 addon put in the path.
+
+### How Play works
+
+*Settings → Sources → How Play works* decides what the Play button does with a torrent. Download
+and picking a release from the list work the same either way.
+
+| Mode | What happens |
+| --- | --- |
+| **Download while watching** | Playback starts as the first pieces arrive, the rest keeps downloading, and the file stays in Downloads to replay offline. |
+| **Stream only** | A direct link plays as it is. A torrent streams from a private cache inside your download folder — never listed as a download — that reads only a few minutes ahead of the picture and is deleted two minutes after you leave the player. |
+
+Rivulet tells the two kinds of source apart. One that answers with direct links — a **cloud
+(debrid)** addon — is labelled *Instant (cloud)*, and Play starts at once. One that answers only
+with torrents can't start instantly whatever the mode says, so on *Stream only* Play **asks
+first**: play while downloading (showing the folder it will save to, with the drive buttons), or
+stream from the temporary cache. *Always do this* remembers the answer. Adding a source with no
+cloud service says so straight away and suggests *Download while watching*.
+
+### Managing sources
+
+| | |
+| --- | --- |
+| **Checked before it's added** | The manifest is fetched first, so a typo, a catalog-only addon or an unreachable server is turned away with a reason rather than failing quietly at every search. |
+| **Health** | Each source shows its name, logo, how fast it answered and when it was last checked; *Check all* asks again. One that keeps failing sits out for a while instead of slowing every search. |
+| **Order and on/off** | Higher sources win when two return the same release, and any source can be switched off without removing it. |
+| **Torrents only** | Ignores links from paid services and refuses to add a source that needs a paid account, so everything plays through the torrent engine. |
 
 ### Adding a source by link
 
@@ -519,6 +609,7 @@ Besides the sources you add and the peers your torrents connect to, Rivulet reac
 | --- | --- |
 | **TMDB** (`api.themoviedb.org`, `image.tmdb.org`) | Every poster, backdrop, synopsis, cast list and rating, and the title → IMDb id lookup a source is keyed by. Used under the TMDB API terms, attribution shown under *Settings → About*. |
 | **Stremio's public addons** | `opensubtitles-v3.strem.io` for the subtitle list, and `v3-cinemeta.strem.io` for the one case TMDB can't produce an IMDb id. A guest arrangement, not an agreement: if either stops answering, search reports it and playback carries on. |
+| **Kitsu** (`kitsu.app`) | Only for an anime, only as you press Play, and only if its IMDb id is missing or finds nothing: the title's Kitsu id, which some sources index anime by. A public, keyless API; the request carries the title and nothing else. |
 | **YouTube** (`youtube-nocookie.com`) | A title's trailer, in YouTube's own embedded player on its no-cookie domain. |
 | **GitHub** (`api.github.com`) | One request at startup asking whether a newer Rivulet has been released — the public releases endpoint, unauthenticated, sending nothing but the request itself. |
 
@@ -909,6 +1000,9 @@ bun run check:boot              # the two screens a failed or slow start puts up
 bun run check:perf
 bun run check:android-downloads
 bun run check:updates           # version ordering, and the GitHub release shape
+bun run check:i18n              # every language catalog is up to date with the source
+bun run check:security          # replays a hostile web page against the loopback servers (app running)
+bun run check:types             # a whole-app vue-tsc pass, templates included
 ```
 
 `check:torrents` also takes `--live <source-url> <imdb-id>` to search a real source, skipped by

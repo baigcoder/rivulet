@@ -45,7 +45,14 @@ const categories = computed(() => props.categoriesOverride ?? [
 ])
 
 const category = ref(props.initialCategory ?? 'popular')
-const genre = ref<number | null>(null)
+// `?genre=` is how Home's genre tiles and "See all" links arrive — read, and
+// followed when keepalive brings the page back for a different one.
+const genreFromRoute = () => Number(route.query.genre) || null
+// `?keyword=` arrives from a title page's keyword chips: TMDB's own tags, so
+// "heist" or "time travel" is one press from everything else tagged with it.
+const keyword = computed(() => Number(route.query.keyword) || null)
+const genre = ref<number | null>(genreFromRoute())
+watch(() => route.query.genre, () => (genre.value = genreFromRoute()))
 
 // keepalive reuses the component — sync when the route changes
 watch(() => props.initialCategory, v => {
@@ -55,8 +62,13 @@ watch(() => props.initialCategory, v => {
 const { data: genres } = useGenres(props.type)
 
 const isTrending = computed(() => category.value === 'trending')
+
+/** "Top rated · Comedy" — what the grid under the banner is, in words. */
+const categoryTitle = computed(() => categories.value.find(c => c.value === category.value)?.title ?? '')
+const genreName = computed(() => genres.value?.find(g => g.id === genre.value)?.name ?? '')
+const listHeading = computed(() => [categoryTitle.value, genreName.value].filter(Boolean).join(' · '))
 /** For the button that hides the filter on a phone — a set filter has to show. */
-const filtered = computed(() => genre.value !== null)
+const filtered = computed(() => genre.value !== null || keyword.value !== null)
 
 function day(offset = 0) {
   return new Date(Date.now() + offset * 864e5).toISOString().slice(0, 10)
@@ -67,7 +79,7 @@ function day(offset = 0) {
 // filters the fetched pages itself. Week rather than day — the day window is too
 // volatile to be worth a control.
 const request = computed(() => {
-  if (isTrending.value)
+  if (isTrending.value && keyword.value === null)
     return { path: `/trending/${props.type}/week`, type: props.type, keepGenre: genre.value ?? undefined }
 
   // Sorting only accepts the release-date field; filtering a show by when it
@@ -104,6 +116,7 @@ const request = computed(() => {
     params: {
       include_adult: false,
       with_genres: genres.join(',') || undefined,
+      with_keywords: keyword.value ?? undefined,
       with_original_language: props.anime ? 'ja' : undefined,
       ...sorting[category.value],
       ...parentalParams,
@@ -119,7 +132,7 @@ const { items, pending, error, done, loadMore } = useMediaFeed(request)
   <div class="flex h-full min-h-0 flex-col">
     <options-bar :active="filtered ? 1 : 0">
       <div class="flex min-w-0 items-center gap-4">
-        <h1 v-if="pageTitle" class="text-title-large shrink-0 font-bold">
+        <h1 v-if="pageTitle" class="shrink-0 text-headline-small font-bold tracking-tight">
           {{ pageTitle }}
         </h1>
         <!-- Chips only from lg up, where the row has room for five of them beside
@@ -132,14 +145,18 @@ const { items, pending, error, done, loadMore } = useMediaFeed(request)
           v-if="lgAndUp"
           v-model="category"
           mandatory
+          show-arrows
           selected-class="bg-primary text-on-primary font-medium"
         >
+          <!-- Outlined: the tonal default left every unselected category close
+               to invisible beside the selected one. -->
           <v-chip
             v-for="option in categories"
             :key="option.value"
             :value="option.value"
             :text="option.title"
             size="small"
+            variant="outlined"
           />
         </v-chip-group>
         <v-select
@@ -154,7 +171,7 @@ const { items, pending, error, done, loadMore } = useMediaFeed(request)
 
       <!-- Inline while the row can hold it, in a bottom sheet when it can't.
            The `md:` widths are the bar's; in the sheet it takes the full row. -->
-      <template #filters>
+      <template v-if="!lgAndUp" #filters>
         <v-select
           v-model="genre"
           :items="genres"
@@ -174,7 +191,15 @@ const { items, pending, error, done, loadMore } = useMediaFeed(request)
         :done="done"
         :error="error"
         @load="loadMore"
-      />
+      >
+        <template #header>
+          <browse-spotlight :items="items" :label="listHeading" :genres="genres ?? []" />
+          <genre-chips v-if="lgAndUp && genres?.length" v-model="genre" :genres="genres" class="mb-4" />
+          <h2 v-if="items.length" class="mb-3 text-title-large font-bold">
+            {{ listHeading }}
+          </h2>
+        </template>
+      </media-layout>
     </div>
   </div>
 </template>

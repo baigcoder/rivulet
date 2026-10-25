@@ -58,9 +58,25 @@ fn stream_http() -> &'static Client {
             .brotli(false)
             .http1_only()
             .tcp_nodelay(true)
+            .redirect(refuse_loopback_redirects())
             .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
             .build()
             .expect("failed to build stream HTTP client")
+    })
+}
+
+/// reqwest's own limit of ten hops, plus one rule: a hop onto this machine is
+/// not followed. Checking only the URL the page asked for would let any public
+/// address answer `302 Location: http://127.0.0.1:3030/…` and walk straight in.
+fn refuse_loopback_redirects() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        if crate::local_guard::targets_this_machine(attempt.url()) {
+            attempt.stop()
+        } else if attempt.previous().len() >= 10 {
+            attempt.error("too many redirects")
+        } else {
+            attempt.follow()
+        }
     })
 }
 
@@ -142,8 +158,14 @@ fn stream_get(
     ua: Option<&str>,
     referer: Option<&str>,
     range: Option<&str>,
+    extra: &[(String, String)],
 ) -> reqwest::RequestBuilder {
     let mut req = stream_http().get(url);
+    // What an addon said its link needs (Stremio `proxyHeaders`) — first, so
+    // the User-Agent and Referer handled below still win over a duplicate.
+    for (name, value) in extra {
+        req = req.header(name.as_str(), value.as_str());
+    }
     if let Some(ua) = ua {
         req = req.header("User-Agent", ua);
     } else {
@@ -295,6 +317,18 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
     }
     let request = String::from_utf8_lossy(&buf[..total]).into_owned();
 
+    // Before any route, preflight included: a page in the user's browser must
+    // not be able to use this as a relay onto their LAN — see `local_guard`.
+    // With foreign origins refused here, the `*` in CORS_HEADERS only ever
+    // reaches this app's page or a native client.
+    if !crate::local_guard::allowed(
+        extract_header(&request, "Origin").as_deref(),
+        extract_header(&request, "Host").as_deref(),
+    ) {
+        write_response(stream, 403, "Forbidden", "text/plain", b"not from this app").await?;
+        return Ok(());
+    }
+
     // The browser preflights the first cross-origin request with OPTIONS.
     // Answer it and stop — the GET that follows will be the real thing.
     if request.starts_with("OPTIONS ") {
@@ -320,7 +354,7 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
 
     // Parse the request line and the URL parameter. Bad input gets a 400
     // rather than a 500 — the page will then fall back to the raw URL.
-    let (target_url, custom_ua, custom_referer, max_height) = match parse_target(&request) {
+    let (target_url, custom_ua, custom_referer, max_height, custom_extra) = match parse_target(&request) {
         Some(parsed) => parsed,
         None => {
             write_response(
@@ -334,6 +368,17 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
             return Ok(());
         }
     };
+
+    // Only the web, and never back onto this machine: loopback is where the
+    // engine and the Premium API live, and no playlist has a reason to name it.
+    // (A redirect there is refused by `refuse_loopback_redirects`.)
+    match url::Url::parse(&target_url) {
+        Ok(u) if matches!(u.scheme(), "http" | "https") && !crate::local_guard::targets_this_machine(&u) => {}
+        _ => {
+            write_response(stream, 403, "Forbidden", "text/plain", b"target not allowed").await?;
+            return Ok(());
+        }
+    }
 
     // Forward the range header if the client sent one — HLS segments and
     // mp4 files both support it, and the upstream's CDN may return a 206
@@ -356,6 +401,8 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
 
     let ua = default_upstream_ua(&target_url, custom_ua.as_deref());
     let rf = custom_referer.as_deref();
+    let extra_raw = custom_extra.unwrap_or_default();
+    let extra = extra_headers(&extra_raw);
     // Hold only while following the resolver 302 — not while the movie
     // body streams, or a Range seek would wait on the first connection.
     // Live MPEG-TS keeps the lock for the body so a probe cannot steal
@@ -371,13 +418,13 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
         eprintln!("[iptv-proxy] cached {fetch_url}");
     }
 
-    let resp = match stream_get(&fetch_url, ua, rf, range.as_deref()).send().await {
+    let resp = match stream_get(&fetch_url, ua, rf, range.as_deref(), &extra).send().await {
         Ok(r) => r,
         Err(e) if fetch_url != target_url => {
             eprintln!("[iptv-proxy] cached upstream failed ({e}), retrying resolver");
             forget_redirect(&target_url);
             fetch_url = target_url.clone();
-            match stream_get(&fetch_url, ua, rf, range.as_deref()).send().await {
+            match stream_get(&fetch_url, ua, rf, range.as_deref(), &extra).send().await {
                 Ok(r) => r,
                 Err(e) => {
                     eprintln!("[iptv-proxy] upstream error for {target_url}: {e}");
@@ -413,7 +460,7 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
     if fetch_url != target_url && !status.is_success() && status.as_u16() != 206 {
         forget_redirect(&target_url);
         fetch_url = target_url.clone();
-        if let Ok(r) = stream_get(&fetch_url, ua, rf, range.as_deref()).send().await {
+        if let Ok(r) = stream_get(&fetch_url, ua, rf, range.as_deref(), &extra).send().await {
             resp = r;
             status = resp.status();
         }
@@ -424,7 +471,7 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
     // with 400, 416, 500, etc. If a range header was sent and upstream failed, retry WITHOUT Range header.
     if !status.is_success() && status.as_u16() != 206 && range.is_some() {
         eprintln!("[iptv-proxy] range request failed with {status}, retrying without Range header: {fetch_url}");
-        if let Ok(nr_resp) = stream_get(&fetch_url, ua, rf, None).send().await {
+        if let Ok(nr_resp) = stream_get(&fetch_url, ua, rf, None, &extra).send().await {
             if nr_resp.status().is_success() || nr_resp.status().as_u16() == 206 {
                 eprintln!("[iptv-proxy] request without Range succeeded for {fetch_url}");
                 resp = nr_resp;
@@ -447,7 +494,7 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
 
         if let Some(ref fb_url) = fallback_url {
             eprintln!("[iptv-proxy] upstream failed with {status}, retrying fallback: {fb_url}");
-            if let Ok(fb_resp) = stream_get(fb_url, ua, rf, None).send().await {
+            if let Ok(fb_resp) = stream_get(fb_url, ua, rf, None, &extra).send().await {
                 if fb_resp.status().is_success() || fb_resp.status().as_u16() == 206 {
                     eprintln!("[iptv-proxy] fallback succeeded: {fb_url}");
                     resp = fb_resp;
@@ -498,6 +545,7 @@ async fn handle_connection(stream: &mut tokio::net::TcpStream) -> anyhow::Result
                         &final_url,
                         custom_ua.as_deref(),
                         custom_referer.as_deref(),
+                        &extra_raw,
                     ),
                     max_height,
                 );
@@ -660,6 +708,7 @@ fn rewrite_m3u(
     base: &str,
     user_agent: Option<&str>,
     referer: Option<&str>,
+    extra: &str,
 ) -> String {
     let mut out = String::with_capacity(body.len());
     for line in body.lines() {
@@ -675,7 +724,7 @@ fn rewrite_m3u(
             // I-frame ladder. Left alone, a relative one resolved against this
             // proxy's own origin and got a 400 — a channel with separate audio
             // played silent or not at all.
-            out.push_str(&rewrite_uri_attrs(line, base, user_agent, referer));
+            out.push_str(&rewrite_uri_attrs(line, base, user_agent, referer, extra));
             out.push('\n');
             continue;
         }
@@ -683,6 +732,7 @@ fn rewrite_m3u(
             &resolve_against(base, trimmed),
             user_agent,
             referer,
+            extra,
         ));
         out.push('\n');
     }
@@ -711,7 +761,7 @@ fn resolve_against(base: &str, reference: &str) -> String {
 /// propagating it here, the manifest loads but the CDN rejects each segment
 /// with 403 and the player can only say "Playback failed". Keep the headers in
 /// the proxy URL so nested manifests inherit them too.
-fn proxied_path(resolved: &str, user_agent: Option<&str>, referer: Option<&str>) -> String {
+fn proxied_path(resolved: &str, user_agent: Option<&str>, referer: Option<&str>, extra: &str) -> String {
     let mut out = format!("/stream?url={}", urlencoding::encode(resolved));
     if let Some(ua) = user_agent {
         out.push_str("&X-Rivulet-Ua=");
@@ -720,6 +770,10 @@ fn proxied_path(resolved: &str, user_agent: Option<&str>, referer: Option<&str>)
     if let Some(rf) = referer {
         out.push_str("&X-Rivulet-Referer=");
         out.push_str(&urlencoding::encode(rf));
+    }
+    if !extra.is_empty() {
+        out.push_str("&X-Rivulet-H=");
+        out.push_str(&urlencoding::encode(extra));
     }
     out
 }
@@ -730,6 +784,7 @@ fn rewrite_uri_attrs(
     base: &str,
     user_agent: Option<&str>,
     referer: Option<&str>,
+    extra: &str,
 ) -> String {
     const KEY: &str = "URI=\"";
     let mut out = String::with_capacity(line.len());
@@ -752,6 +807,7 @@ fn rewrite_uri_attrs(
                 &resolve_against(base, value),
                 user_agent,
                 referer,
+                extra,
             ));
         }
         rest = &tail[end..];
@@ -1043,7 +1099,7 @@ async fn serve_youtube_embed(
     write_response(stream, 200, "OK", "text/html; charset=utf-8", html.as_bytes()).await
 }
 
-type Target = (String, Option<String>, Option<String>, Option<u64>);
+type Target = (String, Option<String>, Option<String>, Option<u64>, Option<String>);
 
 fn parse_target(request: &str) -> Option<Target> {
     let first_line = request.lines().next()?;
@@ -1053,6 +1109,7 @@ fn parse_target(request: &str) -> Option<Target> {
     let mut ua: Option<String> = None;
     let mut referer: Option<String> = None;
     let mut max_height: Option<u64> = None;
+    let mut extra: Option<String> = None;
     for pair in query.split('&') {
         let (k, v) = pair.split_once('=')?;
         let decoded = urlencoding::decode(v).ok()?.into_owned();
@@ -1060,13 +1117,32 @@ fn parse_target(request: &str) -> Option<Target> {
             "url" => url = Some(decoded),
             "X-Rivulet-Ua" => ua = Some(decoded),
             "X-Rivulet-Referer" => referer = Some(decoded),
+            // Any other headers the link needs, one `Name: value` per line.
+            "X-Rivulet-H" => extra = Some(decoded),
             // Garbage is no ceiling rather than a zero one: a cap of 0 would
             // rank every rung as too tall and hand back the smallest.
             "max_height" => max_height = decoded.parse().ok().filter(|h| *h > 0),
             _ => {}
         }
     }
-    url.map(|u| (u, ua, referer, max_height))
+    url.map(|u| (u, ua, referer, max_height, extra))
+}
+
+/// `Name: value` lines into headers, keeping only names a header can have and
+/// never one the connection itself owns — a page must not be able to steer
+/// the proxy's framing or its Host.
+fn extra_headers(raw: &str) -> Vec<(String, String)> {
+    const OWNED: [&str; 7] = ["host", "connection", "content-length", "transfer-encoding", "upgrade", "range", "te"];
+    raw.lines()
+        .filter_map(|line| line.split_once(':'))
+        .map(|(name, value)| (name.trim().to_string(), value.trim().to_string()))
+        .filter(|(name, value)| {
+            !name.is_empty()
+                && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                && !OWNED.contains(&name.to_ascii_lowercase().as_str())
+                && !value.contains(['\r', '\n'])
+        })
+        .collect()
 }
 
 fn extract_header(request: &str, name: &str) -> Option<String> {
@@ -1131,10 +1207,28 @@ async fn write_preflight(stream: &mut tokio::net::TcpStream) -> anyhow::Result<(
 #[cfg(test)]
 mod tests {
     use super::{
-        default_upstream_ua, hls_bandwidth, hls_height, is_hls_downgrade, is_live_mpegts,
-        is_xtream_media_url, looks_like_hls, manifest_text, prefer_highest_hls_rung, rewrite_m3u,
-        IPTV_PLAYER_UA,
+        default_upstream_ua, extra_headers, hls_bandwidth, hls_height, is_hls_downgrade,
+        is_live_mpegts, is_xtream_media_url, looks_like_hls, manifest_text,
+        prefer_highest_hls_rung, rewrite_m3u, IPTV_PLAYER_UA,
     };
+
+    #[test]
+    fn addon_headers_pass_but_never_the_connections_own() {
+        let got = extra_headers("Cookie: a=1\nOrigin: https://x.example\nHost: evil\nContent-Length: 9\nBad Name: x\n: empty");
+        assert_eq!(
+            got,
+            vec![
+                ("Cookie".to_string(), "a=1".to_string()),
+                ("Origin".to_string(), "https://x.example".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn segments_inherit_the_headers() {
+        let out = rewrite_m3u("#EXTM3U\nseg/1.ts\n", "https://cdn.example/a/b.m3u8", None, None, "Cookie: a=1");
+        assert!(out.contains("&X-Rivulet-H=Cookie%3A%20a%3D1"), "{out}");
+    }
 
     #[test]
     fn tag_uris_are_proxied_like_entry_lines() {
@@ -1143,7 +1237,7 @@ mod tests {
 #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",URI=\"audio/eng.m3u8\"\n\
 #EXT-X-STREAM-INF:BANDWIDTH=1,AUDIO=\"a\"\n\
 ../video/720.m3u8\n";
-        let out = rewrite_m3u(body, base, None, None);
+        let out = rewrite_m3u(body, base, None, None, "");
         assert!(
             out.contains("URI=\"/stream?url=https%3A%2F%2Fcdn.example%2Flive%2Faudio%2Feng.m3u8\""),
             "the audio rendition goes through the proxy\n{out}"
@@ -1153,13 +1247,13 @@ mod tests {
             "`../` walks up a directory\n{out}"
         );
         // Inline data is not somewhere to fetch.
-        let key = rewrite_m3u("#EXT-X-KEY:METHOD=AES-128,URI=\"data:text/plain;base64,AA\"\n", base, None, None);
+        let key = rewrite_m3u("#EXT-X-KEY:METHOD=AES-128,URI=\"data:text/plain;base64,AA\"\n", base, None, None, "");
         assert!(key.contains("URI=\"data:text/plain;base64,AA\""), "{key}");
     }
 
     #[test]
     fn an_absolute_path_keeps_the_port() {
-        let out = rewrite_m3u("#EXTM3U\n/seg/1.ts\n", "http://host:8080/a/b.m3u8", None, None);
+        let out = rewrite_m3u("#EXTM3U\n/seg/1.ts\n", "http://host:8080/a/b.m3u8", None, None, "");
         assert!(out.contains("/stream?url=http%3A%2F%2Fhost%3A8080%2Fseg%2F1.ts"), "{out}");
     }
 

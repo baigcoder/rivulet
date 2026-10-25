@@ -44,6 +44,7 @@ useEventListener(document, 'visibilitychange', () => {
 })
 
 const drives = computed(() => volumes.value?.filter(v => v.writable))
+
 // Plugged in, mounted, and unwritable — an NTFS stick, or a format this box has
 // no driver for. Naming it is the only way the user learns it has to be
 // reformatted; Android fails the folder silently and every app here is stuck.
@@ -98,17 +99,57 @@ const usedShare = computed(() =>
     ? Math.min(100, (downloads.used / downloads.budget) * 100)
     : 0)
 
+/**
+ * The Rust side writes only into folders it has seen the user choose, so both
+ * ways of choosing go through it: Browse opens a picker *it* owns, and a typed
+ * path is put to the user in a native dialog. Neither can be answered by the
+ * page, which is the point — see `src-tauri/src/folders.rs`.
+ */
+function approve(path: string | null) {
+  return invoke<string | null>('folders_approve', {
+    path,
+    title: $t('Where to keep downloads'),
+    question: $t('Use this folder for downloads?'),
+  })
+}
+
 async function browse() {
   error.value = ''
   try {
-    const picked = await useTauriDialogOpen({ directory: true, multiple: false, title: $t('Where to keep downloads') })
-    if (typeof picked === 'string')
+    const picked = await approve(null)
+    if (picked)
       settings.downloadDir = picked
   }
   catch (e) {
     // A browser-only dev session has no Tauri at all — the path field beside the
     // button still works. (Android never gets here: it lists its drives instead.)
     error.value = `${e}`
+  }
+}
+
+/** The field edits a copy; the setting changes only once the folder is approved. */
+const typedDir = ref(settings.downloadDir)
+watch(() => settings.downloadDir, dir => (typedDir.value = dir))
+
+async function commitTyped() {
+  const typed = typedDir.value.trim()
+  if (typed === settings.downloadDir)
+    return
+  error.value = ''
+  if (!typed) {
+    settings.downloadDir = ''
+    return
+  }
+  try {
+    const approved = await approve(typed)
+    if (approved)
+      settings.downloadDir = approved
+    else
+      typedDir.value = settings.downloadDir
+  }
+  catch {
+    // No Tauri (a browser dev session): nothing to protect, take it as typed.
+    settings.downloadDir = typed
   }
 }
 
@@ -127,12 +168,14 @@ async function openFolder() {
         : $t('Where films and episodes are written. Torrents already downloaded stay where they are.')"
     >
       <v-text-field
-        v-model="settings.downloadDir"
+        v-model="typedDir"
         :label="$t('Folder')"
         :placeholder="$t('Default: your Downloads folder (Rivulet)')"
         persistent-placeholder
         hide-details
         :readonly="!!volumes"
+        @change="commitTyped"
+        @keydown.enter="commitTyped"
       />
 
       <!-- One button per drive rather than a radio group: it is the shape a
@@ -150,6 +193,10 @@ async function openFolder() {
           {{ $t('{drive} · {free} free', { drive: volume.name, free: bytesText(volume.free) }) }}
         </v-btn>
       </div>
+
+      <!-- A computer's drives, the same shape as a TV box's above: one press
+           moves downloads, and Stream only's cache with them, to that drive. -->
+      <drive-picker />
 
       <!-- Said at the moment the drive is picked, not left for the download that
            dies at 4 GiB. The source list dims those releases (TorrentPicker),

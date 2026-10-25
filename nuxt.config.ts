@@ -201,7 +201,7 @@ export default defineNuxtConfig({
       },
       ws: {
         protocol: 'ws',
-        host: host || '0.0.0.0',
+        host: host || 'localhost',
         clientPort: 3000,
       },
     },
@@ -232,8 +232,11 @@ export default defineNuxtConfig({
     },
   },
 
+  // Loopback unless a device has to reach it: 0.0.0.0 put the dev build on
+  // every network the laptop joined. `adb reverse` maps a phone's localhost
+  // here, and TAURI_DEV_HOST is the switch for a device that needs the LAN.
   devServer: {
-    host: host || '0.0.0.0',
+    host: host || 'localhost',
   },
 
   hooks: {
