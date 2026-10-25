@@ -442,6 +442,12 @@ first**: play while downloading (showing the folder it will save to, with the dr
 stream from the temporary cache. *Always do this* remembers the answer. Adding a source with no
 cloud service says so straight away and suggests *Download while watching*.
 
+The title page says all of this **before** Play is pressed. A status badge reads *Instant · 1080p*,
+a torrent's quality and seeders, *Downloaded · plays offline*, or that nothing was found. When a
+cloud service is down, a debrid addon often answers with a short "unavailable" clip dressed up as
+a stream. Rivulet recognises that clip, never plays it as the film, and shows what the service said
+in the badge. The player then offers *Play from the torrent instead* and *Try again*.
+
 ### Managing sources
 
 | | |
