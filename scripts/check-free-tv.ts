@@ -11,6 +11,7 @@ import { appendDigit, channelDigitKey, channelIndexFor } from '../app/utils/chan
 import { currentProgram } from '../app/utils/epgNow'
 import { MAX_AUTO_SKIPS, nextPlayable, pool, probeVerdict } from '../app/utils/livehealth'
 import { liveTvBackPath, liveTvFrom, readLivePlay, saveLivePlay } from '../app/utils/liveNav'
+import { nextLiveAction } from '../app/utils/liveRecovery'
 import { connectionLimitMessage, fmtHudTime, friendlyPlaybackError, isProviderConnectionLimit, isProviderVodSlateDuration } from '../app/utils/playbackError'
 import '../scripts/i18n-stub.ts'
 
@@ -600,12 +601,12 @@ assert.match(
   /if \(gainedPicture\) \{/,
   'and the last attempt\'s errors clear when the picture arrives',
 )
-// Acting on a stray failure while watching is a zap away from a working
-// channel — both branches of the handler are destructive.
+// A channel that has shown frames is reconnected, never zapped away from —
+// the skip is reserved for one that never played.
 assert.match(
   liveWatch,
-  /async function onPlaybackFailed\(\) \{[\s\S]{0,700}?if \(hasPicture\.value\)\r?\n {4}return/,
-  'a failure with frames on screen is not acted on',
+  /async function onPlaybackFailed\(\) \{[\s\S]*?!hadPicture\.value && autoSkip\(\)/,
+  'a failure on a channel that played is never a zap',
 )
 
 // --- One reading, two pages ---------------------------------------------------
@@ -661,6 +662,22 @@ for (const gone of ['LiveEpgDrawer', 'LiveEpgSheet', 'LiveTvSearch', 'LiveFilter
   assert.equal(currentProgram(list, Date.parse('2026-11-03T17:00:00Z')), null, 'past the guide: nothing on')
   for (const f of ['LiveChannelCard.vue', 'LiveChannelRow.vue'])
     assert.match(readFileSync(new URL(`../app/components/live-tv/${f}`, import.meta.url), 'utf8'), /currentProgram\(/, `${f} picks the current programme`)
+}
+
+// A free stream that was playing and dropped comes back; one that never
+// played is skipped — the same policy and backoff Premium uses.
+{
+  const base = { hadPicture: false, reconnects: 0, canFallback: true, fallbackTried: false, autoSkips: 0, maxAutoSkips: 3 }
+  assert.equal(nextLiveAction({ ...base, hadPicture: true }), 'reconnect', 'a dropped stream that was playing comes back')
+  assert.equal(nextLiveAction({ ...base, hadPicture: true, reconnects: 4 }), 'error', 'and stops after four')
+  assert.equal(nextLiveAction({ ...base, hadPicture: true, autoSkips: 0, reconnects: 4 }), 'error', 'never zapping away from a channel that worked')
+  assert.equal(nextLiveAction(base), 'fallback')
+  assert.equal(nextLiveAction({ ...base, fallbackTried: true }), 'skip')
+  assert.equal(nextLiveAction({ ...base, canFallback: false }), 'skip')
+  assert.equal(nextLiveAction({ ...base, fallbackTried: true, autoSkips: 3 }), 'error')
+  const freeWatch = readFileSync(new URL('../app/pages/live-tv/watch.vue', import.meta.url), 'utf8')
+  assert.match(freeWatch, /nextLiveAction\(/, 'the free player decides through the shared policy')
+  assert.match(freeWatch, /reconnectDelayMs\(/, 'with the same backoff as Premium')
 }
 
 // Number tuning: the set shows "105", so a remote can type it.

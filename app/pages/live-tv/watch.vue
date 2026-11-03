@@ -12,6 +12,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { cycleAspect } from '~/utils/aspectRatio'
 import { iptvProxyHealth, liveResolveStream, proxyFreeStreamUrl } from '~/utils/iptv'
 import { MAX_AUTO_SKIPS, nextPlayable } from '~/utils/livehealth'
+import { MAX_RECONNECT_ATTEMPTS, nextLiveAction, reconnectDelayMs } from '~/utils/liveRecovery'
 import { friendlyPlaybackError } from '~/utils/playbackError'
 
 definePageMeta({ layout: false })
@@ -199,6 +200,16 @@ const overlayError = computed(() => {
   return friendlyPlaybackError(raw)
 })
 const autoSkips = ref(0)
+/** This channel has drawn a frame since it was tuned: a later failure is a drop, not a dead stream. */
+const hadPicture = ref(false)
+/** Reconnects spent on the current drop; a picture resets it. */
+const reconnects = ref(0)
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+function clearReconnect() {
+  if (reconnectTimer)
+    clearTimeout(reconnectTimer)
+  reconnectTimer = null
+}
 /**
  * Auto-skip is in progress. While true, the HUD's connecting panel says
  * "trying the next one" and which attempt, so the viewer sees a reason for
@@ -211,9 +222,13 @@ const autoSkipping = computed<boolean>(() =>
   && resolveError.value === '')
 
 /** The step line in the HUD's connecting panel; empty means "Opening the stream…". */
-const connectDetail = computed(() => autoSkipping.value
-  ? `${$t('Channel unavailable — trying the next one…')} ${$t('Attempt {current} of {total}', { current: autoSkips.value + 1, total: MAX_AUTO_SKIPS })}`
-  : '')
+const connectDetail = computed(() => {
+  if (reconnects.value > 0 && !errorMsg.value && !hasPicture.value)
+    return $t('Reconnecting… attempt {attempt} of {total}', { attempt: reconnects.value, total: MAX_RECONNECT_ATTEMPTS })
+  return autoSkipping.value
+    ? `${$t('Channel unavailable — trying the next one…')} ${$t('Attempt {current} of {total}', { current: autoSkips.value + 1, total: MAX_AUTO_SKIPS })}`
+    : ''
+})
 
 /**
  * One notice. Passed as `resolving` so MpvPlayer does not draw a second spinner.
@@ -431,6 +446,9 @@ watch(hasPicture, picture => {
   if (!picture)
     return
   autoSkips.value = 0
+  hadPicture.value = true
+  reconnects.value = 0
+  clearReconnect()
   const id = channelId.value
   if (id)
     liveTv.markLive(id)
@@ -507,42 +525,54 @@ function onActivity() {
 }
 
 async function onPlaybackFailed() {
-  // Frames on screen are not a failure. Both branches below are destructive —
-  // the protocol fallback restarts the stream on a different URL, and
-  // `autoSkip` zaps to another channel entirely — so acting on a stray event
-  // while the viewer is watching takes away a channel that was working.
-  // libVLC raises EndReached on an ordinary HLS discontinuity and recovers by
-  // itself, which is exactly the event that would arrive here. MpvPlayer
-  // already waits for two readings before it calls a live stream dead; this is
-  // the same judgement at the page, where the consequence is a zap.
-  if (hasPicture.value)
+  // A channel that has drawn frames is alive, and this is a drop: reconnect it
+  // on Premium's backoff, never zap the viewer off it. It used to be ignored
+  // outright — a free stream that dropped mid-programme just stayed frozen.
+  // MpvPlayer only reports a live stream dead after its clock stalls for three
+  // seconds, so an HLS hiccup libVLC rides out by itself never arrives here.
+  const canFallback = !!rawUrl.value && (streamUrl.value.includes('.m3u8') || /\.m3u8$/i.test(rawUrl.value))
+  const action = nextLiveAction({
+    hadPicture: hadPicture.value,
+    reconnects: reconnects.value,
+    canFallback,
+    fallbackTried: attemptedFallback.value,
+    autoSkips: autoSkips.value,
+    maxAutoSkips: MAX_AUTO_SKIPS,
+  })
+
+  if (action === 'reconnect') {
+    reconnects.value++
+    clearReconnect()
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null
+      void onRetry()
+    }, reconnectDelayMs(reconnects.value))
     return
-  if (!attemptedFallback.value && rawUrl.value) {
+  }
+
+  if (action === 'fallback') {
     attemptedFallback.value = true
-    if (streamUrl.value.includes('.m3u8') || /\.m3u8$/i.test(rawUrl.value)) {
-      const tsUrl = rawUrl.value.replace(/\.m3u8$/i, '.ts')
-      if (tsUrl !== rawUrl.value) {
-        const current = channelList.value[channelIndex.value]
-        try {
-          const proxied = await proxyFreeStreamUrl(
-            tsUrl,
-            userAgent.value ?? current?.userAgent ?? undefined,
-            referer.value ?? current?.referer ?? undefined,
-          )
-          if (proxied) {
-            streamUrl.value = proxied
-            proxiedStreamUrl.value = proxied
-            return
-          }
+    const tsUrl = rawUrl.value.replace(/\.m3u8$/i, '.ts')
+    if (tsUrl !== rawUrl.value) {
+      const current = channelList.value[channelIndex.value]
+      try {
+        const proxied = await proxyFreeStreamUrl(
+          tsUrl,
+          userAgent.value ?? current?.userAgent ?? undefined,
+          referer.value ?? current?.referer ?? undefined,
+        )
+        if (proxied) {
+          streamUrl.value = proxied
+          proxiedStreamUrl.value = proxied
+          return
         }
-        catch { /* auto-skip below */ }
       }
+      catch { /* auto-skip below */ }
     }
   }
 
-  // The protocol fallback is per channel and has now been spent, so the
-  // next thing to try is a different channel.
-  if (autoSkip())
+  // Never played, and the protocol fallback is spent: a different channel.
+  if (action !== 'error' && !hadPicture.value && autoSkip())
     return
 
   errorMsg.value = $t('Stream playback failed. The channel may be offline or temporarily unavailable.')
@@ -658,11 +688,15 @@ watch(() => route.query.id, (id, prev) => {
   // Per channel, not per page: without this the first channel to fail
   // spent the one `.m3u8` → `.ts` retry for every channel after it.
   attemptedFallback.value = false
+  hadPicture.value = false
+  reconnects.value = 0
+  clearReconnect()
   void liveTv.loadEpg(String(id))
   void resolveStreamUrl()
 })
 
 onUnmounted(() => {
+  clearReconnect()
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('mousemove', onActivity)
   window.removeEventListener('click', onActivity)

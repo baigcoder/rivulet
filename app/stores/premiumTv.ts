@@ -13,6 +13,7 @@ import type {
 } from '~/types/premium'
 import { defineStore } from 'pinia'
 import { computed, ref, shallowRef, triggerRef, watch } from 'vue'
+import { MAX_RECONNECT_ATTEMPTS, reconnectDelayMs } from '~/utils/liveRecovery'
 import { premiumApi, PremiumApiError, setAuthToken } from '~/utils/premiumTv'
 
 /**
@@ -36,29 +37,9 @@ const PAGE_SIZE = 60
 /** Search is typed a character at a time; the query is not cheap. */
 const SEARCH_DEBOUNCE_MS = 300
 
-/**
- * How many times a dead stream is retried before the player gives up and
- * says so. Four attempts over the backoff below is about three quarters
- * of a minute — long enough to ride out a provider restart, short enough
- * that a genuinely dead channel does not look like a hung app.
- */
-export const MAX_RECONNECT_ATTEMPTS = 4
-
-/**
- * Exponential, capped. `attempt` is 1-based.
- *
- * The first step is two seconds rather than one, and the cap is twenty
- * rather than eight, for a reason particular to this provider protocol:
- * a panel counts a *connection*, and it does not stop counting the one
- * that just died the instant our player exits. An account whose
- * `maxConnections` is 1 — the common case for a single-device
- * subscription — answers 401 to every request until its own slot is
- * released, so a schedule that spends all four attempts inside that
- * window reports "dead channel" for something that was only busy.
- */
-export function reconnectDelayMs(attempt: number): number {
-  return Math.min(2000 * 2 ** (attempt - 1), 20_000)
-}
+// Moved to utils/liveRecovery so Free TV recovers the same way; re-exported
+// here because the watch page and check:premium-player import them from the store.
+export { MAX_RECONNECT_ATTEMPTS, reconnectDelayMs }
 
 /**
  * The player's state, as one value.
