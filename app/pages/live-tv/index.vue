@@ -8,9 +8,8 @@ const premium = usePremiumTvStore()
 const liveTv = useLiveTvStore()
 const { play } = useFreeChannelPlayer()
 
-// What you were watching, and what you starred, one press from the door —
-// the two tiles alone left most of this screen empty. Free TV's own library;
-// a browser dev server has no Rust behind it, so the rows simply stay away.
+// What you starred, one press from the door. Free TV's own library; a
+// browser dev server has no Rust behind it, so the row simply stays away.
 onMounted(async () => {
   try {
     await liveTv.useFreeSource()
@@ -25,7 +24,6 @@ onMounted(() => {
 })
 
 const rows = computed(() => [
-  { key: 'recent', title: $t('Recently watched'), channels: liveTv.recentChannels as LiveChannel[] },
   { key: 'favorites', title: $t('Favourites'), channels: liveTv.favoriteChannels as LiveChannel[] },
 ].filter(r => r.channels.length))
 
