@@ -546,7 +546,7 @@ player always talks to a local proxy with a signed redirector token (valid ~30 s
 | **Favourites** | Server-side, `POST /favorites/:id`, authoritative state returned |
 | **Quality variants** | Finds channels with similar base names but different quality labels (e.g. "Sky Sports HD" and "Sky Sports 4K"), picker in player |
 | **Adult filter** | "Hide adult channels" toggle — provider-flagged 18+ or category-name detected |
-| **Subscription** | Two tiers: `free` and `premium` (30-day trial or unlimited activation) |
+| **Subscription** | Two tiers: `free` and `premium` (activated for your own paid IPTV provider; no trial) |
 | **Reconnect** | Exponential backoff (2s, 4s, 8s, 20s cap), max 4 attempts, accounts for provider connection slot release timing |
 
 <table>

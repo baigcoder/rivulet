@@ -23,11 +23,12 @@
  */
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import type { LiveView } from '~/stores/liveTv'
-import type { LiveChannel } from '~/utils/iptv'
-import { mdiClose, mdiDeleteSweepOutline, mdiTelevisionOff, mdiViewGridOutline, mdiViewList } from '@mdi/js'
+import type { LiveChannel, LiveHealthProgress } from '~/utils/iptv'
+import { mdiCalendarClock, mdiClose, mdiDeleteSweepOutline, mdiTelevisionOff, mdiViewGridOutline, mdiViewList } from '@mdi/js'
 import { listen } from '@tauri-apps/api/event'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { liveOfflineCount } from '~/utils/iptv'
+import { featuredFromFree } from '~/utils/featuredChannel'
+import { liveCheckHealth, liveOfflineCount } from '~/utils/iptv'
 
 definePageMeta({ layout: 'default' })
 
@@ -74,6 +75,13 @@ async function readHiddenOffline(): Promise<void> {
 
 /** What the rail calls "All channels": the ones that are not hidden as offline. */
 const onlineTotal = computed(() => Math.max(0, liveTv.totalChannels - hiddenOffline.value))
+
+/**
+ * The check Rust runs when this page opens (`health.rs`): how far it is, so
+ * the page can say it is still finding out rather than show every channel as
+ * if it worked. `null` while no check is running.
+ */
+const healthCheck = ref<{ checked: number, total: number } | null>(null)
 
 const statusMeta = computed(() => {
   if (hiddenOffline.value)
@@ -162,6 +170,13 @@ function playChannel(ch: LiveChannel): void {
   play(ch, channels.value)
 }
 
+// The banner over the grid: the card the viewer is on, else the first one.
+const { featuredId, track } = useFeaturedChannel()
+const featured = computed(() => {
+  const ch = channels.value.find(c => c.id === featuredId.value) ?? channels.value[0]
+  return ch ? featuredFromFree(ch, liveTv.getEpg(ch.id)) : null
+})
+
 /**
  * The importer's own progress, rather than a poll for it. Rust emits
  * `m3u_progress` throughout the first-launch import and the Refresh
@@ -171,6 +186,7 @@ function playChannel(ch: LiveChannel): void {
  */
 let unlisten: UnlistenFn | undefined
 let unlistenHealth: UnlistenFn | undefined
+let unlistenGuide: UnlistenFn | undefined
 
 onMounted(async () => {
   try {
@@ -199,7 +215,14 @@ onMounted(async () => {
   // scrolled into the grid, where a reset would yank the page back to the
   // top; the next page they open is filtered anyway.
   try {
-    unlistenHealth = await listen<{ done: boolean }>('live_health', async ({ payload }) => {
+    unlistenHealth = await listen<LiveHealthProgress>('live_health', async ({ payload }) => {
+      // Each batch marks its channels at once: a dead one already on screen
+      // dims and says Offline, one that answered loses the mark.
+      for (const id of payload.dead ?? [])
+        liveTv.markOffline(id)
+      for (const id of payload.alive ?? [])
+        liveTv.markLive(id)
+      healthCheck.value = payload.done ? null : { checked: payload.checked, total: payload.total }
       if (!payload.done)
         return
       void readHiddenOffline()
@@ -214,9 +237,20 @@ onMounted(async () => {
   }
   catch { /* browser dev server: no Tauri, no sweep */ }
 
+  // The start-up guide import can land after this page cached "no guide".
+  try {
+    unlistenGuide = await listen('live_guide_imported', () => {
+      liveTv.resetEpg()
+      void liveTv.loadEpgBatch(channels.value.map(c => c.id))
+    })
+  }
+  catch { /* browser dev server: no Tauri, no import */ }
+
   // Free TV must never inherit the premium source: the two entry points
   // are separate libraries, not two views of one list.
   await liveTv.useFreeSource()
+  // Find out which channels answer, now that someone is looking at them.
+  void liveCheckHealth().catch(() => { /* browser dev server: no Tauri */ })
   void readHiddenOffline()
   const category = liveCategory.value
   if (category)
@@ -243,6 +277,7 @@ function onKey(e: KeyboardEvent) {
 onUnmounted(() => {
   unlisten?.()
   unlistenHealth?.()
+  unlistenGuide?.()
   window.removeEventListener('keydown', onKey)
 })
 
@@ -273,6 +308,15 @@ watch(liveCategory, name => {
       @refresh="liveTv.refreshFreeTv()"
       @tune="sheetOpen = true"
     >
+      <!-- The guide's addresses live on Live TV settings, which nothing else links to. -->
+      <nuxt-link
+        :to="localePath('/live-tv/settings')"
+        class="grid size-11 shrink-0 place-items-center rounded-lg text-on-surface/70 transition-colors hover:bg-surface-container-highest hover:text-on-surface focus-visible:bg-surface-container-highest focus-visible:text-on-surface"
+        :aria-label="$t('Programme guide settings')"
+        :title="$t('Programme guide settings')"
+      >
+        <v-icon :icon="mdiCalendarClock" size="22" />
+      </nuxt-link>
       <button
         type="button"
         class="grid size-11 shrink-0 place-items-center rounded-lg text-on-surface/70 transition-colors hover:bg-surface-container-highest hover:text-on-surface focus-visible:bg-surface-container-highest focus-visible:text-on-surface"
@@ -340,7 +384,30 @@ watch(liveCategory, name => {
         />
       </aside>
 
-      <section class="flex min-h-0 flex-1 flex-col gap-2">
+      <section class="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
+        <!-- Said on screen, on a TV too (the header's meta line is desktop
+             only): until this finishes, a channel in the grid may be dead. -->
+        <div
+          v-if="healthCheck"
+          class="flex shrink-0 flex-col gap-1.5 rounded-xl bg-surface-container/60 px-3 py-2"
+          role="status"
+        >
+          <p class="text-body-medium">
+            {{ $t('Checking which channels work… {checked} of {total}', {
+              checked: healthCheck.checked.toLocaleString(),
+              total: healthCheck.total.toLocaleString(),
+            }) }}
+            <span v-if="liveTv.offlineIds.size" class="opacity-60">
+              · {{ $t('{count} not working', { count: liveTv.offlineIds.size.toLocaleString() }) }}
+            </span>
+          </p>
+          <div class="h-1 overflow-hidden rounded-full bg-white/10">
+            <div
+              class="h-full w-full origin-left rounded-full bg-primary transition-transform duration-500"
+              :style="{ transform: `scaleX(${healthCheck.total ? healthCheck.checked / healthCheck.total : 0})` }"
+            />
+          </div>
+        </div>
         <!-- Importing: an empty grid here means "not yet", not "none". -->
         <div v-if="liveTv.m3uImporting && channels.length === 0" class="grid flex-1 place-items-center text-center">
           <div class="flex flex-col items-center gap-3">
@@ -392,16 +459,34 @@ watch(liveCategory, name => {
         </div>
 
         <template v-else>
+          <live-tv-live-featured-banner
+            v-if="featured"
+            :id="featured.channel.id"
+            :name="featured.name"
+            :logo-url="featured.channel.logoUrl"
+            :tint="featured.tint"
+            :quality="featured.quality"
+            :subtitle="featured.subtitle"
+            :now="featured.now"
+            :next="featured.next"
+            :favorite="liveTv.isFavorite(featured.channel)"
+            :offline="liveTv.isOffline(featured.channel)"
+            @play="playChannel(featured.channel)"
+            @toggle-favorite="liveTv.toggleFavorite(featured.channel)"
+          />
           <live-tv-live-channel-grid
             class="min-h-0 flex-1"
             :channels="channels"
             :get-epg="liveTv.getEpg"
+            :load-epg="liveTv.loadEpgBatch"
             :is-favorite="liveTv.isFavorite"
             :is-offline="liveTv.isOffline"
             :density="density"
             :layout="layout"
             :has-more="hasMore"
             :loading="liveTv.visibleLoading"
+            @focusin="track"
+            @pointerover="track"
             @load-more="liveTv.loadMore()"
             @play="playChannel"
             @toggle-favorite="liveTv.toggleFavorite($event)"

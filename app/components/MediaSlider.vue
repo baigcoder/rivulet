@@ -11,6 +11,9 @@ const { items, pending, error } = useMediaFeed(() => props.request)
 /** Cap at 20 items — roughly 3 viewport widths of posters. */
 const MAX_SLIDER_ITEMS = 20
 const visible = computed(() => items.value.slice(0, MAX_SLIDER_ITEMS))
+
+/** TMDB refused the token — the one failure the user can fix, under Settings → About. */
+const unauthorized = computed(() => /\b401\b/.test(error.value ?? ''))
 </script>
 
 <template>
@@ -18,7 +21,18 @@ const visible = computed(() => items.value.slice(0, MAX_SLIDER_ITEMS))
     <template v-if="error && !items.length">
       <div class="flex items-center gap-2 px-4 py-3 text-body-small text-error/80">
         <v-icon :icon="mdiAlertCircle" size="16" />
-        {{ $t('Couldn\'t load this title.') }}
+        <template v-if="unauthorized">
+          {{ $t('TMDB rejected the access token.') }}
+          <nuxt-link
+            :to="localePath('/settings/about')"
+            class="underline hover:text-error focus-visible:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          >
+            {{ $t('Set your own token') }}
+          </nuxt-link>
+        </template>
+        <template v-else>
+          {{ $t('Couldn\'t load this row.') }}
+        </template>
       </div>
     </template>
     <template v-else>

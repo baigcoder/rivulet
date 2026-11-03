@@ -51,6 +51,7 @@ import {
 import { invoke } from '@tauri-apps/api/core'
 import { useNow } from '@vueuse/core'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { appendDigit, channelDigitKey, channelIndexFor, DIGIT_COMMIT_MS } from '~/utils/channelDigits'
 import { isAndroid, isTv } from '~/utils/platform'
 import { fmtHudTime, friendlyPlaybackError, isProviderConnectionLimit } from '~/utils/playbackError'
 import { proxyLogo } from '~/utils/premiumTv'
@@ -151,6 +152,7 @@ const emit = defineEmits<{
   back: []
   retry: []
   zapTo: [index: number]
+  recall: []
   toggleFavorite: []
   toggleFullscreen: []
   showQualityPicker: []
@@ -185,8 +187,34 @@ const timeLine = computed(() => {
 const IDLE_MS = computed(() => touch.value ? 1500 : 2800)
 
 // ── Tuning: where you are in the lineup, and what is on ──────────────
+/** Digits typed on the remote, not yet committed — shown where the number sits. */
+const typedDigits = ref('')
+let digitTimer: ReturnType<typeof setTimeout> | null = null
+
 /** Channel numbers read like a set's: three digits, from 1. */
-const channelNumber = computed(() => String(props.channelIndex + 1).padStart(3, '0'))
+const channelNumber = computed(() => typedDigits.value
+  ? `${typedDigits.value}_`
+  : String(props.channelIndex + 1).padStart(3, '0'))
+
+function commitDigits() {
+  digitTimer = null
+  const index = channelIndexFor(typedDigits.value, props.channelList.length)
+  typedDigits.value = ''
+  if (index !== null && index !== props.channelIndex)
+    emit('zapTo', index)
+}
+
+/** A digit gathers; a lone 0 is the set's "previous channel" button. */
+function onDigit(digit: string) {
+  if (digit === '0' && !typedDigits.value) {
+    emit('recall')
+    return
+  }
+  typedDigits.value = appendDigit(typedDigits.value, digit)
+  if (digitTimer)
+    clearTimeout(digitTimer)
+  digitTimer = setTimeout(commitDigits, DIGIT_COMMIT_MS)
+}
 /** The neighbours by name, so a zap is a choice and not a guess. */
 const prevEntry = computed(() => props.hasPrev ? props.channelList[props.channelIndex - 1] ?? null : null)
 const nextEntry = computed(() => props.hasNext ? props.channelList[props.channelIndex + 1] ?? null : null)
@@ -520,6 +548,13 @@ function onKeyDown(e: KeyboardEvent) {
 
   show()
 
+  const digit = isLiveVariant.value ? channelDigitKey(e) : null
+  if (digit !== null) {
+    e.preventDefault()
+    onDigit(digit)
+    return
+  }
+
   if (e.key.toLowerCase() === 'z')
     showQuickZap.value = !showQuickZap.value
   else if (e.key === 'Escape' && showQuickZap.value)
@@ -539,6 +574,8 @@ onMounted(() => {
   }
 })
 onUnmounted(() => {
+  if (digitTimer)
+    clearTimeout(digitTimer)
   if (hideTimer)
     clearTimeout(hideTimer)
   if (flashTimeout)
@@ -585,10 +622,14 @@ defineExpose({ show, hide, visible })
         <v-icon :icon="mdiArrowLeft" size="20" class="transition-transform group-hover:-translate-x-0.5 group-focus-visible:-translate-x-0.5" />
       </button>
 
+      <!-- Shown at any width while digits are being typed: it is the only
+           feedback that a keypad press was heard. -->
       <span
         v-if="isLiveVariant && channelTotal > 0"
-        class="hidden shrink-0 font-mono text-headline-small tabular-nums tracking-tight text-white/85 sm:block"
-        aria-hidden="true"
+        class="shrink-0 font-mono text-headline-small tabular-nums tracking-tight text-white/85 sm:block"
+        :class="typedDigits ? 'block text-primary' : 'hidden'"
+        :aria-hidden="typedDigits ? undefined : 'true'"
+        :aria-live="typedDigits ? 'polite' : undefined"
       >{{ channelNumber }}</span>
 
       <div

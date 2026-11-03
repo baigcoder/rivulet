@@ -6,10 +6,15 @@
 // the probe verdict (what counts as alive) and the skip (where to go when
 // it is not), and both are pure, so both are checkable without a network.
 import assert from 'node:assert'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { appendDigit, channelDigitKey, channelIndexFor } from '../app/utils/channelDigits'
+import { currentProgram, minutesLeft } from '../app/utils/epgNow'
+import { featuredFromFree, featuredFromPremium } from '../app/utils/featuredChannel'
 import { MAX_AUTO_SKIPS, nextPlayable, pool, probeVerdict } from '../app/utils/livehealth'
 import { liveTvBackPath, liveTvFrom, readLivePlay, saveLivePlay } from '../app/utils/liveNav'
+import { nextLiveAction } from '../app/utils/liveRecovery'
 import { connectionLimitMessage, fmtHudTime, friendlyPlaybackError, isProviderConnectionLimit, isProviderVodSlateDuration } from '../app/utils/playbackError'
+import { dueReminders, pruneReminders, reminderKey } from '../app/utils/reminders'
 import '../scripts/i18n-stub.ts'
 
 // --- The verdict ------------------------------------------------------------
@@ -102,8 +107,7 @@ const freePage = readFileSync(new URL('../app/pages/live-tv/free.vue', import.me
 assert.doesNotMatch(freePage, /probeIds/, 'the Free TV grid must not probe streams while browsing')
 
 const liveCard = readFileSync(new URL('../app/components/live-tv/LiveChannelCard.vue', import.meta.url), 'utf8')
-assert.match(liveCard, /\$t\('LIVE'\)/, 'each Free TV card shows a LIVE tag')
-assert.match(liveCard, /\$t\('Offline'\)/, 'and flips it to Offline when the stream is dead')
+assert.match(liveCard, /\$t\('Offline'\)/, 'a card whose stream is dead says Offline')
 assert.match(liveCard, /absolute start-1\.5 top-1\.5/, 'the health tag sits on the artwork, top start')
 assert.match(freePage, /goHub|liveTvBackPath/, 'Free TV needs an explicit way back to the hub')
 
@@ -119,7 +123,10 @@ assert.match(watchPage, /readLivePlay/, 'the player must recover the staged stre
 assert.match(watchPage, /@go-live=/, 'resume after pause must offer a jump back to the live edge')
 assert.doesNotMatch(watchPage, /playNow\(rawUrl/, 'the free player must never hand mpv a raw upstream URL')
 assert.match(watchPage, /proxyFreeStreamUrl\([\s\S]*\.ts/, 'm3u8 failure retries .ts through the loopback proxy')
-assert.match(freePage, /saveLivePlay/, 'play must stage the stream before navigating')
+// Free TV and the Live TV landing share one play(), so the staging lives there.
+const freePlayer = readFileSync(new URL('../app/composables/useFreeChannelPlayer.ts', import.meta.url), 'utf8')
+assert.match(freePage, /useFreeChannelPlayer\(\)/, 'Free TV plays through the shared composable')
+assert.match(freePlayer, /saveLivePlay\([\s\S]*router\.push\(/, 'play must stage the stream before navigating')
 assert.match(watchPage, /@retry="\(\) => void onRetry\(\)"/, 'Retry must restart the player, not only re-mint a cached proxy URL')
 assert.match(
   watchPage,
@@ -293,8 +300,9 @@ assert.doesNotMatch(freePage, /max-width="320"/, 'the category sheet is not a 32
 assert.match(freePage, /:fullscreen="!smAndUp"/, 'phones get a full-width category sheet')
 
 const hubPage = readFileSync(new URL('../app/pages/live-tv/index.vue', import.meta.url), 'utf8')
-assert.match(hubPage, /list-none/, 'hub tags are chips, not a bulleted list')
-assert.match(hubPage, /text-title-large/, 'hub titles fit a phone width without clipping')
+assert.doesNotMatch(hubPage, /<ul(?![^>]*list-none)/, 'any list on the hub is chips, not a bulleted list')
+assert.doesNotMatch(hubPage, /(?<![a-z]:)text-(?:display|headline-large)/, 'hub titles fit a phone width without clipping')
+assert.match(hubPage, /class="truncate">\{\{ tile\.title \}\}/, 'and a long translation ellipsizes rather than overflowing the tile')
 
 for (const rel of [
   'app/components/live-tv/LiveChannelCard.vue',
@@ -383,7 +391,7 @@ const rust = (rel: string) => readFileSync(new URL(`../src-tauri/src/${rel}`, im
 const proxyRs = rust('iptv/proxy.rs')
 assert.match(proxyRs, /match resp\.bytes\(\)\.await \{\s+Ok\(raw\) => \{\s+let body = manifest_text\(&raw\);/, 'a gzipped playlist is decoded before it is rewritten')
 assert.match(proxyRs, /fn manifest_text[\s\S]*?GzDecoder/, 'by its gzip magic')
-assert.match(proxyRs, /starts_with\('#'\) \{[\s\S]{0,400}?rewrite_uri_attrs\(line, base, user_agent, referer\)/, 'URI="…" inside a tag goes through the proxy too')
+assert.match(proxyRs, /starts_with\('#'\) \{[\s\S]{0,400}?rewrite_uri_attrs\(line, base, user_agent, referer[,)]/, 'URI="…" inside a tag goes through the proxy too')
 assert.match(proxyRs, /fn is_xtream_media_url\(url: &str\) -> bool \{\s+xtream_kind\(url\)\.is_some\(\)/, 'Xtream is the panel shape, not "/live/ somewhere in the path"')
 assert.doesNotMatch(proxyRs, /path\.contains\("\/live\/"\)/, 'no substring test for /live/ is left')
 
@@ -399,7 +407,11 @@ assert.match(m3u, /const IMPORT_REVISION: &str = "r4"/, 'and installs holding th
 const libRs = rust('lib.rs')
 assert.equal(libRs.match(/iptv::health::spawn_sweep\(/g)?.length, 2, 'a sweep follows the boot import, or runs at boot when there is none')
 assert.match(rust('iptv/commands.rs'), /spawn_sweep\(app\.clone\(\), true\)/, 'and follows Refresh')
-assert.match(freePage, /listen<\{ done: boolean \}>\('live_health'/, 'the page re-reads the list when a sweep lands')
+assert.match(freePage, /listen<LiveHealthProgress>\('live_health'/, 'the page re-reads the list when a sweep lands')
+assert.match(freePage, /liveCheckHealth\(\)/, 'opening Free TV checks its channels')
+assert.match(freePage, /markOffline\(id\)/, 'and a dead channel already on screen is marked as each batch lands')
+assert.match(healthRs, /ORDER BY|record\(&batch/, 'verdicts are written and sent in batches, not at the end')
+assert.match(rust('iptv/db.rs'), /WHERE source_id = \?1 ORDER BY name COLLATE NOCASE ASC, id ASC",/, 'in the order the grid shows them')
 assert.match(freePage, /liveOfflineCount\(/, 'and says how many channels it is hiding')
 
 // --- A guide, not a logo wall ------------------------------------------------
@@ -512,11 +524,10 @@ const premiumUtil = readFileSync(new URL('../app/utils/premiumTv.ts', import.met
 assert.match(premiumUtil, /const LOGO_BASE = 'http:\/\/127\.0\.0\.1:3033'/, 'the page asks that origin')
 assert.match(premiumUtil, /return `\$\{LOGO_BASE\}\/api\/premium-tv\/proxy\/image/, 'for every channel logo')
 
-// The subscription card asks about the subscription. `premium.connected` means
-// an account is loaded, so an active subscription with no provider yet drew
-// "No active subscription" directly above a banner saying it was active.
+// There is no subscription apart from the provider: the account card, and the
+// word "active", appear only once a paid provider account is signed in.
 const premiumSettings = readFileSync(new URL('../app/pages/settings/premium-tv.vue', import.meta.url), 'utf8')
-assert.match(premiumSettings, /v-if="settings\.isPremium"\s/, 'the subscription card reads the subscription')
+assert.match(premiumSettings, /v-if="premium\.connected && premium\.account"/, 'account details only for a signed-in account')
 
 // --- A port already taken must say so ----------------------------------------
 // All three local servers bind fixed loopback ports. When one cannot, the spawn
@@ -594,12 +605,12 @@ assert.match(
   /if \(gainedPicture\) \{/,
   'and the last attempt\'s errors clear when the picture arrives',
 )
-// Acting on a stray failure while watching is a zap away from a working
-// channel — both branches of the handler are destructive.
+// A channel that has shown frames is reconnected, never zapped away from —
+// the skip is reserved for one that never played.
 assert.match(
   liveWatch,
-  /async function onPlaybackFailed\(\) \{[\s\S]{0,700}?if \(hasPicture\.value\)\r?\n {4}return/,
-  'a failure with frames on screen is not acted on',
+  /async function onPlaybackFailed\(\) \{[\s\S]*?!hadPicture\.value && autoSkip\(\)/,
+  'a failure on a channel that played is never a zap',
 )
 
 // --- One reading, two pages ---------------------------------------------------
@@ -626,6 +637,146 @@ for (const [name, page] of [['free', liveWatch], ['premium', premiumWatchSrc]] a
     /playerPlaying\.value = [^\n]*asBool\(p\.paused\)/,
     `and the ${name} page does not keep its own copy of the rule`,
   )
+}
+
+// Ctrl/Cmd+K: the shortcut looked for a field only an unmounted component had.
+const browseHeader = readFileSync(new URL('../app/components/live-tv/LiveBrowseHeader.vue', import.meta.url), 'utf8')
+assert.match(browseHeader, /<search-field\s[^>]*\bdata-live-search\b/, 'the mounted live search carries the Ctrl+K hook')
+const shortcuts = readFileSync(new URL('../app/plugins/keyboard-shortcuts.client.ts', import.meta.url), 'utf8')
+assert.match(shortcuts, /\[data-live-search\] input/, 'Ctrl+K focuses the input inside the field, not its wrapper')
+for (const gone of ['LiveEpgDrawer', 'LiveEpgSheet', 'LiveTvSearch', 'LiveFilterDrawer'])
+  assert.ok(!existsSync(new URL(`../app/components/live-tv/${gone}.vue`, import.meta.url)), `${gone} was never mounted`)
+
+// The guide is the user's own XMLTV address: the page sets and imports it,
+// and ships no address of its own.
+{
+  const liveSettings = readFileSync(new URL('../app/pages/live-tv/settings.vue', import.meta.url), 'utf8')
+  assert.match(liveSettings, /setGuideUrls\(/, 'the guide addresses are saved through Rust')
+  assert.match(liveSettings, /importGuides\(/, 'and Update guide now imports them')
+  assert.doesNotMatch(liveSettings, /https?:\/\//, 'no guide address is suggested, bundled or shown as an example')
+}
+
+// "Now" is the programme on at this moment, not the first in a guide that
+// keeps the last few hours.
+{
+  const at = (h: number) => `2026-11-03T${String(h).padStart(2, '0')}:00:00+00:00`
+  const list = [{ start: at(14), stop: at(15) }, { start: at(15), stop: at(16) }]
+  assert.equal(currentProgram(list, Date.parse('2026-11-03T15:37:00Z')), list[1])
+  assert.equal(currentProgram(list, Date.parse('2026-11-03T13:00:00Z')), list[0], 'before the guide starts: what is next')
+  assert.equal(currentProgram(list, Date.parse('2026-11-03T17:00:00Z')), null, 'past the guide: nothing on')
+  for (const f of ['LiveChannelCard.vue', 'LiveChannelRow.vue'])
+    assert.match(readFileSync(new URL(`../app/components/live-tv/${f}`, import.meta.url), 'utf8'), /currentProgram\(/, `${f} picks the current programme`)
+  const end = Date.parse('2026-11-03T16:00:00Z')
+  assert.equal(minutesLeft(end, Date.parse('2026-11-03T15:37:00Z')), 23)
+  assert.equal(minutesLeft(end, end - 10_000), 1, 'seconds left still reads as a minute')
+  assert.equal(minutesLeft(end, end), null, 'over is over')
+  // Every channel in these grids is live, so a LIVE badge on each one says
+  // nothing; what is on says something.
+  for (const card of ['live-tv/LiveChannelCard.vue', 'premium-tv/PremiumChannelCard.vue', 'live-tv/LiveChannelTileRow.vue']) {
+    const src = readFileSync(new URL(`../app/components/${card}`, import.meta.url), 'utf8')
+    assert.doesNotMatch(src, /\$t\('LIVE'\)/, `${card} drops the LIVE badge`)
+  }
+  for (const card of ['live-tv/LiveChannelCard.vue', 'premium-tv/PremiumChannelCard.vue'])
+    assert.match(readFileSync(new URL(`../app/components/${card}`, import.meta.url), 'utf8'), /minutesLeft\(/, `${card} says how long is left`)
+}
+
+// A free stream that was playing and dropped comes back; one that never
+// played is skipped — the same policy and backoff Premium uses.
+{
+  const base = { hadPicture: false, reconnects: 0, canFallback: true, fallbackTried: false, autoSkips: 0, maxAutoSkips: 3 }
+  assert.equal(nextLiveAction({ ...base, hadPicture: true }), 'reconnect', 'a dropped stream that was playing comes back')
+  assert.equal(nextLiveAction({ ...base, hadPicture: true, reconnects: 4 }), 'error', 'and stops after four')
+  assert.equal(nextLiveAction({ ...base, hadPicture: true, autoSkips: 0, reconnects: 4 }), 'error', 'never zapping away from a channel that worked')
+  assert.equal(nextLiveAction(base), 'fallback')
+  assert.equal(nextLiveAction({ ...base, fallbackTried: true }), 'skip')
+  assert.equal(nextLiveAction({ ...base, canFallback: false }), 'skip')
+  assert.equal(nextLiveAction({ ...base, fallbackTried: true, autoSkips: 3 }), 'error')
+  const freeWatch = readFileSync(new URL('../app/pages/live-tv/watch.vue', import.meta.url), 'utf8')
+  assert.match(freeWatch, /nextLiveAction\(/, 'the free player decides through the shared policy')
+  assert.match(freeWatch, /reconnectDelayMs\(/, 'with the same backoff as Premium')
+}
+
+// Number tuning: the set shows "105", so a remote can type it.
+{
+  const ev = (key: string, code = '', target: unknown = null) => ({ key, code, target }) as never
+  assert.equal(channelDigitKey(ev('7', 'Digit7')), '7')
+  assert.equal(channelDigitKey(ev('3', 'Numpad3')), '3')
+  assert.equal(channelDigitKey(ev('a', 'KeyA')), null)
+  assert.equal(channelDigitKey(ev('5', 'Digit5', { tagName: 'INPUT' })), null, 'typing in search never tunes')
+  assert.equal(appendDigit('1234', '5'), '2345')
+  assert.equal(channelIndexFor('105', 200), 104)
+  assert.equal(channelIndexFor('0005', 200), 4)
+  assert.equal(channelIndexFor('201', 200), null)
+  assert.equal(channelIndexFor('0', 200), null)
+  assert.equal(channelIndexFor('', 200), null)
+  const overlay = readFileSync(new URL('../app/components/live-tv/LivePlayerOverlay.vue', import.meta.url), 'utf8')
+  assert.match(overlay, /channelDigitKey\(/, 'the overlay reads digits')
+  assert.match(overlay, /emit\('recall'\)/, 'a lone 0 recalls the previous channel')
+  for (const page of ['watch.vue', 'premium/watch.vue'])
+    assert.match(readFileSync(new URL(`../app/pages/live-tv/${page}`, import.meta.url), 'utf8'), /@recall=/, `${page} wires recall`)
+}
+
+// The featured banner follows the card the viewer is on, in both browsers.
+{
+  const read = (f: string) => readFileSync(new URL(`../app/${f}`, import.meta.url), 'utf8')
+  for (const card of ['components/live-tv/LiveChannelCard.vue', 'components/live-tv/ChannelStrip.vue', 'components/premium-tv/PremiumChannelCard.vue'])
+    assert.match(read(card), /data-channel-id/, `${card} says which channel it is, for the banner to follow`)
+  const banner = read('components/live-tv/LiveFeaturedBanner.vue')
+  assert.match(banner, /emit\('play'\)/, 'the banner plays its channel')
+  // One large surface: a blur here is a full-width frame-buffer readback on
+  // every focus move (check:perf has the numbers).
+  assert.doesNotMatch(banner, /backdrop-|blur-/, 'the banner draws no blur')
+  for (const page of ['pages/live-tv/free.vue', 'components/premium-tv/PremiumBrowser.vue']) {
+    const src = read(page)
+    assert.match(src, /<live-tv-live-featured-banner/, `${page} shows the banner`)
+    assert.match(src, /useFeaturedChannel\(/, `${page} follows focus into it`)
+  }
+}
+
+// One mapping onto the banner per service, shared by every page that has one:
+// Free's guide is ISO strings, Premium's epoch seconds, the banner's ms.
+{
+  const at = (h: number) => `2026-11-03T${String(h).padStart(2, '0')}:00:00Z`
+  const ch = { id: 'a', name: 'News 24 HD', categoryName: 'News', country: 'Chile' } as never
+  const free = featuredFromFree(ch, [
+    { title: 'Morning', start: at(8), stop: at(9) },
+    { title: 'Noon', start: at(9), stop: at(10) },
+  ], Date.parse(at(8)) + 60_000)
+  assert.equal(free.now?.title, 'Morning')
+  assert.equal(free.next?.title, 'Noon', 'next is the programme after the one on now')
+  assert.equal(free.now?.start, Date.parse(at(8)))
+  assert.equal(free.quality, 'HD')
+  assert.equal(free.subtitle, 'Chile')
+  const premium = featuredFromPremium({ id: 'p', name: 'Film 4K' } as never, { now: { channelId: 'p', title: 'Film', start: 100, stop: 200 }, next: null })
+  assert.equal(premium.now?.start, 100_000, 'Premium seconds become milliseconds')
+  const read = (f: string) => readFileSync(new URL(`../app/${f}`, import.meta.url), 'utf8')
+  assert.match(read('pages/live-tv/free.vue'), /featuredFromFree\(/)
+  assert.match(read('components/premium-tv/PremiumBrowser.vue'), /featuredFromPremium\(/)
+
+  // The TV page is the two services and nothing else: channels live on each
+  // service's own page, where they can be filtered and checked.
+  const hub = read('pages/live-tv/index.vue')
+  assert.match(hub, /live-tv\/free/)
+  assert.match(hub, /live-tv\/premium/)
+  assert.doesNotMatch(hub, /scroll-row|featured-banner|categoryPreviews|recentChannels/, 'no channel rows on the TV page')
+}
+
+// Reminders ring a minute ahead, and are forgotten once well past.
+{
+  const r = (start: number) => ({ key: reminderKey('free', 'c', start), kind: 'free' as const, channelId: 'c', channelName: 'C', title: 'T', start })
+  assert.equal(dueReminders([r(100_000)], 40_000).length, 1, 'due a minute ahead')
+  assert.equal(dueReminders([r(100_000)], 30_000).length, 0, 'not before')
+  assert.equal(dueReminders([r(100_000)], 100_000 + 4 * 60_000).length, 1, 'still rings a little late (the app was busy)')
+  assert.equal(pruneReminders([r(100_000)], 100_000 + 6 * 60_000).length, 0, 'gone once well past')
+  assert.equal(pruneReminders([r(100_000)], 100_000).length, 1)
+  assert.equal(reminderKey('premium', '42', 7), 'premium:42:7')
+  const read = (f: string) => readFileSync(new URL(`../app/${f}`, import.meta.url), 'utf8')
+  for (const f of ['components/premium-tv/PremiumEpgPanel.vue', 'components/live-tv/LiveGuideProgram.vue'])
+    assert.match(read(f), /aria-pressed/, `${f}: a reminder is a real toggle`)
+  // Premium reminders carry an id and nothing the provider issued.
+  assert.doesNotMatch(read('components/premium-tv/PremiumEpgPanel.vue'), /streamUrl/, 'no Premium URL is stored')
+  assert.match(read('plugins/reminders.client.ts'), /sendNotification\(/, 'a due reminder notifies the OS')
+  assert.match(read('pages/live-tv/settings.vue'), /Reminders ring only while Rivulet is open\./, 'and says when it cannot')
 }
 
 // eslint-disable-next-line no-console

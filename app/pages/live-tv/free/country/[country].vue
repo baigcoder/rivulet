@@ -278,6 +278,7 @@ const filteredChannels = computed(() => {
         v-else-if="viewMode === 'grid'"
         :channels="filteredChannels"
         :get-epg="liveTv.getEpg"
+        :load-epg="liveTv.loadEpgBatch"
         :is-favorite="liveTv.isFavorite"
         :is-offline="liveTv.isOffline"
         :density="liveTv.density"
@@ -292,6 +293,7 @@ const filteredChannels = computed(() => {
         v-else
         :channels="filteredChannels"
         :get-epg="liveTv.getEpg"
+        :load-epg="liveTv.loadEpgBatch"
         :is-favorite="liveTv.isFavorite"
         :is-offline="liveTv.isOffline"
         :has-more="!!nextCursor && !searchQuery && !selectedCategory"

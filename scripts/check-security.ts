@@ -10,14 +10,26 @@
 // node:http rather than fetch: a page's Origin and a rebinding attacker's Host
 // are exactly the headers fetch implementations refuse to let a caller set.
 import assert from 'node:assert'
+import { readFileSync } from 'node:fs'
 import { request } from 'node:http'
 import process from 'node:process'
+
+// The page may hand the OS web and mail links and nothing else. A local path
+// or UNC share in this scope is one XSS away from launching a downloaded .exe
+// or leaking NTLM to an SMB server; folders go through `reveal_path` instead.
+const shellOpen: string = JSON.parse(readFileSync(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8')).plugins.shell.open
+for (const bad of ['file:///C:/Windows/System32/cmd.exe', 'C:\\Users\\me\\Downloads\\x.exe', '\\\\evil.example\\share\\x', '/usr/bin/xterm', 'javascript:alert(1)'])
+  assert.ok(!new RegExp(shellOpen).test(bad), `shell open scope must refuse ${bad}`)
+for (const ok of ['https://www.youtube.com/watch?v=x', 'https://mpv.io'])
+  assert.ok(new RegExp(shellOpen).test(ok), `shell open scope must allow ${ok}`)
 
 interface Answer { status: number, body: string }
 
 function send(port: number, path: string, headers: Record<string, string> = {}, method = 'GET', body = ''): Promise<Answer> {
   return new Promise((resolve, reject) => {
-    const req = request({ host: '127.0.0.1', port, path, method, headers, timeout: 8000 }, res => {
+    // Generous: refusing a folder resolves every approved one, and a sleeping
+    // USB drive among them takes five to twelve seconds to answer that.
+    const req = request({ host: '127.0.0.1', port, path, method, headers, timeout: 30_000 }, res => {
       let text = ''
       res.setEncoding('utf8')
       res.on('data', (c: string) => (text += c))

@@ -277,6 +277,25 @@ export function liveGroupStats(sourceId: string, limit = 200): Promise<GroupCoun
 
 // ── Player-side (Free TV) ──────────────────────────────────────────
 
+/**
+ * Free TV was opened: have Rust check which channels answer, unless it did
+ * within the last half hour. Verdicts arrive as `live_health` events.
+ */
+export function liveCheckHealth(): Promise<void> {
+  return invoke<void>('live_check_health')
+}
+
+/** What one `live_health` event carries. */
+export interface LiveHealthProgress {
+  checked: number
+  total: number
+  offline: number
+  done: boolean
+  /** Channels found answering / dead since the last event. */
+  alive?: string[]
+  dead?: string[]
+}
+
 /** Channels the background health check is leaving out of the lists. */
 export function liveOfflineCount(sourceId: string): Promise<number> {
   return invoke<number>('live_offline_count', { sourceId })
@@ -317,17 +336,42 @@ export function liveClearRecent(sourceId: string): Promise<void> {
 // ── EPG ────────────────────────────────────────────────────────────
 
 /**
- * Per-stream-id EPG is a no-op for Free TV. The endpoint stays so
- * the Free TV store's `loadEpg` path doesn't break — it just
- * returns an empty list. The iptv-org EPG for Free TV is served
- * by `getFreeTvEpg`, keyed by `tvg-id` not by stream id.
+ * A channel's guide from the user's own XMLTV addresses, keyed by channel id
+ * (see `guides.rs`). Empty until they add one under Live TV settings.
  */
-export function liveGetLiveEpg(_channelId: string): Promise<EpgProgram[]> {
-  return invoke<EpgProgram[]>('live_get_live_epg', { channelId: _channelId })
+export function liveGetLiveEpg(channelId: string): Promise<EpgProgram[]> {
+  return invoke<EpgProgram[]>('live_get_live_epg', { channelId })
 }
 
 export function liveChannelEpgBatch(channelIds: string[]): Promise<EpgProgram[]> {
   return invoke<EpgProgram[]>('live_channel_epg_batch', { channelIds })
+}
+
+// ── Free TV guide (the user's own XMLTV addresses) ─────────────────
+
+export function guideUrls(): Promise<string[]> {
+  return invoke<string[]>('live_guide_urls')
+}
+
+/** Resolves to the list as stored: only http(s), each once, at most ten. */
+export function setGuideUrls(urls: string[]): Promise<string[]> {
+  return invoke<string[]>('live_set_guide_urls', { urls })
+}
+
+export interface GuideReport { programs: number, channels: number, failed: string[] }
+
+export function importGuides(): Promise<GuideReport> {
+  return invoke<GuideReport>('live_import_guides')
+}
+
+/** Minutes added to every guide time, for a guide that runs early or late. */
+export function guideOffset(): Promise<number> {
+  return invoke<number>('live_guide_offset')
+}
+
+/** Resolves to the value stored, clamped to ±720. */
+export function setGuideOffset(minutes: number): Promise<number> {
+  return invoke<number>('live_set_guide_offset', { minutes })
 }
 
 // ── Free TV refresh ────────────────────────────────────────────────

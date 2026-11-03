@@ -228,7 +228,7 @@ watch(
 <template>
   <div
     ref="scrollRef"
-    class="h-full overflow-y-auto"
+    class="h-full overflow-y-auto overflow-x-hidden"
     data-dpad-start
   >
     <div ref="headerRef">

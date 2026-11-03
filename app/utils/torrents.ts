@@ -738,6 +738,20 @@ export class NoServerStream extends Error {
 }
 
 /**
+ * Healthy torrents were found and the download drive had room for none of
+ * them. Said as such, because "cams, dead, or too big" sent a user with a full
+ * C: drive hunting for a better source when the fix was another drive.
+ */
+export class NoDiskSpace extends Error {}
+
+/** True when the storage budget, not the per-file ceiling, is what turned every live torrent away. */
+export function diskIsTheLimit(found: Release[], maxBytes = MAX_BYTES) {
+  const limit = Math.min(MAX_BYTES, maxBytes)
+  const live = found.filter(t => t.magnet && t.seeders > 0)
+  return limit < MAX_BYTES && live.length > 0 && live.every(t => !!t.bytes && t.bytes > limit)
+}
+
+/**
  * Just the direct links, best first: what playback resolves through when
  * torrent downloads are switched off, and the pool the player's server and
  * quality menus draw from either way.
@@ -1181,11 +1195,18 @@ export interface TorrentStats {
  * engine lays out every file in the torrent before it fetches any of them, so
  * a 300 GB season pack needs 300 GB free to stream one episode out of it.
  */
+const DISK_FULL = /not enough space|no space left|disk full|os error 112|enospc/i
+
+/** The engine stopped this torrent because its drive is full — a drive choice fixes it, a retry cannot. */
+export function diskFull(stats?: TorrentStats | null) {
+  return stats?.state === 'error' && DISK_FULL.test(stats.error ?? '')
+}
+
 export function engineFault(stats?: TorrentStats | null): string {
   if (!stats || stats.state !== 'error')
     return ''
   const raw = stats.error ?? ''
-  if (/not enough space|no space left|disk full|os error 112|enospc/i.test(raw)) {
+  if (DISK_FULL.test(raw)) {
     return $t('There is not enough free disk space for this download. The engine reserves room for every file in the torrent, so a season pack needs space for the whole pack. Free some up, or choose another folder in Settings → Storage.')
   }
   if (/permission denied|access is denied|os error 5|\beacces\b/i.test(raw))
@@ -2367,6 +2388,8 @@ export async function startTorrent(options: {
             + (names ? ` ${$t('{servers} serve downloads only here.', { servers: names })}` : '')
           throw new NoServerStream(msg, hosts)
         }
+        if (diskIsTheLimit(found, options.maxBytes))
+          throw new NoDiskSpace($t('Your download drive is too full for any copy of this title. Free up space, or choose another drive under Settings → Storage.'))
         throw new Error(found.length
           ? $t('All {count} releases found were cams, dead, or too big for this device.', { count: found.length })
           : $t('Your sources have nothing for this title.'))

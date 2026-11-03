@@ -496,6 +496,10 @@ export const useLiveTvStore = defineStore('liveTv', () => {
     epgPendingIds.value = pending
     try {
       const programs = await liveChannelEpgBatch(toLoad)
+      // A channel the guide doesn't cover is an answer too — cached as empty,
+      // or every scroll past it asks again.
+      for (const id of toLoad)
+        epgCache.value.set(id, [])
       for (const p of programs) {
         const existing = epgCache.value.get(p.channelId) ?? []
         existing.push(p)
@@ -528,6 +532,12 @@ export const useLiveTvStore = defineStore('liveTv', () => {
       cleared.delete(epgId)
       epgPendingIds.value = cleared
     }
+  }
+
+  /** Forget the cached guide: a new import has replaced what it was read from. */
+  function resetEpg(): void {
+    epgCache.value.clear()
+    triggerRef(epgCache)
   }
 
   function getEpg(channelId: string): EpgProgram[] {
@@ -944,6 +954,7 @@ export const useLiveTvStore = defineStore('liveTv', () => {
     loadEpg,
     loadEpgBatch,
     loadFreeEpg,
+    resetEpg,
     getEpg,
 
     // Player

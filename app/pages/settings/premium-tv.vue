@@ -1,22 +1,11 @@
 <script setup lang="ts">
-import {
-  mdiCheck,
-  mdiClockOutline,
-  mdiInfinity,
-  mdiLogout,
-  mdiShieldCheckOutline,
-  mdiShieldOffOutline,
-  mdiTelevisionPlay,
-} from '@mdi/js'
-import { premiumApi, pushEntitlement } from '~/utils/premiumTv'
+import type { ConnectionSummary } from '~/types/premium'
+import { mdiAccountPlus, mdiCheck, mdiShieldOffOutline, mdiTelevisionPlay } from '@mdi/js'
+import { premiumApi } from '~/utils/premiumTv'
 
 const settings = useSettingsStore()
 const premium = usePremiumTvStore()
 
-const DAY_MS = 24 * 60 * 60 * 1000
-const TRIAL_DAYS = 30
-/** "No expiry" as a date, because the gate's contract is a timestamp. */
-const UNLIMITED_DAYS = 100 * 365
 const statusLoaded = ref(false)
 
 onMounted(async () => {
@@ -25,7 +14,7 @@ onMounted(async () => {
     .then(() => console.log('[premium-tv] API server is up'))
     .catch((e: unknown) => console.error('[premium-tv] API server unreachable:', e))
   try {
-    await premium.loadStatus()
+    await Promise.all([premium.loadStatus(), premium.loadConnections()])
   }
   finally {
     // This marks only the initial status lookup. A provider connection also
@@ -37,9 +26,6 @@ onMounted(async () => {
 
 /** Guards the account card's own two buttons while either is in flight. */
 const busy = ref(false)
-const activationBusy = ref(false)
-const activationMessage = ref('')
-const activationError = ref('')
 
 async function withBusy(fn: () => Promise<unknown>): Promise<void> {
   busy.value = true
@@ -52,91 +38,54 @@ async function withBusy(fn: () => Promise<unknown>): Promise<void> {
 }
 
 const refresh = () => withBusy(() => premium.refresh(true))
-const disconnect = () => withBusy(() => premium.disconnect())
-
-/**
- * Only the local flag is written here. The API keeps its own copy of the
- * entitlement — it is a separate process and re-checks it on every
- * request, the stream redirector included — and `app.vue` watches these
- * two fields and pushes the change there. One watcher rather than a call
- * beside every assignment, because a restored backup writes them too.
- */
-function applyTier(tier: 'free' | 'premium', expiresAt: number): void {
-  settings.subscriptionTier = tier
-  settings.subscriptionExpiresAt = expiresAt
+// Signing out of the active account hands over to the next saved one,
+// rather than leaving the others stranded behind the sign-in form.
+function disconnect() {
+  return withBusy(() => {
+    const active = premium.connections.find(c => c.active)
+    return active ? premium.removeConnection(active.id) : premium.disconnect()
+  })
 }
 
-async function activate(tier: 'free' | 'premium', expiresAt: number): Promise<void> {
-  activationBusy.value = true
-  activationMessage.value = ''
-  activationError.value = ''
-  applyTier(tier, expiresAt)
-  try {
-    // Do not leave the setting page dependent on app.vue's background
-    // watcher. The user needs the local API gate open before Connect can
-    // test a provider, and this makes that transition immediate.
-    await pushEntitlement(tier, expiresAt || null)
-    activationMessage.value = tier === 'premium'
-      ? $t('Premium TV is active. You can now connect your provider.')
-      : $t('Premium TV has been deactivated.')
-    // loadStatus populates the provider card but must not block
-    // activation — the entitlement is already set via IPC.
-    await premium.loadStatus().catch(() => {})
-  }
-  catch {
-    activationError.value = $t('Could not activate Premium TV. Restart the app and try again.')
-  }
-  finally {
-    activationBusy.value = false
-  }
+const others = computed(() => premium.connections.filter(c => !c.active))
+const switchTo = (id: string) => withBusy(() => premium.switchTo(id))
+
+/** The sign-in form under a connected account, for a second login. */
+const adding = ref(false)
+function addAnother(): void {
+  adding.value = true
 }
 
-function activateTrial() {
-  return activate('premium', Date.now() + TRIAL_DAYS * DAY_MS)
+const removing = ref<ConnectionSummary | null>(null)
+async function confirmRemove(): Promise<void> {
+  const target = removing.value
+  removing.value = null
+  if (target)
+    await withBusy(() => premium.removeConnection(target.id))
 }
 
-function activateUnlimited() {
-  return activate('premium', Date.now() + UNLIMITED_DAYS * DAY_MS)
-}
-
-function deactivate() {
-  return activate('free', 0)
+function accountKind(c: ConnectionSummary): string {
+  return c.providerType === 'm3u' ? $t('M3U / M3U+') : $t('Xtream Codes')
 }
 
 /**
- * Where the user is in getting Premium TV going, as three steps. The page used
- * to be two unrelated sections, and nothing said that the second one needed
- * the first — or that, once both were done, the channels were somewhere else.
+ * Where the user is in getting Premium TV going. It needs one thing: their own
+ * paid IPTV account. Nothing is free for a while, and nothing is switched on apart — the
+ * local switch that used to be step one said "active" to someone signed in to
+ * nothing.
  */
 const steps = computed(() => [
-  { title: $t('Turn on Premium TV'), done: settings.isPremium },
-  { title: $t('Connect your provider'), done: settings.isPremium && premium.connected },
+  { title: $t('Sign in with your provider'), done: premium.connected },
   { title: $t('Watch'), done: false },
 ])
 const currentStep = computed(() => steps.value.findIndex(s => !s.done))
-
-/** Whole days left on the subscription, for the bar under it. */
-const daysLeft = computed(() => settings.subscriptionExpiresAt
-  ? Math.max(0, Math.ceil((settings.subscriptionExpiresAt - Date.now()) / DAY_MS))
-  : 0)
-const unlimited = computed(() => daysLeft.value > 365 * 10)
-
-function formatExpiry(ms: number): string {
-  if (!ms)
-    return ''
-  return new Date(ms).toLocaleDateString(undefined, {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  })
-}
 </script>
 
 <template>
   <div class="flex flex-col gap-8">
     <!-- Where you are: the two sections below depend on each other, and the
          end of it — the channels — is on another page. -->
-    <ol class="m-0 grid list-none gap-3 p-0 sm:grid-cols-3" :aria-label="$t('Getting started')">
+    <ol class="m-0 grid list-none gap-3 p-0 sm:grid-cols-2" :aria-label="$t('Getting started')">
       <li
         v-for="(step, i) in steps"
         :key="step.title"
@@ -155,7 +104,7 @@ function formatExpiry(ms: number): string {
         </span>
         <span class="min-w-0 truncate text-title-small font-semibold">{{ step.title }}</span>
         <v-btn
-          v-if="i === 2 && currentStep === 2"
+          v-if="i === 1 && currentStep === 1"
           size="small"
           color="primary"
           variant="flat"
@@ -167,92 +116,6 @@ function formatExpiry(ms: number): string {
         </v-btn>
       </li>
     </ol>
-
-    <!-- Subscription status -->
-    <settings-section
-      :title="$t('Subscription')"
-      :hint="$t('Premium TV unlocks Xtream and M3U IPTV sources with EPG, favourites and more.')"
-    >
-      <!-- The subscription, not the provider. `premium.connected` means an
-           account is loaded, so this card called an active subscription with
-           no provider yet "No active subscription" — directly above the banner
-           saying Premium TV was active. -->
-      <v-card
-        v-if="settings.isPremium"
-        rounded="xl"
-        class="panel flex flex-col items-start gap-3 p-6"
-      >
-        <div class="flex items-center gap-3">
-          <v-icon :icon="mdiShieldCheckOutline" size="24" color="success" />
-          <span class="text-title-medium font-bold text-success">{{ $t('Subscription active') }}</span>
-        </div>
-        <p v-if="unlimited" class="flex items-center gap-1.5 text-body-medium opacity-80">
-          <v-icon :icon="mdiInfinity" size="18" /> {{ $t('Unlimited — no expiry') }}
-        </p>
-        <template v-else-if="settings.subscriptionExpiresAt">
-          <p class="text-body-medium opacity-80">
-            {{ $t('{days} days left · expires {date}', { days: daysLeft, date: formatExpiry(settings.subscriptionExpiresAt) }) }}
-          </p>
-          <div class="h-1.5 w-full max-w-sm overflow-hidden rounded-full bg-white/10">
-            <div class="h-full rounded-full bg-success" :style="{ width: `${Math.min(100, (daysLeft / TRIAL_DAYS) * 100)}%` }" />
-          </div>
-        </template>
-        <p v-else class="text-body-small opacity-70">
-          {{ $t('No expiry date set.') }}
-        </p>
-        <v-btn
-          variant="text"
-          color="error"
-          :prepend-icon="mdiLogout"
-          size="small"
-          :loading="activationBusy"
-          @click="deactivate"
-        >
-          {{ $t('Deactivate') }}
-        </v-btn>
-      </v-card>
-
-      <!-- Two choices, each saying what it is. The first button used to read
-           "Login via IPTV" and started a thirty-day trial — nothing was logged
-           into, and the IPTV login is the section below. -->
-      <div v-else class="grid gap-3 sm:grid-cols-2">
-        <button
-          type="button"
-          class="flex flex-col items-start gap-2 rounded-2xl border border-white/10 bg-surface-container/60 p-5 text-start outline-none transition-colors hover:border-primary/60 focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
-          :disabled="activationBusy"
-          @click="activateTrial"
-        >
-          <v-icon :icon="mdiClockOutline" size="28" class="text-primary" />
-          <span class="text-title-medium font-bold">{{ $t('Start a 30-day trial') }}</span>
-          <span class="text-body-medium opacity-70">{{ $t('Everything in Premium TV for thirty days. Turn it off any time.') }}</span>
-        </button>
-        <button
-          type="button"
-          class="flex flex-col items-start gap-2 rounded-2xl border border-white/10 bg-surface-container/60 p-5 text-start outline-none transition-colors hover:border-primary/60 focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
-          :disabled="activationBusy"
-          @click="activateUnlimited"
-        >
-          <v-icon :icon="mdiInfinity" size="28" class="text-primary" />
-          <span class="text-title-medium font-bold">{{ $t('Activate unlimited') }}</span>
-          <span class="text-body-medium opacity-70">{{ $t('No expiry date. For your own provider, on this device.') }}</span>
-        </button>
-      </div>
-
-      <v-alert
-        v-if="activationMessage"
-        type="success"
-        variant="tonal"
-        class="mt-3"
-        :text="activationMessage"
-      />
-      <v-alert
-        v-if="activationError"
-        type="error"
-        variant="tonal"
-        class="mt-3"
-        :text="activationError"
-      />
-    </settings-section>
 
     <!-- The provider itself: connected, or the one box that connects it -->
     <settings-section
@@ -279,20 +142,48 @@ function formatExpiry(ms: number): string {
           <v-progress-circular indeterminate color="primary" size="32" />
         </div>
 
+        <!-- Saved logins other than the active one. Switching drops the
+             stream of the old one: a provider counts it as a connection. -->
+        <ul v-if="statusLoaded && others.length" class="m-0 flex list-none flex-col gap-2 p-0" :aria-label="$t('Other accounts')">
+          <li
+            v-for="c in others"
+            :key="c.id"
+            class="flex flex-wrap items-center gap-3 rounded-2xl border border-white/8 bg-surface-container/40 px-4 py-3"
+          >
+            <div class="min-w-0 flex-1">
+              <p class="truncate text-body-medium font-medium">
+                {{ c.accountName || c.displayName }}
+              </p>
+              <p class="text-body-small opacity-60">
+                {{ accountKind(c) }}
+              </p>
+            </div>
+            <v-btn size="small" variant="tonal" color="primary" :disabled="busy" @click="switchTo(c.id)">
+              {{ $t('Switch') }}
+            </v-btn>
+            <v-btn size="small" variant="text" :disabled="busy" @click="removing = c">
+              {{ $t('Remove') }}
+            </v-btn>
+          </li>
+        </ul>
+
         <!-- The same form the Premium TV page mounts, without its heading:
              this section already has one. On success it opens Premium TV,
              which is where the channels are. -->
-        <premium-tv-premium-connect-form v-else-if="settings.isPremium" :heading="false" />
-
-        <v-alert
-          v-else
-          type="info"
+        <premium-tv-premium-connect-form v-if="statusLoaded && (!premium.connected || adding)" :heading="false" />
+        <v-btn
+          v-else-if="premium.connected"
           variant="tonal"
-          :text="$t('Activate Premium TV above before connecting a provider.')"
-        />
+          size="small"
+          class="self-start"
+          :prepend-icon="mdiAccountPlus"
+          @click="addAnother"
+        >
+          {{ $t('Add another account') }}
+        </v-btn>
 
         <v-btn
-          v-if="settings.isPremium"
+          v-if="premium.connected"
           variant="text"
           color="primary"
           :to="localePath('/live-tv/premium')"
@@ -333,5 +224,29 @@ function formatExpiry(ms: number): string {
         </div>
       </v-card>
     </settings-section>
+
+    <v-dialog
+      :model-value="!!removing"
+      max-width="480"
+      @update:model-value="open => !open && (removing = null)"
+    >
+      <v-card rounded="xl">
+        <v-card-title class="text-title-medium">
+          {{ $t('Remove this account?') }}
+        </v-card-title>
+        <v-card-text class="text-body-medium">
+          {{ $t('{name} and its saved login will be deleted from this device.', { name: removing?.accountName || removing?.displayName || '' }) }}
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="removing = null">
+            {{ $t('Cancel') }}
+          </v-btn>
+          <v-btn variant="tonal" color="error" @click="confirmRemove">
+            {{ $t('Remove') }}
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </div>
 </template>

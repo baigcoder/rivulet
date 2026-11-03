@@ -1,6 +1,7 @@
 import type {
   CatalogState,
   CategoryCount,
+  ConnectionSummary,
   EpgProgram,
   IPTVCategory,
   IPTVChannel,
@@ -13,6 +14,7 @@ import type {
 } from '~/types/premium'
 import { defineStore } from 'pinia'
 import { computed, ref, shallowRef, triggerRef, watch } from 'vue'
+import { MAX_RECONNECT_ATTEMPTS, reconnectDelayMs } from '~/utils/liveRecovery'
 import { premiumApi, PremiumApiError, setAuthToken } from '~/utils/premiumTv'
 
 /**
@@ -36,29 +38,9 @@ const PAGE_SIZE = 60
 /** Search is typed a character at a time; the query is not cheap. */
 const SEARCH_DEBOUNCE_MS = 300
 
-/**
- * How many times a dead stream is retried before the player gives up and
- * says so. Four attempts over the backoff below is about three quarters
- * of a minute — long enough to ride out a provider restart, short enough
- * that a genuinely dead channel does not look like a hung app.
- */
-export const MAX_RECONNECT_ATTEMPTS = 4
-
-/**
- * Exponential, capped. `attempt` is 1-based.
- *
- * The first step is two seconds rather than one, and the cap is twenty
- * rather than eight, for a reason particular to this provider protocol:
- * a panel counts a *connection*, and it does not stop counting the one
- * that just died the instant our player exits. An account whose
- * `maxConnections` is 1 — the common case for a single-device
- * subscription — answers 401 to every request until its own slot is
- * released, so a schedule that spends all four attempts inside that
- * window reports "dead channel" for something that was only busy.
- */
-export function reconnectDelayMs(attempt: number): number {
-  return Math.min(2000 * 2 ** (attempt - 1), 20_000)
-}
+// Moved to utils/liveRecovery so Free TV recovers the same way; re-exported
+// here because the watch page and check:premium-player import them from the store.
+export { MAX_RECONNECT_ATTEMPTS, reconnectDelayMs }
 
 /**
  * The player's state, as one value.
@@ -388,7 +370,7 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
   /** Fill the sidebar and the first grid off the catalog that just landed. */
   async function afterConnect(): Promise<void> {
     resetBrowsing()
-    await Promise.all([loadStatus(), loadCategoryCounts()])
+    await Promise.all([loadStatus(), loadCategoryCounts(), loadConnections()])
     await loadChannels({ reset: true })
     if (isXtream.value)
       void prefetchVod()
@@ -412,6 +394,61 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
     recent.value = []
     categoryCounts.value = []
     categories.value = []
+  }
+
+  // ── Saved accounts ───────────────────────────────────────────
+
+  const connections = ref<ConnectionSummary[]>([])
+
+  async function loadConnections(): Promise<void> {
+    try {
+      connections.value = await premiumApi.connections()
+    }
+    catch {
+      connections.value = []
+    }
+  }
+
+  /** Everything cached under the account that was active until now. */
+  function forgetAccountData(): void {
+    resetBrowsing()
+    nowNextCache.value = new Map()
+    nowNextAsked.clear()
+    guideCache.value = new Map()
+    favoriteIds.value = new Set()
+    favoriteChannels.value = []
+    recent.value = []
+    categoryCounts.value = []
+    categories.value = []
+  }
+
+  async function switchTo(id: string): Promise<void> {
+    // The stream that may be up belongs to the old login; the provider
+    // counts it as a connection until it is dropped.
+    resetPlayer()
+    await premiumApi.activate(id)
+    forgetAccountData()
+    await afterConnect()
+    await Promise.all([loadFavorites(), loadRecent()])
+  }
+
+  async function removeConnection(id: string): Promise<void> {
+    const wasActive = connections.value.find(c => c.id === id)?.active ?? false
+    await premiumApi.removeConnection(id)
+    if (wasActive) {
+      resetPlayer()
+      forgetAccountData()
+      await loadStatus()
+      if (connected.value) {
+        await afterConnect()
+        await Promise.all([loadFavorites(), loadRecent()])
+      }
+      else {
+        lastReport.value = null
+        setAuthToken(null)
+      }
+    }
+    await loadConnections()
   }
 
   /** Re-import. `force` ignores the TTLs, which is what *Refresh* means. */
@@ -972,6 +1009,10 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
     connectXtream,
     connectM3u,
     disconnect,
+    connections,
+    loadConnections,
+    switchTo,
+    removeConnection,
     refresh,
     // browsing
     contentSection,

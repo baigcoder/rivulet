@@ -64,6 +64,8 @@ function play(): void {
       id: movieId.value,
       ext: ext.value,
       title: displayName.value,
+      tmdb: tmdbId.value || undefined,
+      tt: 'movie',
       from: route.fullPath,
     },
   })
@@ -80,6 +82,7 @@ function play(): void {
     :fallback-overview="fallbackOverview"
     :fallback-year="fallbackYear"
     :fallback-rating="fallbackRating"
+    :provider-quality="labelled.quality"
     @play="play"
   />
 </template>

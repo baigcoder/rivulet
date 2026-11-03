@@ -10,7 +10,10 @@ keeps glued to a box in the page. Targets desktop **and Android TV**.
   `bun run dev` for the browser-only front end, `bun run lint` before finishing.
 - `bun run build` makes native bundles, `bun run build:windows` a cross-compiled
   `.exe`, `bun run build:android` an APK. `.msi` and macOS need their own OS.
-  There is no CI — builds are local. See the README for what plays where.
+  Releases are built by `.github/workflows/release.yml` on a `v*` tag (`bun run
+  bump`), into a draft; `build.yml` builds a branch the same way without
+  releasing (run it by hand, or label a pull request `build`). See the README
+  for what plays where.
 - The mpv backend has one file per windowing system: X11 in
   `src-tauri/src/player.rs`, Win32 in `player_windows.rs`, macOS in
   `player_macos.rs` (+ `player_render_mac.rs`), and stubs in

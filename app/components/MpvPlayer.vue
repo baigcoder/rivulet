@@ -15,6 +15,7 @@ import {
   mdiClose,
   mdiCloud,
   mdiCog,
+  mdiCrown,
   mdiEarHearing,
   mdiFastForward10,
   mdiFullscreen,
@@ -106,6 +107,16 @@ const props = defineProps<{
   episodeOverview?: string
   /** Transparent title treatment from TMDB (logo PNG path). Shown on the pause overlay. */
   logo?: string | null
+  /**
+   * The pause screen's synopsis and rating when there is no library `media`
+   * to read them from — a Premium film, which must not be recorded in the
+   * library's history (an entry there resumes through sources, not the
+   * provider), still pauses on what it is.
+   */
+  overview?: string
+  rating?: number
+  /** A label over the pause screen's title, e.g. which service this is from. */
+  badge?: string
   /**
    * The other server streams the sources answered with, offered as two menus:
    * `servers` names every candidate (and is the failover list), `qualities`
@@ -4057,6 +4068,19 @@ function fmtDuration(s: number) {
 /** Full logo URL from the TMDB logo path, or null. */
 const logoSrc = computed(() => logoUrl(props.logo ?? null, 'w500'))
 
+/** The pause screen's line of facts, in order, only those there are. */
+const pauseFacts = computed(() => {
+  const rating = props.media?.rating || props.rating || 0
+  return [
+    props.year && { key: 'year', text: props.year },
+    duration.value && { key: 'duration', text: fmtDuration(duration.value) },
+    rating > 0 && { key: 'rating', text: rating.toFixed(1) },
+    props.season && props.episode && { key: 'episode', text: `S${props.season}E${props.episode}` },
+  ].filter((f): f is { key: string, text: string } => !!f)
+})
+
+const pauseOverview = computed(() => props.episodeOverview || props.media?.overview || props.overview || '')
+
 /** When this finishes if it is resumed now, at the speed it is playing at — the pause screen's "Ends at". */
 const endsAt = computed(() => {
   if (!duration.value)
@@ -4366,6 +4390,13 @@ const endsAt = computed(() => {
         <div class="absolute inset-y-0 left-0 w-[min(520px,48%)] bg-gradient-to-r from-black/70 via-black/40 to-transparent" />
         <div class="absolute inset-y-0 left-0 flex w-[min(520px,48%)] items-center pl-8 pr-12">
           <div class="flex flex-col gap-3">
+            <span
+              v-if="props.badge"
+              class="inline-flex items-center gap-1.5 self-start rounded-full bg-gradient-to-r from-amber-300 to-yellow-500 px-3 py-1 text-label-medium font-bold uppercase tracking-wider text-black shadow-[0_4px_18px_rgba(251,191,36,0.35)]"
+            >
+              <svg viewBox="0 0 24 24" class="size-4 fill-current"><path :d="mdiCrown" /></svg>
+              {{ props.badge }}
+            </span>
             <img
               v-if="logoSrc"
               :src="logoSrc"
@@ -4375,22 +4406,16 @@ const endsAt = computed(() => {
             <div v-else-if="props.title" class="text-headline-large font-bold leading-tight text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.6)]">
               {{ props.title }}
             </div>
+            <!-- A separator goes between facts only, so a missing year does not
+                 leave a dot hanging at the start of the line. -->
             <div class="flex items-center gap-2 text-title-medium text-white/70">
-              <span v-if="props.year">{{ props.year }}</span>
-              <template v-if="duration">
-                <span class="opacity-45">·</span>
-                <span>{{ fmtDuration(duration) }}</span>
-              </template>
-              <template v-if="props.media?.rating">
-                <span class="opacity-45">·</span>
-                <span class="flex items-center gap-0.5">
+              <template v-for="(fact, i) in pauseFacts" :key="fact.key">
+                <span v-if="i" class="opacity-45">·</span>
+                <span v-if="fact.key === 'rating'" class="flex items-center gap-0.5">
                   <svg viewBox="0 0 24 24" class="size-4 fill-amber-400"><path :d="mdiStar" /></svg>
-                  {{ props.media.rating.toFixed(1) }}
+                  {{ fact.text }}
                 </span>
-              </template>
-              <template v-if="props.season && props.episode">
-                <span class="opacity-45">·</span>
-                <span>S{{ props.season }}E{{ props.episode }}</span>
+                <span v-else>{{ fact.text }}</span>
               </template>
             </div>
             <div v-if="endsAt" class="text-title-small text-white/60">
@@ -4401,8 +4426,8 @@ const endsAt = computed(() => {
             <div v-if="props.episodeTitle" class="text-title-large font-medium text-white/90">
               {{ props.episodeTitle }}
             </div>
-            <div v-if="props.episodeOverview || props.media?.overview" class="line-clamp-3 text-body-large leading-relaxed text-white/50">
-              {{ props.episodeOverview || props.media?.overview }}
+            <div v-if="pauseOverview" class="line-clamp-3 text-body-large leading-relaxed text-white/50">
+              {{ pauseOverview }}
             </div>
           </div>
         </div>

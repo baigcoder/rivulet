@@ -11,9 +11,8 @@ import type { EpgProgram, LiveChannel } from '~/utils/iptv'
  *   - A red horizontal "now" line at the current time
  *   - Auto-scrolls on mount so the current time is at the left edge
  *
- * EPG data is loaded per visible channel via loadFreeEpg. The Rust
- * pipeline already caches it on disk (7d) and in memory (1h) so
- * reopening the guide is instant after the first visit.
+ * The page loads the guide by channel id (`loadEpgBatch`); it is read from
+ * the user's XMLTV addresses, imported into SQLite by `guides.rs`.
  */
 import { mdiClockOutline } from '@mdi/js'
 

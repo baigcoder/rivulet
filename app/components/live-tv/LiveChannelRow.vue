@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { LiveChannel } from '~/utils/iptv'
 import { mdiPlay, mdiStar, mdiTelevision } from '@mdi/js'
+import { currentProgram } from '~/utils/epgNow'
 import { proxyLogo } from '~/utils/premiumTv'
 
 const props = defineProps<{
@@ -16,7 +17,7 @@ const emit = defineEmits<{
 }>()
 
 const epg = computed(() => props.getEpg(props.channel.id))
-const nowProgram = computed(() => epg.value[0] ?? null)
+const nowProgram = computed(() => currentProgram(epg.value, Date.now()))
 const fav = computed(() => props.isFavorite(props.channel))
 const dead = computed(() => {
   const s = props.channel.streamUrl

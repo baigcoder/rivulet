@@ -27,7 +27,7 @@ assert.match(strings, new RegExp(`<string name="app_name">${APP_NAME}</string>`)
 
 const boot = readFileSync(new URL('../app/boot-diagnostics.js', import.meta.url), 'utf8')
 assert.match(boot, new RegExp(`${STORAGE_PREFIX}ground`), 'boot-diagnostics.js uses STORAGE_PREFIX ground')
-assert.match(boot, new RegExp(`${APP_NAME.toUpperCase()}`), 'boot-diagnostics.js contains uppercase APP_NAME')
+assert.match(boot, new RegExp(`>${APP_NAME}<`), 'boot-diagnostics.js draws the APP_NAME wordmark')
 
 // eslint-disable-next-line no-console
 console.log('brand check ok')

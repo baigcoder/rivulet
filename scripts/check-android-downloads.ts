@@ -165,7 +165,7 @@ assert.ok(watchPage.includes('downloads.release()'), 'leaving the player release
 // switch under Torrent engine in Settings → Sources. Off is the default: a film
 // downloads while it is watched, and the next Play resumes it.
 assert.ok(
-  /if \(!settings\.keepDownloading\)[\t\v\f\r \xA0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]*\n\s*await stopFocused\(id\)/.test(store),
+  /if \(!settings\.keepDownloading\)(?: \{)?[\t\v\f\r \xA0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]*\n\s*await stopFocused\(id\)/.test(store),
   'release pauses the torrent only when Keep downloading is off',
 )
 const settingsStore = readFileSync(new URL('../app/stores/settings.ts', import.meta.url), 'utf8')

@@ -366,6 +366,72 @@ struct XtreamStream {
     /// Xtream panels mark adult streams with `"is_adult": "1"` or `"is_adult": 1`.
     #[serde(default, rename = "is_adult")]
     is_adult: Option<serde_json::Value>,
+    /// Catch-up: `1` when the panel keeps an archive, for
+    /// `tv_archive_duration` days. Numbers or strings, panel by panel.
+    #[serde(default)]
+    tv_archive: Option<serde_json::Value>,
+    #[serde(default)]
+    tv_archive_duration: Option<serde_json::Value>,
+}
+
+fn json_int(v: Option<&serde_json::Value>) -> Option<i64> {
+    match v? {
+        serde_json::Value::Number(n) => n.as_i64(),
+        serde_json::Value::String(s) => s.trim().parse().ok(),
+        serde_json::Value::Bool(b) => Some(i64::from(*b)),
+        _ => None,
+    }
+}
+
+/// How many days back this channel's archive reaches, or `None` without one.
+fn archive_days(s: &XtreamStream) -> Option<i64> {
+    if json_int(s.tv_archive.as_ref()).unwrap_or(0) == 0 {
+        return None;
+    }
+    json_int(s.tv_archive_duration.as_ref()).filter(|d| *d > 0)
+}
+
+/// A finished programme still inside the archive. Checked server-side: the
+/// button hiding is display, this is the rule.
+pub fn archive_window_ok(archive_days: i64, start_unix: i64, end_unix: i64, now: i64) -> bool {
+    end_unix > start_unix && end_unix <= now && start_unix >= now - archive_days * 86_400
+}
+
+/// `{server}/timeshift/{user}/{pass}/{minutes}/{YYYY-MM-DD:HH-MM}/{id}.ts`.
+/// Panels read the start in their own local time, so it is shifted by the
+/// panel's offset from UTC before formatting.
+pub fn timeshift_url(
+    server: &str,
+    user: &str,
+    pass: &str,
+    stream_id: &str,
+    start_unix: i64,
+    minutes: i64,
+    server_offset_secs: i64,
+) -> String {
+    let local = chrono::DateTime::from_timestamp(start_unix + server_offset_secs, 0)
+        .map(|d| d.format("%Y-%m-%d:%H-%M").to_string())
+        .unwrap_or_default();
+    format!(
+        "{}/timeshift/{}/{}/{}/{}/{}.ts",
+        server.trim_end_matches('/'),
+        urlencoding::encode(user),
+        urlencoding::encode(pass),
+        minutes,
+        local,
+        stream_id,
+    )
+}
+
+/// The panel's distance from UTC, from the clock it reports beside its own
+/// unix time. 0 when it reports neither — UTC is the commonest panel zone.
+fn server_offset(info: Option<&XtreamProviderInfo>) -> i64 {
+    let Some(info) = info else { return 0 };
+    let (Some(local), Some(unix)) = (info.time_now.as_deref(), info.timestamp_now) else { return 0 };
+    let Ok(naive) = chrono::NaiveDateTime::parse_from_str(local.trim(), "%Y-%m-%d %H:%M:%S") else { return 0 };
+    // Rounded to the quarter hour: the two readings are a moment apart.
+    let raw = naive.and_utc().timestamp() - unix;
+    (raw as f64 / 900.0).round() as i64 * 900
 }
 
 #[derive(Debug, Deserialize)]
@@ -601,6 +667,7 @@ impl IPTVProvider for XtreamAdapter {
                 let raw_name = s.name.as_deref()?;
                 let name = names::clean_channel_name(raw_name)?;
                 let quality = names::detect_quality(raw_name);
+                let archive_days = archive_days(&s);
                 let is_adult = s.is_adult.as_ref().map(|v| match v {
                     serde_json::Value::Number(n) => n.as_u64().unwrap_or(0) != 0,
                     serde_json::Value::String(s) => s == "1",
@@ -624,6 +691,7 @@ impl IPTVProvider for XtreamAdapter {
                         quality,
                         is_adult,
                         is_favorite: false,
+                        archive_days,
                     },
                 ))
             })
@@ -1183,8 +1251,32 @@ impl XtreamAdapter {
         ))
     }
 
-    /// Parse a synthetic play id: `movie:{stream_id}:{ext}` or `series:{episode_id}:{ext}`.
+    /// A catch-up stream: the programme starting at `start_unix`, `minutes`
+    /// long, on channel `stream_id`.
+    pub async fn resolve_archive_url(&self, stream_id: &str, start_unix: i64, minutes: i64) -> Result<String, PremiumError> {
+        // Interpolated into a URL path, like a live id: digits only.
+        if stream_id.is_empty() || !stream_id.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(PremiumError::NotFound);
+        }
+        let creds = self.config().await?;
+        // The panel's own clock, asked at play time so a DST change since
+        // connecting is not an hour's error in which programme plays.
+        let offset = match get_with_retries(&self.client()?, &creds.api_url("")).await {
+            Ok(bytes) => serde_json::from_slice::<XtreamAuthResponse>(&bytes)
+                .map(|r| server_offset(r.server_info.as_ref()))
+                .unwrap_or(0),
+            Err(_) => 0,
+        };
+        Ok(timeshift_url(&creds.server_url, &creds.username, &creds.password, stream_id, start_unix, minutes, offset))
+    }
+
+    /// Parse a synthetic play id: `movie:{stream_id}:{ext}`, `series:{episode_id}:{ext}`
+    /// or `archive:{stream_id}:{start_unix}:{minutes}` (the last two as one "ext").
     pub fn parse_vod_play_id(play_id: &str) -> Option<(&str, &str, &str)> {
+        if let Some(rest) = play_id.strip_prefix("archive:") {
+            let mut parts = rest.splitn(2, ':');
+            return Some(("archive", parts.next()?, parts.next()?));
+        }
         if let Some(rest) = play_id.strip_prefix("movie:") {
             let mut parts = rest.splitn(2, ':');
             let id = parts.next()?;
@@ -1204,6 +1296,44 @@ impl XtreamAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn stream(json: &str) -> XtreamStream {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn archive_days_reads_numbers_and_strings() {
+        assert_eq!(archive_days(&stream(r#"{"stream_id":1,"tv_archive":1,"tv_archive_duration":7}"#)), Some(7));
+        assert_eq!(archive_days(&stream(r#"{"stream_id":1,"tv_archive":"1","tv_archive_duration":"3"}"#)), Some(3));
+        assert_eq!(archive_days(&stream(r#"{"stream_id":1,"tv_archive":0,"tv_archive_duration":7}"#)), None);
+        assert_eq!(archive_days(&stream(r#"{"stream_id":1}"#)), None);
+    }
+
+    #[test]
+    fn timeshift_url_formats_panel_local_time() {
+        // 2024-01-01 12:00 UTC, on a panel an hour ahead of UTC.
+        let url = timeshift_url("http://panel:8080/", "u@x", "p", "55", 1_704_110_400, 60, 3600);
+        assert_eq!(url, "http://panel:8080/timeshift/u%40x/p/60/2024-01-01:13-00/55.ts");
+    }
+
+    #[test]
+    fn archive_window_rejects_live_future_and_expired() {
+        let now = 1_000_000;
+        let hour = 3600;
+        assert!(archive_window_ok(7, now - 2 * hour, now - hour, now), "ended an hour ago");
+        assert!(!archive_window_ok(7, now - hour, now + hour, now), "still on air");
+        assert!(!archive_window_ok(7, now + hour, now + 2 * hour, now), "not started");
+        assert!(!archive_window_ok(7, now - 8 * 86_400, now - 8 * 86_400 + hour, now), "older than the archive");
+        assert!(!archive_window_ok(7, now - hour, now - 2 * hour, now), "ends before it starts");
+    }
+
+    #[test]
+    fn play_id_round_trips_archive() {
+        assert_eq!(
+            XtreamAdapter::parse_vod_play_id("archive:55:1704110400:60"),
+            Some(("archive", "55", "1704110400:60"))
+        );
+    }
 
     #[test]
     fn playlist_link_yields_panel_credentials() {
@@ -1303,6 +1433,8 @@ mod tests {
             epg_channel_id: None,
             category_id: None,
             is_adult: None,
+            tv_archive: None,
+            tv_archive_duration: None,
         };
         let movie = XtreamStream {
             stream_type: Some("movie".into()),

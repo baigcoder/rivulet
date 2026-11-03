@@ -1,5 +1,6 @@
 import type {
   CategoryCount,
+  ConnectionSummary,
   ConnectResult,
   EpgProgram,
   IPTVCategory,
@@ -327,7 +328,8 @@ export const premiumApi = {
     m3uUrl?: string
     accountName?: string
   }): Promise<ConnectResult> {
-    return request('POST', '/api/premium-tv/connect', { body })
+    // A sign-in imports the whole lineup before it answers.
+    return request('POST', '/api/premium-tv/connect', { body, timeoutMs: CATALOG_TIMEOUT_MS })
   },
 
   /**
@@ -344,13 +346,29 @@ export const premiumApi = {
     return request<void>('POST', '/api/premium-tv/disconnect')
   },
 
+  /** Every saved account, the active one first. */
+  connections(): Promise<ConnectionSummary[]> {
+    return request('GET', '/api/premium-tv/connections')
+  },
+
+  activate(id: string): Promise<void> {
+    return request<void>('POST', `/api/premium-tv/connections/${encodeURIComponent(id)}/activate`)
+  },
+
+  /** Removing the active account hands the flag to the next one, if any. */
+  removeConnection(id: string): Promise<void> {
+    return request<void>('DELETE', `/api/premium-tv/connections/${encodeURIComponent(id)}`)
+  },
+
   /**
    * Re-import what has gone stale. `force` re-imports regardless of age,
    * which is what the *Refresh* button means; the default respects the
    * TTLs and is what a page load wants.
    */
   refresh(force = false): Promise<SyncReport> {
-    return request('POST', `/api/premium-tv/refresh${force ? '?force=true' : ''}`)
+    // An abort here is not only a lost answer: the server drops a handler
+    // whose caller hung up, so the import itself stops half done.
+    return request('POST', `/api/premium-tv/refresh${force ? '?force=true' : ''}`, { timeoutMs: CATALOG_TIMEOUT_MS })
   },
 
   dashboard(): Promise<PremiumDashboard> {
@@ -410,6 +428,19 @@ export const premiumApi = {
 
   epg(channelId: string, limit = 8): Promise<EpgProgram[]> {
     return request('GET', `/api/premium-tv/channels/${encodeURIComponent(channelId)}/epg?limit=${limit}`)
+  },
+
+  /** Finished programmes from the last `days`, newest first — the catch-up list. */
+  epgPast(channelId: string, days: number, limit = 24): Promise<EpgProgram[]> {
+    return request('GET', `/api/premium-tv/channels/${encodeURIComponent(channelId)}/epg?past=${days}&limit=${limit}`)
+  },
+
+  /**
+   * A finished programme from the channel's archive. The server checks the
+   * window and builds the catch-up URL; the page only ever sees the redirector.
+   */
+  archive(channelId: string, start: number, end: number, signal?: AbortSignal): Promise<PlaybackSource> {
+    return request('POST', `/api/premium-tv/channels/${encodeURIComponent(channelId)}/archive`, { body: { start, end }, signal })
   },
 
   /**

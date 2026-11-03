@@ -79,6 +79,12 @@ impl CredentialVault {
         Ok(Self { key })
     }
 
+    /// A vault with a fixed key, for tests that store a secret.
+    #[cfg(test)]
+    pub fn for_tests() -> Self {
+        Self { key: [7u8; 32] }
+    }
+
     pub fn encrypt(&self, plaintext: &[u8]) -> Result<EncryptedBlob, PremiumError> {
         let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&self.key));
         let mut nonce_bytes = [0u8; 12];

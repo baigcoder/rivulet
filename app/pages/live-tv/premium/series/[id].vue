@@ -95,7 +95,12 @@ function playEpisode(ep: PremiumEpisode): void {
       kind: 'episode',
       id: ep.id,
       ext: ep.containerExtension || 'mkv',
-      title: `${detail.value?.name ?? displayName.value} · S${ep.season}E${ep.episode}`,
+      title: `${displayName.value} · S${ep.season}E${ep.episode}`,
+      tmdb: tmdbId.value || undefined,
+      tt: 'tv',
+      s: String(ep.season),
+      e: String(ep.episode),
+      series: seriesId.value,
       from: route.fullPath,
     },
   })
@@ -123,6 +128,7 @@ function pickSeason(n: number): void {
     :fallback-overview="fallbackOverview"
     :fallback-year="fallbackYear"
     :fallback-rating="fallbackRating"
+    :provider-quality="labelled.quality"
     @play="play"
   >
     <template #below>

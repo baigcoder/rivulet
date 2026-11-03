@@ -11,6 +11,11 @@
 //! Stored rather than kept per session, but never final: every sweep asks the
 //! dead ones again, so a channel that was down this morning is back tonight.
 //!
+//! Opening Free TV asks too, when the last sweep is more than half an hour
+//! old, and verdicts land in batches as they come — written to the table and
+//! sent to the page together — so the grid marks a dead channel within
+//! seconds of opening instead of after the whole list has been asked.
+//!
 //! The question is "does it answer", not "does it play": a manifest and the
 //! first thing it points at. That is what separated the channels mpv could
 //! open from the ones it could not, and it costs a few kilobytes a channel.
@@ -33,6 +38,10 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// A launch within this long of the last sweep reuses its verdicts.
 pub const STALE_AFTER_SECS: i64 = 6 * 60 * 60;
+/// Opening Free TV asks again once the last sweep is older than this.
+pub const OPEN_STALE_SECS: i64 = 30 * 60;
+/// Verdicts are written and sent to the page this many at a time.
+const BATCH: usize = 50;
 /// A playlist bigger than this is not a live channel's manifest.
 const MANIFEST_CAP: usize = 256 * 1024;
 const BROWSER_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -49,11 +58,27 @@ pub struct HealthProgress {
     pub total: usize,
     pub offline: usize,
     pub done: bool,
+    /// Channels found answering / dead since the last event, for the grid
+    /// to mark without a reload.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub alive: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub dead: Vec<String>,
 }
 
 /// Check every Free TV channel in the background. `force` ignores a recent
 /// sweep — an import has just replaced the rows it judged.
 pub fn spawn_sweep(app: AppHandle, force: bool) {
+    spawn_if_older(app, if force { 0 } else { STALE_AFTER_SECS });
+}
+
+/// Free TV was opened: check unless a sweep finished within `OPEN_STALE_SECS`.
+pub fn check_on_open(app: AppHandle) {
+    spawn_if_older(app, OPEN_STALE_SECS);
+}
+
+fn spawn_if_older(app: AppHandle, max_age_secs: i64) {
+    let force = max_age_secs == 0;
     if RUNNING.swap(true, Ordering::SeqCst) {
         if force {
             AGAIN.store(true, Ordering::SeqCst);
@@ -61,16 +86,16 @@ pub fn spawn_sweep(app: AppHandle, force: bool) {
         return;
     }
     tauri::async_runtime::spawn(async move {
-        let mut force = force;
+        let mut max_age = max_age_secs;
         loop {
             AGAIN.store(false, Ordering::SeqCst);
-            if let Err(e) = sweep(&app, force).await {
+            if let Err(e) = sweep(&app, max_age).await {
                 eprintln!("[iptv] health sweep failed: {e}");
             }
             if !AGAIN.load(Ordering::SeqCst) {
                 break;
             }
-            force = true;
+            max_age = 0;
         }
         RUNNING.store(false, Ordering::SeqCst);
     });
@@ -83,13 +108,13 @@ fn unix_now() -> i64 {
         .unwrap_or(0)
 }
 
-async fn sweep(app: &AppHandle, force: bool) -> Result<(), String> {
+async fn sweep(app: &AppHandle, max_age_secs: i64) -> Result<(), String> {
     let targets = {
         let state = app.try_state::<IptvState>().ok_or("no IPTV state")?;
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         let fresh = db::health_swept_at(&conn, FREE_TV_SOURCE_ID)
-            .is_some_and(|at| unix_now() - at < STALE_AFTER_SECS);
-        if fresh && !force {
+            .is_some_and(|at| unix_now() - at < max_age_secs);
+        if fresh {
             return Ok(());
         }
         db::health_targets(&conn, FREE_TV_SOURCE_ID).map_err(|e| e.to_string())?
@@ -105,7 +130,14 @@ async fn sweep(app: &AppHandle, force: bool) -> Result<(), String> {
         .build()
         .map_err(|e| e.to_string())?;
     let total = targets.len();
-    let emit = |checked: usize, offline: usize, done: bool| {
+    // Write a batch of verdicts and tell the page which channels they were.
+    let record = |results: &[(String, bool)], checked: usize, offline: usize, done: bool| -> Result<(), String> {
+        if !results.is_empty() {
+            let state = app.try_state::<IptvState>().ok_or("no IPTV state")?;
+            let conn = state.db.lock().map_err(|e| e.to_string())?;
+            db::set_health_batch(&conn, FREE_TV_SOURCE_ID, results).map_err(|e| e.to_string())?;
+        }
+        let (alive, dead): (Vec<_>, Vec<_>) = results.iter().partition(|(_, ok)| *ok);
         let _ = app.emit(
             "live_health",
             HealthProgress {
@@ -113,14 +145,20 @@ async fn sweep(app: &AppHandle, force: bool) -> Result<(), String> {
                 total,
                 offline,
                 done,
+                alive: alive.into_iter().map(|(id, _)| id.clone()).collect(),
+                dead: dead.into_iter().map(|(id, _)| id.clone()).collect(),
             },
         );
+        Ok(())
     };
-    emit(0, 0, false);
+    record(&[], 0, 0, false)?;
 
-    let mut results: Vec<(String, bool)> = Vec::with_capacity(total);
+    // First pass: an answer is final and lands at once; a failure waits for
+    // the second ask below, so a busy minute does not mark a channel dead.
     let mut failed: Vec<HealthTarget> = Vec::new();
+    let mut checked = 0;
     {
+        let mut batch: Vec<(String, bool)> = Vec::with_capacity(BATCH);
         let mut first = stream::iter(targets)
             .map(|t| {
                 let client = client.clone();
@@ -130,23 +168,26 @@ async fn sweep(app: &AppHandle, force: bool) -> Result<(), String> {
                 }
             })
             .buffer_unordered(CONCURRENCY);
-        let mut checked = 0;
         while let Some((t, ok)) = first.next().await {
             checked += 1;
             if ok {
-                results.push((t.id, true));
+                batch.push((t.id, true));
             } else {
                 failed.push(t);
             }
-            if checked % 100 == 0 {
-                emit(checked, failed.len(), false);
+            if checked % BATCH == 0 {
+                record(&batch, checked, 0, false)?;
+                batch.clear();
             }
         }
+        record(&batch, checked, 0, false)?;
     }
 
     // A timeout in a busy minute is not a dead channel: ask the failures once
     // more before hiding any of them.
+    let mut offline = 0;
     {
+        let mut batch: Vec<(String, bool)> = Vec::with_capacity(BATCH);
         let mut again = stream::iter(failed)
             .map(|t| {
                 let client = client.clone();
@@ -156,23 +197,26 @@ async fn sweep(app: &AppHandle, force: bool) -> Result<(), String> {
                 }
             })
             .buffer_unordered(CONCURRENCY);
-        while let Some(result) = again.next().await {
-            results.push(result);
+        while let Some((id, ok)) = again.next().await {
+            if !ok {
+                offline += 1;
+            }
+            batch.push((id, ok));
+            if batch.len() == BATCH {
+                record(&batch, checked, offline, false)?;
+                batch.clear();
+            }
         }
+        record(&batch, checked, offline, false)?;
     }
 
-    let offline = results.iter().filter(|(_, ok)| !ok).count();
     {
         let state = app.try_state::<IptvState>().ok_or("no IPTV state")?;
         let conn = state.db.lock().map_err(|e| e.to_string())?;
-        for chunk in results.chunks(500) {
-            db::set_health_batch(&conn, FREE_TV_SOURCE_ID, chunk).map_err(|e| e.to_string())?;
-        }
         db::stamp_health_sweep(&conn, FREE_TV_SOURCE_ID, unix_now()).map_err(|e| e.to_string())?;
     }
     eprintln!("[iptv] health sweep: {offline} of {total} channels offline");
-    emit(total, offline, true);
-    Ok(())
+    record(&[], total, offline, true)
 }
 
 /// Does this channel answer: a 2xx, and for a playlist, a 2xx from the first

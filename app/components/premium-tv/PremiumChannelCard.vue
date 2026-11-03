@@ -4,14 +4,15 @@
  *
  * Visual contract with `LiveChannelCard`: 16:9 art, name always visible
  * under the tile, inset ring on art at focus. Generic provider logos
- * (repeated 24/7 placeholders) fall back to coloured initials.
+ * (repeated 24/7 placeholders) fall back to the name, tinted by category.
  */
 import type { EpgProgram, IPTVChannel } from '~/types/premium'
 import { mdiPlay, mdiStar } from '@mdi/js'
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { categoryLabel } from '~/utils/categoryLabel'
 import { channelTileStyle, isPlaceholderLogoUrl, isTinyLogo } from '~/utils/channelLogo'
-import { channelInitials, parseChannelName } from '~/utils/channelName'
+import { parseChannelName } from '~/utils/channelName'
+import { minutesLeft } from '~/utils/epgNow'
 import { proxyLogo } from '~/utils/premiumTv'
 
 const props = defineProps<{
@@ -61,10 +62,19 @@ const epgProgress = computed(() => {
   return Math.max(0, Math.min(100, Math.round(pct)))
 })
 
+/** Only for a programme already running: one still to come has no "left". */
+const left = computed(() => {
+  const prog = nowProgram.value
+  if (!prog || prog.start > nowSecs.value)
+    return null
+  return minutesLeft((prog.stop ?? prog.start + 3600) * 1000, nowSecs.value * 1000)
+})
+
 const parsedName = computed(() => parseChannelName(props.channel.name || '', $t('Channel')))
 const displayName = computed(() => parsedName.value.name)
-const initials = computed(() => channelInitials(displayName.value))
-const tileStyle = computed(() => channelTileStyle(props.channel.id || displayName.value))
+// Tinted by category, not by channel: a row of news channels reads as one
+// family instead of a random spread of colours.
+const tileStyle = computed(() => channelTileStyle(props.channel.categoryName || props.channel.id || displayName.value))
 
 const wantsLogo = computed(() => !isPlaceholderLogoUrl(props.channel.logoUrl))
 const showFallback = computed(() => !wantsLogo.value || imgError.value)
@@ -91,8 +101,9 @@ function onLogoLoad(e: Event): void {
 <template>
   <button
     type="button"
+    :data-channel-id="channel.id"
     class="group relative flex cursor-pointer flex-col gap-1.5 text-start outline-none"
-    :aria-label="displayName"
+    :aria-label="[displayName, nowProgram?.title].filter(Boolean).join(', ')"
     @click="emit('play', channel)"
   >
     <div class="relative aspect-video w-full overflow-hidden rounded-xl bg-zinc-950 ring-1 ring-white/10 transition-shadow group-focus-visible:ring-2 group-focus-visible:ring-inset group-focus-visible:ring-primary">
@@ -119,10 +130,10 @@ function onLogoLoad(e: Event): void {
         :style="tileStyle"
       >
         <span
-          class="text-center font-bold leading-none text-white/90 drop-shadow-sm"
-          :class="compact ? 'text-xl' : 'text-2xl'"
+          class="line-clamp-2 text-center font-extrabold leading-tight tracking-tight text-white/90 drop-shadow-sm"
+          :class="compact ? 'text-base' : 'text-lg'"
         >
-          {{ initials }}
+          {{ displayName }}
         </span>
       </div>
 
@@ -148,17 +159,11 @@ function onLogoLoad(e: Event): void {
         <div class="grid size-10 place-items-center rounded-full bg-primary shadow-lg">
           <v-icon :icon="mdiPlay" size="20" class="ms-0.5 text-on-primary" />
         </div>
-        <p
-          v-if="nowProgram"
-          class="mt-1.5 line-clamp-2 text-center text-[11px] leading-snug text-white"
-        >
-          {{ nowProgram.title }}
-        </p>
       </div>
 
       <div
         v-if="nowProgram"
-        class="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-0.5 bg-black/50"
+        class="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-1 bg-black/50"
       >
         <div
           class="h-full w-full origin-left bg-primary transition-transform duration-1000 ease-linear"
@@ -176,7 +181,14 @@ function onLogoLoad(e: Event): void {
         {{ displayName }}
       </p>
       <p
-        v-if="subtitle"
+        v-if="nowProgram"
+        class="flex min-w-0 items-baseline gap-1.5 text-label-small"
+      >
+        <span class="min-w-0 truncate opacity-75">{{ nowProgram.title }}</span>
+        <span v-if="left" class="shrink-0 opacity-45">{{ $t('{minutes} min left', { minutes: left }) }}</span>
+      </p>
+      <p
+        v-else-if="subtitle"
         class="line-clamp-1 text-label-small opacity-45"
       >
         {{ subtitle }}

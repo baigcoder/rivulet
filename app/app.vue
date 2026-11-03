@@ -152,24 +152,14 @@ if (legacyZoom) {
 /**
  * The Premium TV entitlement, pushed to the API process.
  *
- * The gate on the Rust side defaults to *denied*, so this is what turns
- * Premium TV on at all — and it is a watcher rather than a call beside
- * each place the tier is written, because the settings page is not the
- * only writer: a restored backup carries these two keys as well. Every
- * request the API serves re-checks its own copy, including the stream
- * redirector, so a copy that is never pushed means a UI that says
- * "premium" over a pipe that answers 403.
- *
- * `0` means "not subscribed" in the store and "no expiry" to the Rust
- * side, so a falsy timestamp travels as `null`.
+ * The gate on the Rust side defaults to *denied*, so this is what opens it.
+ * There is no subscription apart from the user's own paid IPTV provider: it
+ * used to be a local switch ("start a trial", "activate"), which said
+ * "active" to someone who had signed in to nothing. What makes Premium TV
+ * active now is a connected provider; this only keeps the gate's other job —
+ * entitlement arrives over IPC, never in a request — and so is always granted.
  */
-watch(
-  () => [settings.subscriptionTier, settings.subscriptionExpiresAt] as const,
-  ([tier, expiresAt]) => {
-    void pushEntitlement(tier, expiresAt || null).catch(() => {})
-  },
-  { immediate: true },
-)
+void pushEntitlement('premium', null).catch(() => {})
 
 // Folders now need the user's say-so on the Rust side before anything is
 // written there. A download folder chosen before that rule existed is carried
@@ -230,5 +220,6 @@ onMounted(() => {
   </div>
   <nuxt-layout>
     <nuxt-page />
+    <live-tv-live-reminder-toast />
   </nuxt-layout>
 </template>

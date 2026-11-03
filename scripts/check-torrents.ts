@@ -1,7 +1,7 @@
 import assert from 'node:assert'
 import process from 'node:process'
 import { pickKitsuEntry } from '../app/utils/kitsu'
-import { contiguousAhead, diskBudget, ENGINE, engineFault, episodeFileIn, findReleases, handles, haveAt, headFill, isAwkward, isErrorCard, isOffLanguage, isPack, isWeakSwarm, linkWithHeaders, normalizeSource, NoServerStream, parseRelease, pausedUntil, pickBest, pickPlay, pickSubtitleFiles, pickVideoFile, PIECE_CEILING, pieceBytes, planEviction, planNetwork, PRIME_BYTES, primeHead, primeTail, PROBE_LIMIT, ranked, releaseFileName, releaseKey, releaseLangs, releaseQuality, resumeSource, serverCandidates, setPreferredLanguages, setSourceCapabilities, setSources, startTorrent, STREAM_BUFFER_HIGH_S, STREAM_BUFFER_LOW_S, streamCap, streamParts, toRelease, uploadLimit, usedBytes, withoutUhd } from '../app/utils/torrents'
+import { contiguousAhead, diskBudget, diskIsTheLimit, ENGINE, engineFault, episodeFileIn, findReleases, handles, haveAt, headFill, isAwkward, isErrorCard, isOffLanguage, isPack, isWeakSwarm, linkWithHeaders, normalizeSource, NoServerStream, parseRelease, pausedUntil, pickBest, pickPlay, pickSubtitleFiles, pickVideoFile, PIECE_CEILING, pieceBytes, planEviction, planNetwork, PRIME_BYTES, primeHead, primeTail, PROBE_LIMIT, ranked, releaseFileName, releaseKey, releaseLangs, releaseQuality, resumeSource, serverCandidates, setPreferredLanguages, setSourceCapabilities, setSources, startTorrent, STREAM_BUFFER_HIGH_S, STREAM_BUFFER_LOW_S, streamCap, streamParts, toRelease, uploadLimit, usedBytes, withoutUhd } from '../app/utils/torrents'
 // Self-check for the torrent parser/ranker: `bun scripts/check-torrents.ts`.
 // The fixture is the response shape a source answers with, filled in with a
 // public-domain film. `--live <source-url> <imdb-id>` also searches for real.
@@ -1297,6 +1297,16 @@ if (live !== -1) {
   assert.ok(isErrorCard({ name: 'RD error', url: 'https://addon.example/videos/downloading_v2.mp4' }), 'and so is its "still downloading" one')
   assert.ok(!isErrorCard({ name: 'Addon\n1080p', url: 'https://cdn.example/resolve/abc/Sintel.2010.1080p.mkv' }), 'a real link is not')
   assert.ok(!isErrorCard({ name: 'Addon\n1080p', infoHash: 'a'.repeat(40) }), 'nor is a torrent')
+}
+
+// A full download drive is its own failure: "cams, dead, or too big" sent a
+// user with 138 MB left on C: hunting for a better source.
+{
+  const live = (gb: number) => ({ magnet: 'magnet:?xt=urn:btih:x', seeders: 50, bytes: gb * 1024 ** 3 }) as Parameters<typeof diskIsTheLimit>[0][number]
+  assert.ok(diskIsTheLimit([live(2), live(6)], 0), 'a zero budget with healthy torrents is the disk')
+  assert.ok(!diskIsTheLimit([live(2), live(6)], 4 * 1024 ** 3), 'one copy fits, so it is not')
+  assert.ok(!diskIsTheLimit([live(40)]), 'past the per-file ceiling with room to spare is not the disk either')
+  assert.ok(!diskIsTheLimit([{ ...live(2), seeders: 0 }], 0), 'a dead swarm is dead, whatever the disk says')
 }
 
 console.log('torrents: ok')

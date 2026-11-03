@@ -41,6 +41,8 @@ export interface IPTVChannel {
   quality?: string | null
   /** Adult content flag from the provider or category name detection. */
   isAdult?: boolean
+  /** Days of catch-up the provider keeps for this channel; absent without any. */
+  archiveDays?: number | null
 }
 
 export interface IPTVChannelPage {
@@ -69,6 +71,16 @@ export interface PremiumAccount {
   isTrial?: boolean | null
   activeConnections?: number | null
   maxConnections?: number | null
+}
+
+/** One saved provider login, as the account switcher lists it. */
+export interface ConnectionSummary {
+  id: string
+  providerType: string
+  displayName: string
+  accountName?: string | null
+  expiresAt?: string | null
+  active: boolean
 }
 
 export interface PlaybackSource {

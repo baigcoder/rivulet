@@ -7,9 +7,16 @@
  * registry view so the existing routes and the "Manage sources"
  * link on the index page keep working.
  */
-import { mdiCheck, mdiChevronLeft, mdiTelevision } from '@mdi/js'
-import { liveRemoveSource, liveSetActive } from '~/utils/iptv'
+import type { GuideReport } from '~/utils/iptv'
+import { mdiBellOutline, mdiCheck, mdiChevronLeft, mdiClose, mdiMinus, mdiPlus, mdiRefresh, mdiTelevision } from '@mdi/js'
+import { guideOffset, guideUrls, importGuides, liveRemoveSource, liveSetActive, setGuideOffset, setGuideUrls } from '~/utils/iptv'
 import { mapIptvError } from '~/utils/iptvErrors'
+
+const reminders = useReminders()
+
+function reminderTime(ms: number): string {
+  return new Date(ms).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })
+}
 
 definePageMeta({ layout: 'default' })
 
@@ -60,6 +67,80 @@ async function removeSource(id: string) {
 
 function goBack() {
   navigateTo(localePath('/live-tv'))
+}
+
+// ── Programme guide ─────────────────────────────────────────────────
+// Rivulet has no guide of its own; these are the user's XMLTV addresses.
+const guides = ref<string[]>([])
+const newGuide = ref('')
+const guideBusy = ref(false)
+const guideReport = ref<GuideReport | null>(null)
+const guideError = ref('')
+
+const offset = ref(0)
+const OFFSET_STEP = 30
+
+onMounted(async () => {
+  guides.value = await guideUrls().catch(() => [])
+  offset.value = await guideOffset().catch(() => 0)
+})
+
+const offsetText = computed(() => {
+  if (!offset.value)
+    return $t('No correction')
+  const sign = offset.value > 0 ? '+' : '−'
+  const h = Math.floor(Math.abs(offset.value) / 60)
+  const m = Math.abs(offset.value) % 60
+  return `${sign}${h}:${String(m).padStart(2, '0')}`
+})
+
+/** Buttons, not a slider, so a remote can set it; the guide re-reads at once. */
+async function shiftGuide(by: number) {
+  guideError.value = ''
+  try {
+    offset.value = await setGuideOffset(offset.value + by)
+    if (guides.value.length)
+      await updateGuide()
+  }
+  catch (e) {
+    guideError.value = String(e)
+  }
+}
+
+async function saveGuides(next: string[]) {
+  guideError.value = ''
+  try {
+    guides.value = await setGuideUrls(next)
+  }
+  catch (e) {
+    guideError.value = String(e)
+  }
+}
+
+async function addGuide() {
+  const url = newGuide.value.trim()
+  if (!url)
+    return
+  await saveGuides([...guides.value, url])
+  if (guides.value.includes(url))
+    newGuide.value = ''
+  else
+    guideError.value = $t('Only http and https addresses can be added.')
+}
+
+async function updateGuide() {
+  guideBusy.value = true
+  guideError.value = ''
+  try {
+    guideReport.value = await importGuides()
+    liveTv.resetEpg()
+  }
+  catch (e) {
+    guideError.value = String(e)
+  }
+  finally {
+    guideBusy.value = false
+  }
 }
 
 function kindLabel(kind: string): string {
@@ -175,6 +256,130 @@ function statusLabel(status: string): string {
             </v-btn>
           </div>
         </div>
+
+        <section class="mt-4 rounded-2xl border border-white/10 bg-surface-container-high p-4" aria-labelledby="guide-heading">
+          <h2 id="guide-heading" class="text-title-large font-semibold">
+            {{ $t('Programme guide') }}
+          </h2>
+          <p class="mt-1 text-body-small opacity-70">
+            {{ $t('Rivulet has no guide of its own. Add an XMLTV address (.xml or .xml.gz) from a guide you trust; channels are matched by their tvg-id.') }}
+          </p>
+
+          <ul v-if="guides.length" class="mt-3 flex list-none flex-col gap-1 ps-0">
+            <li
+              v-for="url in guides"
+              :key="url"
+              class="flex items-center gap-2 rounded-lg bg-surface-container px-3 py-1.5"
+            >
+              <span class="min-w-0 flex-1 truncate text-body-small" :title="url">{{ url }}</span>
+              <button
+                type="button"
+                class="grid size-9 shrink-0 place-items-center rounded-lg opacity-70 transition-colors hover:bg-white/10 hover:opacity-100 focus-visible:bg-white/10 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                :aria-label="$t('Remove {name}', { name: url })"
+                @click="saveGuides(guides.filter(g => g !== url))"
+              >
+                <v-icon :icon="mdiClose" size="18" />
+              </button>
+            </li>
+          </ul>
+
+          <form class="mt-3 flex gap-2" @submit.prevent="addGuide">
+            <v-text-field
+              v-model.trim="newGuide"
+              :label="$t('Guide address')"
+              variant="solo-filled"
+              density="comfortable"
+              rounded="lg"
+              flat
+              hide-details
+              autocomplete="off"
+              spellcheck="false"
+              inputmode="url"
+              class="min-w-0 flex-1"
+            />
+            <v-btn type="submit" color="primary" variant="tonal" :prepend-icon="mdiPlus" :disabled="!newGuide">
+              {{ $t('Add') }}
+            </v-btn>
+          </form>
+
+          <div class="mt-3 flex flex-wrap items-center gap-3">
+            <v-btn
+              variant="flat"
+              color="primary"
+              :prepend-icon="mdiRefresh"
+              :loading="guideBusy"
+              :disabled="!guides.length"
+              @click="updateGuide"
+            >
+              {{ $t('Update guide now') }}
+            </v-btn>
+            <span v-if="guideReport" class="text-body-small opacity-80" role="status">
+              {{ $t('{programs} programmes for {channels} channels', { programs: guideReport.programs.toLocaleString(), channels: guideReport.channels.toLocaleString() }) }}
+            </span>
+          </div>
+          <div class="mt-4 flex flex-wrap items-center gap-3">
+            <span class="text-body-medium">{{ $t('Guide time correction') }}</span>
+            <div class="flex items-center gap-1" role="group" :aria-label="$t('Guide time correction')">
+              <v-btn
+                :icon="mdiMinus"
+                variant="tonal"
+                size="small"
+                :disabled="offset <= -720 || guideBusy"
+                :aria-label="$t('Earlier by 30 minutes')"
+                @click="shiftGuide(-OFFSET_STEP)"
+              />
+              <span class="min-w-24 text-center font-mono tabular-nums" aria-live="polite">{{ offsetText }}</span>
+              <v-btn
+                :icon="mdiPlus"
+                variant="tonal"
+                size="small"
+                :disabled="offset >= 720 || guideBusy"
+                :aria-label="$t('Later by 30 minutes')"
+                @click="shiftGuide(OFFSET_STEP)"
+              />
+            </div>
+          </div>
+          <p v-for="url in guideReport?.failed ?? []" :key="url" class="mt-2 text-body-small text-error">
+            {{ $t('Could not read {url}', { url }) }}
+          </p>
+          <p v-if="guideError" class="mt-2 text-body-small text-error" role="alert">
+            {{ guideError }}
+          </p>
+        </section>
+
+        <section class="mt-4 rounded-2xl border border-white/10 bg-surface-container-high p-4" aria-labelledby="reminders-heading">
+          <h2 id="reminders-heading" class="text-title-large font-semibold">
+            {{ $t('Reminders') }}
+          </h2>
+          <p class="mt-1 text-body-medium opacity-70">
+            {{ $t('Set one with the bell beside a programme that has not started. Reminders ring only while Rivulet is open.') }}
+          </p>
+          <ul v-if="reminders.list.value.length" class="m-0 mt-3 flex list-none flex-col gap-1 p-0">
+            <li
+              v-for="r in reminders.list.value"
+              :key="r.key"
+              class="flex items-center gap-3 rounded-xl px-2 py-1.5"
+            >
+              <v-icon :icon="mdiBellOutline" size="20" class="shrink-0 opacity-60" />
+              <div class="min-w-0 flex-1">
+                <p class="truncate text-body-medium font-medium">
+                  {{ r.title }}
+                </p>
+                <p class="truncate text-body-small opacity-60">
+                  {{ reminderTime(r.start) }} · {{ r.channelName }}
+                </p>
+              </div>
+              <v-btn
+                variant="text"
+                size="small"
+                :aria-label="$t('Remove reminder: {title}', { title: r.title })"
+                @click="reminders.remove(r.key)"
+              >
+                {{ $t('Remove') }}
+              </v-btn>
+            </li>
+          </ul>
+        </section>
       </div>
     </div>
 

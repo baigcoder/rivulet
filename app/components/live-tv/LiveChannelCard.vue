@@ -7,7 +7,8 @@ import { mdiPlay, mdiStar } from '@mdi/js'
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { categoryLabel } from '~/utils/categoryLabel'
 import { channelTileStyle, isPlaceholderLogoUrl, isTinyLogo } from '~/utils/channelLogo'
-import { channelInitials, parseChannelName } from '~/utils/channelName'
+import { parseChannelName } from '~/utils/channelName'
+import { currentProgram, minutesLeft } from '~/utils/epgNow'
 import { proxyLogo } from '~/utils/premiumTv'
 
 const props = defineProps<{
@@ -24,7 +25,9 @@ const emit = defineEmits<{
 }>()
 
 const epg = computed(() => props.getEpg(props.channel.id))
-const nowProgram = computed(() => epg.value[0] ?? null)
+/** Ticks each minute while a programme is on (below), so one that ends hands over. */
+const nowMs = ref(Date.now())
+const nowProgram = computed(() => currentProgram(epg.value, nowMs.value))
 const fav = computed(() => props.isFavorite(props.channel))
 const offline = computed(() => props.isOffline?.(props.channel) === true)
 const imgError = ref(false)
@@ -38,7 +41,6 @@ const hasStream = computed(() => {
 /** No URL, or the player already found the stream dead. Advisory: click still works. */
 const dead = computed(() => offline.value || !hasStream.value)
 
-const nowMs = ref(Date.now())
 let progressTimer: ReturnType<typeof setInterval> | undefined
 watch(nowProgram, prog => {
   if (prog && !progressTimer) {
@@ -56,17 +58,33 @@ onUnmounted(() => {
     clearInterval(progressTimer)
 })
 
+const programEnd = computed(() => {
+  const p = nowProgram.value
+  if (!p?.start)
+    return 0
+  const start = new Date(p.start).getTime()
+  return p.stop ? new Date(p.stop).getTime() : start + 3600000
+})
+
 const epgProgress = computed(() => {
   if (!nowProgram.value?.start)
     return 0
   const start = new Date(nowProgram.value.start).getTime()
-  const end = nowProgram.value.stop ? new Date(nowProgram.value.stop).getTime() : start + 3600000
+  const end = programEnd.value
   const now = nowMs.value
   if (now < start)
     return 0
   if (now > end)
     return 100
   return Math.round(((now - start) / (end - start)) * 100)
+})
+
+/** Only for a programme already running: one still to come has no "left". */
+const left = computed(() => {
+  const p = nowProgram.value
+  if (!p || new Date(p.start).getTime() > nowMs.value)
+    return null
+  return minutesLeft(programEnd.value, nowMs.value)
 })
 
 const rawCleaned = computed(() => {
@@ -82,8 +100,9 @@ const rawCleaned = computed(() => {
 
 const parsedName = computed(() => parseChannelName(rawCleaned.value, props.channel.name.trim() || $t('Channel')))
 const displayName = computed(() => parsedName.value.name)
-const initials = computed(() => channelInitials(displayName.value))
-const tileStyle = computed(() => channelTileStyle(props.channel.id || displayName.value))
+// Tinted by category, not by channel: a row of news channels reads as one
+// family instead of a random spread of colours.
+const tileStyle = computed(() => channelTileStyle(props.channel.categoryName || props.channel.id || displayName.value))
 
 const wantsLogo = computed(() => !isPlaceholderLogoUrl(props.channel.logoUrl))
 const showFallback = computed(() => !wantsLogo.value || imgError.value)
@@ -113,11 +132,12 @@ function onLogoLoad(e: Event): void {
 <template>
   <button
     type="button"
+    :data-channel-id="channel.id"
     class="group relative flex flex-col gap-1.5 text-start outline-none [content-visibility:auto]"
     :class="hasStream ? 'cursor-pointer' : 'cursor-not-allowed opacity-40'"
     :style="{ containIntrinsicSize: compact ? 'auto 200px' : 'auto 248px' }"
     :disabled="!hasStream"
-    :aria-label="`${displayName}, ${dead ? $t('Offline') : $t('LIVE')}`"
+    :aria-label="[displayName, dead ? $t('Offline') : nowProgram?.title].filter(Boolean).join(', ')"
     @click="emit('play', channel)"
   >
     <div
@@ -146,25 +166,20 @@ function onLogoLoad(e: Event): void {
         :style="tileStyle"
       >
         <span
-          class="text-center font-bold leading-none text-white/90 drop-shadow-sm"
-          :class="compact ? 'text-xl' : 'text-2xl'"
+          class="line-clamp-2 text-center font-extrabold leading-tight tracking-tight text-white/90 drop-shadow-sm"
+          :class="compact ? 'text-base' : 'text-lg'"
         >
-          {{ initials }}
+          {{ displayName }}
         </span>
       </div>
 
       <div class="pointer-events-none absolute start-1.5 top-1.5 z-10 flex items-center gap-1">
+        <!-- Every channel here is live, so only the exception gets a badge. -->
         <span
-          class="flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
-          :class="dead ? 'bg-zinc-800/90 text-white/75' : 'bg-red-600 text-white'"
+          v-if="dead"
+          class="rounded bg-zinc-800/90 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/75"
         >
-          <!-- Still, not pulsing: a grid mounts hundreds of these, and on a TV
-               the animated area is what costs the frame (check:perf). -->
-          <span
-            v-if="!dead"
-            class="size-1.5 rounded-full bg-white"
-          />
-          {{ dead ? $t('Offline') : $t('LIVE') }}
+          {{ $t('Offline') }}
         </span>
         <span
           v-if="parsedName.quality"
@@ -189,17 +204,11 @@ function onLogoLoad(e: Event): void {
         <div class="grid size-10 place-items-center rounded-full bg-primary shadow-lg">
           <v-icon :icon="mdiPlay" size="20" class="ms-0.5 text-on-primary" />
         </div>
-        <p
-          v-if="nowProgram"
-          class="mt-1.5 line-clamp-2 text-center text-[11px] leading-snug text-white"
-        >
-          {{ nowProgram.title }}
-        </p>
       </div>
 
       <div
         v-if="nowProgram && !dead"
-        class="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-0.5 bg-black/50"
+        class="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-1 bg-black/50"
       >
         <div
           class="h-full w-full origin-left bg-primary transition-transform duration-1000 ease-linear"
@@ -217,7 +226,14 @@ function onLogoLoad(e: Event): void {
         {{ displayName }}
       </p>
       <p
-        v-if="subtitle"
+        v-if="nowProgram && !dead"
+        class="flex min-w-0 items-baseline gap-1.5 text-label-small"
+      >
+        <span class="min-w-0 truncate opacity-75">{{ nowProgram.title }}</span>
+        <span v-if="left" class="shrink-0 opacity-45">{{ $t('{minutes} min left', { minutes: left }) }}</span>
+      </p>
+      <p
+        v-else-if="subtitle"
         class="line-clamp-1 text-label-small opacity-45"
       >
         {{ subtitle }}

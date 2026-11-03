@@ -167,6 +167,13 @@ pub async fn live_dashboard(
     db::build_dashboard(&conn, &source_id).map_err(map_err)
 }
 
+/// Free TV was opened: check the channels now unless they were checked
+/// within the last half hour. Progress arrives as `live_health` events.
+#[tauri::command]
+pub fn live_check_health(app: tauri::AppHandle) {
+    super::health::check_on_open(app);
+}
+
 /// How many channels the health sweep is hiding from this source's lists.
 #[tauri::command]
 pub async fn live_offline_count(
@@ -427,18 +434,56 @@ pub async fn live_clear_recent(
 /// HTTP API.
 #[tauri::command]
 pub async fn live_get_live_epg(
-    _state: State<'_, IptvState>,
-    _channel_id: String,
+    state: State<'_, IptvState>,
+    channel_id: String,
 ) -> Result<Vec<EpgProgram>, String> {
-    Ok(Vec::new())
+    live_channel_epg_batch(state, vec![channel_id]).await
 }
 
 #[tauri::command]
 pub async fn live_channel_epg_batch(
-    _state: State<'_, IptvState>,
-    _channel_ids: Vec<String>,
+    state: State<'_, IptvState>,
+    channel_ids: Vec<String>,
 ) -> Result<Vec<EpgProgram>, String> {
-    Ok(Vec::new())
+    let conn = state.db.lock().map_err(map_err)?;
+    let now = chrono::Utc::now().timestamp();
+    super::guides::programs_for(&conn, sources::FREE_TV_SOURCE_ID, &channel_ids, now).map_err(map_err)
+}
+
+// ── Guide addresses (Free TV) ──────────────────────────────────────
+
+#[tauri::command]
+pub async fn live_guide_urls(state: State<'_, IptvState>) -> Result<Vec<String>, String> {
+    let conn = state.db.lock().map_err(map_err)?;
+    super::guides::guide_urls(&conn).map_err(map_err)
+}
+
+#[tauri::command]
+pub async fn live_set_guide_urls(
+    state: State<'_, IptvState>,
+    urls: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let conn = state.db.lock().map_err(map_err)?;
+    super::guides::set_guide_urls(&conn, &urls).map_err(map_err)
+}
+
+#[tauri::command]
+pub async fn live_import_guides(state: State<'_, IptvState>) -> Result<super::guides::GuideReport, String> {
+    super::guides::import_guides(&state, sources::FREE_TV_SOURCE_ID)
+        .await
+        .map_err(map_err)
+}
+
+#[tauri::command]
+pub async fn live_guide_offset(state: State<'_, IptvState>) -> Result<i32, String> {
+    let conn = state.db.lock().map_err(map_err)?;
+    Ok(super::guides::guide_offset(&conn))
+}
+
+#[tauri::command]
+pub async fn live_set_guide_offset(state: State<'_, IptvState>, minutes: i32) -> Result<i32, String> {
+    let conn = state.db.lock().map_err(map_err)?;
+    super::guides::set_guide_offset(&conn, minutes).map_err(map_err)
 }
 
 // ── Imports (Free TV only) ─────────────────────────────────────────

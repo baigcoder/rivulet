@@ -68,6 +68,9 @@ pub struct IPTVChannel {
     /// favourite list alongside every page.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_favorite: bool,
+    /// Days of catch-up the panel keeps for this channel; `None` without any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archive_days: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

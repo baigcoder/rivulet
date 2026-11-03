@@ -44,7 +44,7 @@ const playback = usePlaybackSource()
 
 const playKind = computed(() => {
   const k = String(route.query.kind ?? 'live')
-  if (k === 'movie' || k === 'episode')
+  if (k === 'movie' || k === 'episode' || k === 'archive')
     return k
   return 'live'
 })
@@ -53,10 +53,62 @@ const playId = computed(() => String(route.query.id ?? ''))
 const playExt = computed(() => String(route.query.ext ?? 'mkv'))
 const playTitle = computed(() => String(route.query.title ?? ''))
 
-const isVod = computed(() => playKind.value === 'movie' || playKind.value === 'episode')
+// A catch-up programme is a finished file like a film: seekable, with a clock.
+const isVod = computed(() => playKind.value === 'movie' || playKind.value === 'episode' || playKind.value === 'archive')
 const playerMode = computed(() => isVod.value ? 'vod' : 'live')
 
 const channelId = computed(() => isVod.value ? '' : String(route.query.id ?? ''))
+
+// ── What a paused film or episode shows ────────────────────────────────
+// The detail page matched the title to TMDB and hands that id on, so the
+// pause screen draws the same logo, synopsis and rating the library's
+// player does. The provider's own plot and rating stand in without one.
+const tmdbType = computed<'movie' | 'tv'>(() => route.query.tt === 'tv' ? 'tv' : 'movie')
+const tmdbId = computed(() => isVod.value ? String(route.query.tmdb ?? '') : '')
+const vodSeason = computed(() => Number(route.query.s) || undefined)
+const vodEpisode = computed(() => Number(route.query.e) || undefined)
+const { data: tmdbMedia } = useMediaDetail(tmdbType, tmdbId)
+const { data: tmdbArt, execute: loadTmdbArt } = useTitleImages(tmdbType, tmdbId, () => tmdbMedia.value?.lang)
+watch(tmdbId, id => {
+  if (id)
+    void loadTmdbArt()
+}, { immediate: true })
+const vodEpisodeInfo = ref<{ name: string, overview: string } | null>(null)
+watch(() => [tmdbId.value, vodSeason.value, vodEpisode.value] as const, async ([id, s, e]) => {
+  vodEpisodeInfo.value = null
+  if (!id || !s || !e || tmdbType.value !== 'tv')
+    return
+  const got = await loadEpisode(id, s, e).catch(() => null)
+  if (got && id === tmdbId.value)
+    vodEpisodeInfo.value = { name: got.name, overview: got.overview }
+}, { immediate: true })
+
+/** The provider's own entry: the catalogue row for a film, the episode for a show. */
+const providerEntry = computed(() => {
+  if (playKind.value === 'movie') {
+    const m = premium.vodMovies.find(x => x.id === playId.value)
+    return m ? { plot: m.plot ?? '', rating: Number(m.rating) || 0 } : null
+  }
+  if (playKind.value === 'episode') {
+    const series = premium.seriesDetailCache.get(String(route.query.series ?? ''))
+    const ep = series?.episodes.find(x => x.id === playId.value)
+    return ep ? { plot: ep.plot ?? '', rating: Number(series?.rating) || 0, title: ep.title } : null
+  }
+  return null
+})
+
+const pause = computed(() => {
+  const labelled = vodDisplayName(playTitle.value)
+  return {
+    title: tmdbMedia.value?.title || labelled.name || playTitle.value,
+    logo: tmdbMedia.value?.logo || tmdbArt.value?.logo || null,
+    year: tmdbMedia.value?.year || labelled.year || undefined,
+    overview: tmdbMedia.value?.overview || providerEntry.value?.plot || '',
+    rating: tmdbMedia.value?.rating || providerEntry.value?.rating || 0,
+    episodeTitle: vodEpisodeInfo.value?.name || (providerEntry.value && 'title' in providerEntry.value ? providerEntry.value.title : '') || undefined,
+    episodeOverview: vodEpisodeInfo.value?.overview || undefined,
+  }
+})
 
 /**
  * The channel being watched. Usually already in the store's page, but a
@@ -296,7 +348,9 @@ async function load({ fresh } = { fresh: true }): Promise<void> {
     ? 'movie' as const
     : playKind.value === 'episode'
       ? 'episode' as const
-      : 'channel' as const
+      : playKind.value === 'archive'
+        ? 'archive' as const
+        : 'channel' as const
   clearReconnect()
   if (!id) {
     premium.setPlayer('error', isVod.value ? $t('Nothing was given to play.') : $t('No channel was given to play.'))
@@ -355,7 +409,38 @@ async function load({ fresh } = { fresh: true }): Promise<void> {
     void premium.addRecent(id)
     void loadGuide(id)
     void loadQualityVariants(id)
+    void loadPast(ch)
   }
+}
+
+/** Finished programmes for a channel that keeps an archive — the catch-up list. */
+const pastGuide = ref<EpgProgram[]>([])
+async function loadPast(ch: IPTVChannel | null): Promise<void> {
+  pastGuide.value = []
+  if (!ch?.archiveDays)
+    return
+  try {
+    const past = await premiumApi.epgPast(ch.id, ch.archiveDays)
+    if (ch.id === channelId.value)
+      pastGuide.value = past
+  }
+  catch { /* no past listings: the panel just offers none */ }
+}
+
+/** Play a finished programme from the start, as a seekable file. */
+function watchFromStart(span: { start: number, end: number }): void {
+  if (!channel.value)
+    return
+  void router.push({
+    path: localePath('/live-tv/premium/watch'),
+    query: {
+      kind: 'archive',
+      id: channel.value.id,
+      ext: `${span.start}-${span.end}`,
+      title: channel.value.name,
+      from: String(route.query.from ?? ''),
+    },
+  })
 }
 
 /**
@@ -562,6 +647,19 @@ function goBack(): void {
  * `channelId` watcher below is what actually loads the new channel —
  * one path in, whether the zap came from a key, the arrows or the list.
  */
+/** The channel before this one, for the remote's "previous channel" (a lone 0). */
+const previousChannelId = ref('')
+watch(channelId, (now, before) => {
+  if (before && before !== now)
+    previousChannelId.value = before
+})
+
+function recall(): void {
+  const index = zapList.value.findIndex(c => c.id === previousChannelId.value)
+  if (index >= 0)
+    zapTo(index)
+}
+
 function zapTo(index: number): void {
   const target = zapList.value[index]
   if (!target || target.id === channelId.value)
@@ -669,7 +767,16 @@ onUnmounted(() => {
         :src="playback.source.value.url"
         :status="statusLine"
         :resolving="!isVod && hudConnecting"
-        :title="channelName"
+        :title="isVod ? pause.title : channelName"
+        :logo="isVod ? pause.logo : null"
+        :year="isVod ? pause.year : undefined"
+        :overview="isVod ? pause.overview : undefined"
+        :rating="isVod ? pause.rating : undefined"
+        :season="isVod ? vodSeason : undefined"
+        :episode="isVod ? vodEpisode : undefined"
+        :episode-title="isVod ? pause.episodeTitle : undefined"
+        :episode-overview="isVod ? pause.episodeOverview : undefined"
+        :badge="isVod ? $t('Premium TV') : undefined"
         :mode="playerMode"
         :aspect="aspectRatio"
         :fullscreen="isFullscreen"
@@ -718,6 +825,7 @@ onUnmounted(() => {
       @prev="zap(-1)"
       @next="zap(1)"
       @zap-to="zapTo"
+      @recall="recall"
       @retry="() => void load({ fresh: true })"
       @toggle-play="onTogglePlay"
       @go-live="onGoLive"
@@ -739,7 +847,15 @@ onUnmounted(() => {
       class="pointer-events-none absolute bottom-24 left-4 z-30 w-80 max-w-[85vw] rounded-2xl bg-black/70 p-4 text-white ring-1 ring-white/10 transition-opacity duration-300"
       :class="overlayRef?.visible ? 'opacity-100' : 'opacity-0'"
     >
-      <premium-tv-premium-epg-panel :programs="guide" :loading="guideLoading" :up-next="3" />
+      <premium-tv-premium-epg-panel
+        :programs="guide"
+        :loading="guideLoading"
+        :up-next="3"
+        :past="pastGuide"
+        :archive-days="channel?.archiveDays"
+        :channel-name="channelName"
+        @watch-from-start="watchFromStart"
+      />
     </div>
 
     <!-- Quality picker. A compact card, not a full-height drawer: the

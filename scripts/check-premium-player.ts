@@ -23,7 +23,7 @@
 //   because the remote has no pointer.
 
 import assert from 'node:assert'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, globSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { MAX_RECONNECT_ATTEMPTS, reconnectDelayMs } from '../app/stores/premiumTv'
 import { categoryLabel, isBundleCategory, parseCategoryName } from '../app/utils/categoryLabel'
@@ -167,8 +167,9 @@ check('the duplicate premium player is gone', () => {
 check('no premium component implements playback itself', () => {
   for (const f of TEMPLATES) {
     const s = read(f)
-    for (const own of ['hls.js', 'new Hls(', '<video']) {
-      assert.ok(!s.includes(own), `${f.replace(ROOT, '')} implements its own playback (${own})`)
+    // `<video` alone also matches `<videos-row>`, the trailers shelf on the detail page.
+    for (const own of [/hls\.js/, /new Hls\(/, /<video[\s>/]/]) {
+      assert.ok(!own.test(s), `${f.replace(ROOT, '')} implements its own playback (${own.source})`)
     }
   }
 })
@@ -465,6 +466,31 @@ check('provider VOD titles drop the language prefix', () => {
   assert.equal(labelled.year, '2026')
 })
 
+check('provider VOD titles drop a trailing year and quality, the way panels write them', () => {
+  // Seen in a real catalogue: TMDB matches none of these with the tail on.
+  assert.deepEqual(vodDisplayName('Cold Storage - 2026'), { name: 'Cold Storage', year: '2026', quality: '' })
+  assert.deepEqual(vodDisplayName('Project Hail Mary - 2026 | 4K'), { name: 'Project Hail Mary', year: '2026', quality: '4K' })
+  assert.deepEqual(vodDisplayName('F1 - 2025 | 4K'), { name: 'F1', year: '2025', quality: '4K' })
+  assert.deepEqual(vodDisplayName('PK | Film [4K]'), { name: 'Film', year: '', quality: '4K' })
+  // A title that is a year keeps it: only a year after a separator is a tail.
+  assert.equal(vodDisplayName('1917 - 2019').name, '1917')
+  assert.equal(vodDisplayName('2012').name, '2012')
+})
+
+check('a paused Premium film or episode says what it is, and that it is Premium', () => {
+  const player = readFileSync(`${ROOT}app/components/MpvPlayer.vue`, 'utf8')
+  assert.ok(/props\.badge/.test(player), 'the pause screen can carry a badge')
+  assert.ok(/props\.overview/.test(player), 'and a synopsis that is not a library title')
+  const watch = readFileSync(`${ROOT}app/pages/live-tv/premium/watch.vue`, 'utf8')
+  for (const prop of [':logo=', ':overview=', ':badge=', ':episode-title='])
+    assert.ok(watch.includes(prop), `the Premium player passes ${prop}`)
+  // Not :media — that is the library's watch history, and an entry there
+  // would resume through the user's sources, not their provider.
+  assert.ok(!/<mpv-player[^>]*:media=/.test(watch.slice(watch.indexOf('<mpv-player'), watch.indexOf('/>', watch.indexOf('<mpv-player')))), 'no library media')
+  for (const page of [MOVIE_PAGE, SERIES_PAGE])
+    assert.ok(/tmdb: tmdbId\.value/.test(read(page)), `${page} hands the player its TMDB id`)
+})
+
 check('a live channel shows a loader until the first frame', () => {
   const player = readFileSync(`${ROOT}app/components/MpvPlayer.vue`, 'utf8')
   assert.ok(
@@ -577,6 +603,34 @@ check('the VOD grid draws the section it was told to draw', () => {
     s.includes('watch(items,'),
     'the rows must be rebuilt from `items`, which is what changes on a section hop',
   )
+})
+
+check('Premium TV is active when a paid provider is signed in, and only then', () => {
+  const app = read(`${ROOT}app/app.vue`)
+  assert.ok(/pushEntitlement\('premium', null\)/.test(app), 'the local entitlement is the app\'s own, not a switch the user flips')
+  const settingsStore = read(`${ROOT}app/stores/settings.ts`)
+  assert.ok(!/isPremium|subscriptionTier/.test(settingsStore), 'no local "subscription" flag left to claim premium without a provider')
+  const hub = read(`${ROOT}app/pages/live-tv/index.vue`)
+  assert.ok(/premium\.connected/.test(hub), 'the hub says Active from the signed-in provider')
+  const page = read(`${ROOT}app/pages/settings/premium-tv.vue`)
+  assert.ok(!/Subscription active|activateUnlimited|Activate unlimited/.test(page), 'no activation button and no "subscription active" without an account')
+})
+
+check('catch-up goes through the API, never a URL', () => {
+  const panel = read(`${ROOT}app/components/premium-tv/PremiumEpgPanel.vue`)
+  assert.ok(panel.includes('archiveDays'), 'only channels that keep an archive offer it')
+  assert.ok(/emit\('watchFromStart'/.test(panel), 'the panel asks the page to play a past programme')
+  const watch = read(`${ROOT}app/pages/live-tv/premium/watch.vue`)
+  assert.ok(watch.includes(`kind: 'archive'`), 'the page plays a past programme as an archive source')
+  const source = read(`${ROOT}app/composables/usePlaybackSource.ts`)
+  assert.ok(/premiumApi\.archive\(/.test(source), 'the archive source comes from the API')
+  for (const f of globSync('app/**/*.{vue,ts}', { cwd: ROOT }))
+    assert.ok(!read(`${ROOT}${f}`).includes('/timeshift/'), `${f} must not build a timeshift URL`)
+})
+
+check('Premium TV offers no free trial', () => {
+  const page = read(`${ROOT}app/pages/settings/premium-tv.vue`)
+  assert.ok(!/trial/i.test(page), 'Premium TV is for paid accounts only — no trial button, wording or timer')
 })
 
 // ── Report ───────────────────────────────────────────────────────

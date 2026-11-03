@@ -140,6 +140,7 @@ const ADDED_COLUMNS: &[(&str, &str)] = &[
     ("iptv_premium_connections", "epg_synced_at INTEGER"),
     ("iptv_premium_channels", "quality TEXT"),
     ("iptv_premium_channels", "is_adult INTEGER NOT NULL DEFAULT 0"),
+    ("iptv_premium_channels", "archive_days INTEGER"),
 ];
 
 fn migrate(conn: &Connection) -> Result<(), PremiumError> {
@@ -230,7 +231,7 @@ impl PremiumState {
 
 /// The shape of the encrypted config blob. Xtream stores the
 /// server URL, username, and password; M3U stores the URL.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum ProviderConfig {
     Xtream {
@@ -396,6 +397,98 @@ pub fn delete_connection(conn: &Connection, id: &str) -> Result<(), PremiumError
     Ok(())
 }
 
+/// One saved account, as the account switcher lists it. Carries no
+/// server URL or username: those stay in the vault.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionSummary {
+    pub id: String,
+    pub provider_type: String,
+    pub display_name: String,
+    pub account_name: Option<String>,
+    pub expires_at: Option<String>,
+    pub active: bool,
+}
+
+/// Every saved account, the active one first.
+pub fn list_connections(conn: &Connection) -> Result<Vec<ConnectionSummary>, PremiumError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, provider_type, display_name, account_name, expires_at, status = 'active'
+         FROM iptv_premium_connections
+         ORDER BY status = 'active' DESC, activated_at DESC, inserted_at DESC, rowid DESC",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(ConnectionSummary {
+            id: row.get(0)?,
+            provider_type: row.get(1)?,
+            display_name: row.get(2)?,
+            account_name: row.get(3)?,
+            expires_at: row.get(4)?,
+            active: row.get(5)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// Make `id` the one active account. Same one-flag rule as
+/// `insert_connection`, in one transaction so no reader sees zero or two.
+pub fn activate_connection(conn: &Connection, id: &str) -> Result<(), PremiumError> {
+    let tx = conn.unchecked_transaction()?;
+    let known: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM iptv_premium_connections WHERE id = ?1)",
+        [id],
+        |row| row.get(0),
+    )?;
+    if !known {
+        return Err(PremiumError::ProviderNotConnected);
+    }
+    tx.execute(
+        "UPDATE iptv_premium_connections SET status = 'inactive' WHERE status = 'active'",
+        [],
+    )?;
+    tx.execute(
+        "UPDATE iptv_premium_connections SET status = 'active', activated_at = strftime('%s','now')
+         WHERE id = ?1",
+        [id],
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Delete the other rows for the same login. Signing in again with the
+/// same account inserts a fresh row, and without this every reconnect
+/// would add another identical entry to the switcher.
+///
+/// "The same login" is the decrypted provider config — server, username
+/// and password, or the playlist URL — and never the display name: two
+/// playlists added without a name are both "Premium TV", and matching on
+/// that would delete one of them with its saved login.
+pub fn drop_duplicate_connections(
+    conn: &Connection,
+    keep_id: &str,
+    vault: &CredentialVault,
+) -> Result<usize, PremiumError> {
+    let Some(kept) = get_secret(conn, keep_id)? else {
+        return Ok(0);
+    };
+    let kept = ProviderConfig::decrypt(&kept, vault)?;
+    let others: Vec<String> = conn
+        .prepare("SELECT id FROM iptv_premium_connections WHERE id <> ?1")?
+        .query_map([keep_id], |row| row.get(0))?
+        .collect::<Result<_, _>>()?;
+    let mut dropped = 0;
+    for id in others {
+        let same = get_secret(conn, &id)?
+            .and_then(|blob| ProviderConfig::decrypt(&blob, vault).ok())
+            .is_some_and(|cfg| cfg == kept);
+        if same {
+            delete_connection(conn, &id)?;
+            dropped += 1;
+        }
+    }
+    Ok(dropped)
+}
+
 /// One stored provider connection, as `/status` reports it.
 ///
 /// The columns this does *not* carry — `id`, `inserted_at`,
@@ -466,8 +559,8 @@ pub fn replace_channels(
             "INSERT OR REPLACE INTO iptv_premium_channels
              (connection_id, id, name, logo_url, category_id, category_name,
               country, language, epg_id, stream_type, user_agent, referer,
-              stream_url, sort_key, name_lower, quality, is_adult)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+              stream_url, sort_key, name_lower, quality, is_adult, archive_days)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
         )?;
         for (i, ch) in channels.iter().enumerate() {
             stmt.execute(rusqlite::params![
@@ -488,6 +581,7 @@ pub fn replace_channels(
                 ch.name.to_lowercase(),
                 ch.quality,
                 ch.is_adult as i64,
+                ch.archive_days,
             ])?;
         }
     }
@@ -597,4 +691,80 @@ pub fn channel_count(conn: &Connection, connection_id: &str) -> Result<usize, Pr
         |row| row.get(0),
     )?;
     Ok(n as usize)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        migrate(&conn).unwrap();
+        conn
+    }
+
+    fn ids(conn: &Connection) -> Vec<(String, bool)> {
+        list_connections(conn).unwrap().into_iter().map(|c| (c.id, c.active)).collect()
+    }
+
+    #[test]
+    fn list_puts_active_first_and_activate_switches() {
+        let conn = db();
+        insert_connection(&conn, "a", "xtream", "Alpha").unwrap();
+        insert_connection(&conn, "b", "xtream", "Beta").unwrap();
+        assert_eq!(ids(&conn), vec![("b".into(), true), ("a".into(), false)]);
+        activate_connection(&conn, "a").unwrap();
+        assert_eq!(ids(&conn), vec![("a".into(), true), ("b".into(), false)]);
+        assert_eq!(active_connection(&conn).unwrap().as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn activate_unknown_is_not_connected() {
+        let conn = db();
+        insert_connection(&conn, "a", "xtream", "Alpha").unwrap();
+        assert!(matches!(
+            activate_connection(&conn, "nope"),
+            Err(PremiumError::ProviderNotConnected)
+        ));
+        assert_eq!(active_connection(&conn).unwrap().as_deref(), Some("a"));
+    }
+
+    fn save(conn: &Connection, vault: &CredentialVault, id: &str, display: &str, cfg: &ProviderConfig) {
+        insert_connection(conn, id, "xtream", display).unwrap();
+        set_secret(conn, id, &cfg.encrypt(vault).unwrap()).unwrap();
+    }
+
+    fn xtream(user: &str) -> ProviderConfig {
+        ProviderConfig::Xtream {
+            server_url: "http://panel.example".into(),
+            username: user.into(),
+            password: "pw".into(),
+        }
+    }
+
+    #[test]
+    fn duplicates_are_dropped_on_reconnect() {
+        let conn = db();
+        let vault = CredentialVault::for_tests();
+        save(&conn, &vault, "old", "Alpha", &xtream("alpha1"));
+        save(&conn, &vault, "other", "Beta", &xtream("beta1"));
+        save(&conn, &vault, "new", "Alpha", &xtream("alpha1"));
+        assert_eq!(drop_duplicate_connections(&conn, "new", &vault).unwrap(), 1);
+        assert_eq!(ids(&conn), vec![("new".into(), true), ("other".into(), false)]);
+    }
+
+    #[test]
+    fn different_logins_with_the_same_name_are_kept() {
+        // Two playlists added without a name are both called "Premium TV";
+        // a name match alone would delete the first one's saved login.
+        let conn = db();
+        let vault = CredentialVault::for_tests();
+        let m3u = |url: &str| ProviderConfig::M3u { url: url.into() };
+        save(&conn, &vault, "first", "Premium TV", &m3u("http://a.example/list.m3u"));
+        save(&conn, &vault, "second", "Premium TV", &m3u("http://b.example/list.m3u"));
+        assert_eq!(drop_duplicate_connections(&conn, "second", &vault).unwrap(), 0);
+        assert_eq!(ids(&conn).len(), 2);
+    }
 }

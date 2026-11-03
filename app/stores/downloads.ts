@@ -250,6 +250,11 @@ export const useDownloadsStore = defineStore('downloads', () => {
    * title it is fetching.
    */
   async function start(key: string, options: Parameters<typeof startTorrent>[0]) {
+    // Measured now, not left to the poll: that sleeps while nothing downloads,
+    // so a drive picked a moment ago on a full-disk error would still budget 0.
+    const fresh = await invoke<DiskSpace>('disk_space', { path: settings.downloadDir || null }).catch(() => undefined)
+    if (fresh !== undefined)
+      disk.value = fresh
     // Both ceilings are on the same quantity — the size of the file we'd fetch —
     // so the tighter one wins and `pickBest` needs to know nothing about drives.
     const maxBytes = Math.min(budget.value, fileLimit.value)

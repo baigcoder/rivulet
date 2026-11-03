@@ -442,8 +442,20 @@
     check()
   }
 
+  /**
+   * The dev server compiles modules on first request, so a cold `tauri:dev`
+   * routinely takes longer than PANEL_MS and the panel used to say the app
+   * could not start while it was still starting. There, only an error escalates.
+   */
+  function devServer() {
+    return !!(document.querySelector && document.querySelector('script[src*="/@vite/client"]'))
+  }
+
   setTimeout(check, HINT_MS)
-  setTimeout(escalate, PANEL_MS)
+  setTimeout(function () {
+    if (!devServer())
+      escalate()
+  }, PANEL_MS)
   setInterval(function () {
     if (panel || hint)
       check()

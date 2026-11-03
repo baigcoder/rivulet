@@ -195,6 +195,15 @@ pub fn build_router(state: ApiState) -> Router {
         .route("/api/premium-tv/account", get(routes_premium::account))
         .route("/api/premium-tv/connect", post(routes_premium::connect))
         .route("/api/premium-tv/disconnect", post(routes_premium::disconnect))
+        .route("/api/premium-tv/connections", get(routes_premium::connections))
+        .route(
+            "/api/premium-tv/connections/:id/activate",
+            post(routes_premium::activate),
+        )
+        .route(
+            "/api/premium-tv/connections/:id",
+            axum::routing::delete(routes_premium::remove_connection),
+        )
         .route("/api/premium-tv/refresh", post(routes_premium::refresh))
         .route("/api/premium-tv/dashboard", get(routes_premium::dashboard))
         .route("/api/premium-tv/categories", get(routes_premium::categories))
@@ -206,6 +215,7 @@ pub fn build_router(state: ApiState) -> Router {
         .route("/api/premium-tv/channels/:id", get(routes_premium::channel))
         .route("/api/premium-tv/channels/:id/epg", get(routes_premium::epg))
         .route("/api/premium-tv/channels/:id/play", post(routes_premium::play))
+        .route("/api/premium-tv/channels/:id/archive", post(routes_premium::archive_play))
         .route("/api/premium-tv/channels/:id/qualities", get(routes_premium::quality_variants))
         // POST, not GET, because the id list is a request body: a page of
         // 60 channel ids does not fit a query string that every proxy and
@@ -222,7 +232,9 @@ pub fn build_router(state: ApiState) -> Router {
         .route("/api/premium-tv/vod/movies/:id/play", post(routes_premium::vod_play_movie))
         .route("/api/premium-tv/vod/episodes/:id/play", post(routes_premium::vod_play_episode))
         .route("/premium-stream/:token", get(routes_premium::stream_redirect))
-        .route("/api/premium-tv/proxy/image", get(proxy_image))
+        // No image proxy here: it takes no token (an <img> cannot send one),
+        // so on this origin it was an open proxy beside the authenticated API.
+        // Logos are served only from their own origin, `build_logo_router`.
         .layer(cors)
         .with_state(state)
 }

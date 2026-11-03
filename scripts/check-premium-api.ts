@@ -25,7 +25,11 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const API = 'http://127.0.0.1:3032'
 
 const CLIENT = readFileSync(`${ROOT}app/utils/premiumTv.ts`, 'utf8')
-const ROUTER = readFileSync(`${ROOT}src-tauri/src/api/mod.rs`, 'utf8')
+const API_SOURCE = readFileSync(`${ROOT}src-tauri/src/api/mod.rs`, 'utf8')
+// The authenticated API only. The logo proxy has a router of its own, on its
+// own origin, and takes no token by design (an <img> cannot send one).
+const ROUTER = API_SOURCE.slice(API_SOURCE.indexOf('pub fn build_router'), API_SOURCE.indexOf('fn build_logo_router'))
+const LOGO_ROUTER = API_SOURCE.slice(API_SOURCE.indexOf('fn build_logo_router'))
 const HANDLERS = readFileSync(`${ROOT}src-tauri/src/api/routes_premium.rs`, 'utf8')
 
 interface CheckResult {
@@ -141,22 +145,22 @@ function clientRoutes(): Route[] {
 }
 
 /** What the server registers. */
-function serverRoutes(): Route[] {
+function serverRoutes(src = ROUTER): Route[] {
   const out: Route[] = []
   // `.route("<path>", get(h).post(h).delete(h))` — *every* verb on the method
   // router, not just the first. One path serving several methods is a single
   // `.route` call in axum (a second call with the same path panics on the
   // overlap), so reading only the leading verb reported the rest as
   // unregistered — which is a 404 this script would have to invent.
-  for (const m of ROUTER.matchAll(/\.route\(\s*"([^"]+)",\s*/g)) {
+  for (const m of src.matchAll(/\.route\(\s*"([^"]+)",\s*/g)) {
     const path = m[1]!
     // The method-router expression, up to the paren closing `.route(`.
     // Depth counting rather than a regex: a handler can be a closure with
     // parens of its own.
     let depth = 1
     let expr = ''
-    for (let i = m.index! + m[0].length; i < ROUTER.length; i++) {
-      const c = ROUTER[i]!
+    for (let i = m.index! + m[0].length; i < src.length; i++) {
+      const c = src[i]!
       if (c === '(') {
         depth++
       }
@@ -173,6 +177,7 @@ function serverRoutes(): Route[] {
 
 const client = clientRoutes()
 const server = serverRoutes()
+const logoRoutes = serverRoutes(LOGO_ROUTER)
 const key = (r: Route) => `${r.method} ${r.path}`
 
 await check('both parsers found the whole surface', () => {
@@ -182,7 +187,7 @@ await check('both parsers found the whole surface', () => {
 })
 
 await check('every route the client calls is registered on the server', () => {
-  const registered = new Set(server.map(key))
+  const registered = new Set([...server, ...logoRoutes].map(key))
   for (const r of client) {
     assert.ok(
       registered.has(key(r)),
@@ -224,10 +229,10 @@ await check('axum 0.7 path syntax throughout', () => {
 // ── The gate is on every handler ─────────────────────────────────
 
 await check('every handler goes through the auth + entitlement guard', () => {
-  // One exception, and it is written down in the handler: `disconnect`
-  // takes `require_auth` only, because a lapsed subscriber must still be
-  // able to remove their credentials.
-  const exempt = new Set(['disconnect'])
+  // Two exceptions, written down in the handlers: `disconnect` and
+  // `remove_connection` take `require_auth` only, because a lapsed
+  // subscriber must still be able to remove their credentials.
+  const exempt = new Set(['disconnect', 'remove_connection'])
   const bodies = HANDLERS.split(/\npub async fn /).slice(1)
   let seen = 0
   for (const body of bodies) {
@@ -357,6 +362,20 @@ await check('an error that reaches stderr cannot carry a credential', () => {
   }
 })
 
+await check('switching accounts drops the old stream first, and adding one keeps the rest', () => {
+  const store = readFileSync(`${ROOT}app/stores/premiumTv.ts`, 'utf8')
+  const body = store.slice(store.indexOf('async function switchTo'))
+  const reset = body.indexOf('resetPlayer()')
+  const activate = body.indexOf('premiumApi.activate(')
+  assert.ok(reset >= 0 && activate > reset, 'switchTo resets the player before it activates another account')
+  const page = readFileSync(`${ROOT}app/pages/settings/premium-tv.vue`, 'utf8')
+  assert.ok(/v-for="\w+ in (?:premium\.connections|others)"/.test(page), 'the settings page lists the saved accounts')
+  for (const label of ['Switch', 'Remove', 'Add another account'])
+    assert.ok(page.includes(`$t('${label}')`), `the settings page has a ${label} button`)
+  const add = page.slice(page.indexOf('function addAnother'))
+  assert.ok(add.length > 0 && !add.slice(0, add.indexOf('}')).includes('disconnect'), 'adding an account does not sign out of this one')
+})
+
 // ── Live phase ───────────────────────────────────────────────────
 
 async function reachable(): Promise<boolean> {
@@ -389,6 +408,7 @@ function post(path: string, body?: unknown, headers: Record<string, string> = {}
 const BODIES: Record<string, unknown> = {
   '/api/premium-tv/epg/now-next': { channelIds: [] },
   '/api/premium-tv/recent': { channelId: 'nonexistent' },
+  '/api/premium-tv/channels/nonexistent/archive': { start: 0, end: 60 },
 }
 
 const live = await reachable()
@@ -408,7 +428,11 @@ if (live) {
       if (r.path === '/api/premium-tv/health')
         continue
       const path = r.path.replace(':id', 'nonexistent')
-      const resp = r.method === 'GET' ? await get(path) : await post(path, BODIES[path] ?? {})
+      const resp = r.method === 'GET'
+        ? await get(path)
+        : r.method === 'DELETE'
+          ? await fetch(`${API}${path}`, { method: 'DELETE' })
+          : await post(path, BODIES[path] ?? {})
       assert.equal(resp.status, 401, `${key(r)} answered ${resp.status}`)
     }
   })
@@ -439,7 +463,11 @@ if (live) {
       if (r.path.startsWith('/premium-stream/'))
         continue
       const path = r.path.replace(':id', 'nonexistent')
-      const resp = r.method === 'GET' ? await get(path) : await post(path, BODIES[path] ?? {})
+      const resp = r.method === 'GET'
+        ? await get(path)
+        : r.method === 'DELETE'
+          ? await fetch(`${API}${path}`, { method: 'DELETE' })
+          : await post(path, BODIES[path] ?? {})
       const body = (await resp.text()).toLowerCase()
       for (const leak of ['password', 'passwd', 'username=', 'player_api', 'live/', 'xmltv']) {
         assert.ok(!body.includes(leak), `${key(r)} leaked '${leak}'`)

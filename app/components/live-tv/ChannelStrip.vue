@@ -100,6 +100,7 @@ const label = computed(() => [
 <template>
   <button
     type="button"
+    :data-channel-id="id"
     class="group grid h-[72px] w-full grid-cols-[2.75rem_52px_minmax(0,1fr)] items-center gap-3 rounded-xl px-2 text-start outline-none transition-colors hover:bg-surface-container-high focus-visible:bg-surface-container-high focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary sm:px-3 md:grid-cols-[3.5rem_52px_minmax(0,1.1fr)_minmax(0,1.5fr)_6.5rem] md:gap-4"
     :class="disabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'"
     :disabled="disabled"

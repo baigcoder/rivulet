@@ -253,21 +253,32 @@ pub async fn connect(
         let display = display_name(&req, &cfg);
 
         let id = storage::new_connection_id();
+        let previous;
         {
             let conn = lock(&state)?;
+            previous = storage::active_connection(&conn)?;
             storage::insert_connection(&conn, &id, kind, &display)?;
             let blob = cfg.encrypt(&state.premium.vault)?;
             storage::set_secret(&conn, &id, &blob)?;
         }
 
         match sync::connect(state.premium.clone(), &id).await {
-            Ok((account, report)) => return Ok(Json(ConnectResponse { account, report })),
+            Ok((account, report)) => {
+                if let Ok(conn) = lock(&state) {
+                    let _ = storage::drop_duplicate_connections(&conn, &id, &state.premium.vault);
+                }
+                return Ok(Json(ConnectResponse { account, report }));
+            }
             Err(e) => {
                 // Roll the connection back. `delete_connection` cascades to
                 // the secret, so the rejected password does not stay on disk
-                // either.
+                // either — and the account that was playing before stays the
+                // active one instead of leaving the user signed out.
                 if let Ok(conn) = lock(&state) {
                     let _ = storage::delete_connection(&conn, &id);
+                    if let Some(prev) = &previous {
+                        let _ = storage::activate_connection(&conn, prev);
+                    }
                 }
                 last = Some(e.into());
             }
@@ -387,6 +398,50 @@ pub async fn disconnect(
     if let Some(id) = storage::active_connection(&conn)? {
         state.premium.vod_cache.clear_connection(&id);
         storage::delete_connection(&conn, &id)?;
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ── Saved accounts ─────────────────────────────────────────────────
+
+pub async fn connections(
+    State(state): State<ApiState>,
+    headers: axum::http::HeaderMap,
+) -> Result<Json<Vec<storage::ConnectionSummary>>, super::ApiError> {
+    guard(&state, &headers)?;
+    let conn = lock(&state)?;
+    Ok(Json(storage::list_connections(&conn)?))
+}
+
+pub async fn activate(
+    State(state): State<ApiState>,
+    headers: axum::http::HeaderMap,
+    Path(id): Path<String>,
+) -> Result<StatusCode, super::ApiError> {
+    guard(&state, &headers)?;
+    let conn = lock(&state)?;
+    storage::activate_connection(&conn, &id)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Remove one saved account. Ungated for the same reason as
+/// `disconnect`. Removing the active one hands the flag to the most
+/// recently used of the rest, so the user lands on an account rather
+/// than the sign-in form whenever they still have one.
+pub async fn remove_connection(
+    State(state): State<ApiState>,
+    headers: axum::http::HeaderMap,
+    Path(id): Path<String>,
+) -> Result<StatusCode, super::ApiError> {
+    require_auth(&headers)?;
+    let conn = lock(&state)?;
+    let was_active = storage::active_connection(&conn)?.as_deref() == Some(id.as_str());
+    state.premium.vod_cache.clear_connection(&id);
+    storage::delete_connection(&conn, &id)?;
+    if was_active {
+        if let Some(next) = storage::list_connections(&conn)?.first() {
+            storage::activate_connection(&conn, &next.id)?;
+        }
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -523,6 +578,8 @@ pub async fn channel(
 #[derive(Deserialize, Default)]
 pub struct EpgQuery {
     pub limit: Option<usize>,
+    /// Days back: past programmes for catch-up instead of what is coming.
+    pub past: Option<i64>,
 }
 
 /// One channel's guide.
@@ -548,6 +605,9 @@ pub async fn epg(
     let cid = active_connection(&state)?;
     let limit = q.limit.unwrap_or(DEFAULT_EPG_LIMIT).clamp(1, MAX_EPG_LIMIT);
     let r = repo(&state);
+    if let Some(days) = q.past {
+        return Ok(Json(r.read_epg_past(&cid, &id, limit, days.clamp(1, 30) * 86_400)?));
+    }
     let cached = r.read_epg(&cid, &id, limit)?;
     if !cached.is_empty() {
         return Ok(Json(cached));
@@ -816,6 +876,39 @@ pub async fn vod_play_episode(
     Ok(Json(source))
 }
 
+#[derive(Deserialize)]
+pub struct ArchiveRequest {
+    start: i64,
+    end: i64,
+}
+
+/// A finished programme from the channel's archive (Xtream catch-up). The
+/// window is enforced here, not by the button: a programme still on air, one
+/// in the future or one older than the archive is refused.
+pub async fn archive_play(
+    State(state): State<ApiState>,
+    headers: axum::http::HeaderMap,
+    Path(id): Path<String>,
+    Json(req): Json<ArchiveRequest>,
+) -> Result<Json<PlaybackSource>, super::ApiError> {
+    guard(&state, &headers)?;
+    let cid = active_connection(&state)?;
+    factory::xtream_for(state.premium.clone(), &cid)?;
+    let days = repo(&state)
+        .channel_by_id(&cid, &id)?
+        .and_then(|c| c.archive_days)
+        .ok_or_else(|| super::ApiError::BadRequest("this channel keeps no archive".into()))?;
+    let now = chrono::Utc::now().timestamp();
+    if !crate::premium::xtream::archive_window_ok(days, req.start, req.end, now) {
+        return Err(super::ApiError::BadRequest("that programme is not in the archive".into()));
+    }
+    // Panels cap a timeshift request; six hours covers any one programme.
+    let minutes = ((req.end - req.start + 59) / 60).min(360);
+    let play_id = format!("archive:{id}:{}:{minutes}", req.start);
+    let source = player::build_vod_source(state.premium.clone(), &cid, &play_id, "ts")?;
+    Ok(Json(source))
+}
+
 // ── The redirector ─────────────────────────────────────────────────
 
 /// `/premium-stream/:token` — the only route a player opens, and the
@@ -848,6 +941,14 @@ pub async fn stream_redirect(
         let upstream = match kind {
             "movie" => xtream.resolve_movie_url(id, ext).await?,
             "series" => xtream.resolve_series_episode_url(id, ext).await?,
+            // `ext` carries "{start_unix}:{minutes}" for a catch-up id.
+            "archive" => {
+                let (start, minutes) = ext
+                    .split_once(':')
+                    .and_then(|(s, m)| Some((s.parse::<i64>().ok()?, m.parse::<i64>().ok()?)))
+                    .ok_or_else(|| super::ApiError::NotFound("stream not found".into()))?;
+                xtream.resolve_archive_url(id, start, minutes).await?
+            }
             _ => return Err(super::ApiError::NotFound("stream not found".into())),
         };
         let proxied = crate::iptv::commands::proxy_free_stream_url(
