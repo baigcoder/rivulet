@@ -66,7 +66,7 @@
 			}
 		},
 		"shell": {
-			"open": "(?:(?:https?|file)://.+|mailto:.+|tel:.+|/.+|[A-Za-z]:[\\\\/].+|\\\\\\\\.+)"
+			"open": "^(?:https?://|mailto:).+"
 		},
 		"deep-link": {
 			"desktop": {

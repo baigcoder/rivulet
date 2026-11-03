@@ -22,7 +22,7 @@
  */
 
 /** A stream that has not answered in five seconds is not worth a card. */
-export const PROBE_TIMEOUT_MS = 5000
+const PROBE_TIMEOUT_MS = 5000
 
 /** In flight at once. The bound is the upstreams' patience, not ours. */
 export const PROBE_CONCURRENCY = 4

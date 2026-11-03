@@ -119,7 +119,10 @@ assert.match(watchPage, /readLivePlay/, 'the player must recover the staged stre
 assert.match(watchPage, /@go-live=/, 'resume after pause must offer a jump back to the live edge')
 assert.doesNotMatch(watchPage, /playNow\(rawUrl/, 'the free player must never hand mpv a raw upstream URL')
 assert.match(watchPage, /proxyFreeStreamUrl\([\s\S]*\.ts/, 'm3u8 failure retries .ts through the loopback proxy')
-assert.match(freePage, /saveLivePlay/, 'play must stage the stream before navigating')
+// Free TV and the Live TV landing share one play(), so the staging lives there.
+const freePlayer = readFileSync(new URL('../app/composables/useFreeChannelPlayer.ts', import.meta.url), 'utf8')
+assert.match(freePage, /useFreeChannelPlayer\(\)/, 'Free TV plays through the shared composable')
+assert.match(freePlayer, /saveLivePlay\([\s\S]*router\.push\(/, 'play must stage the stream before navigating')
 assert.match(watchPage, /@retry="\(\) => void onRetry\(\)"/, 'Retry must restart the player, not only re-mint a cached proxy URL')
 assert.match(
   watchPage,
@@ -294,7 +297,8 @@ assert.match(freePage, /:fullscreen="!smAndUp"/, 'phones get a full-width catego
 
 const hubPage = readFileSync(new URL('../app/pages/live-tv/index.vue', import.meta.url), 'utf8')
 assert.match(hubPage, /list-none/, 'hub tags are chips, not a bulleted list')
-assert.match(hubPage, /text-title-large/, 'hub titles fit a phone width without clipping')
+assert.doesNotMatch(hubPage, /(?<![a-z]:)text-(?:display|headline-large)/, 'hub titles fit a phone width without clipping')
+assert.match(hubPage, /class="truncate">\{\{ tile\.title \}\}/, 'and a long translation ellipsizes rather than overflowing the tile')
 
 for (const rel of [
   'app/components/live-tv/LiveChannelCard.vue',
@@ -383,7 +387,7 @@ const rust = (rel: string) => readFileSync(new URL(`../src-tauri/src/${rel}`, im
 const proxyRs = rust('iptv/proxy.rs')
 assert.match(proxyRs, /match resp\.bytes\(\)\.await \{\s+Ok\(raw\) => \{\s+let body = manifest_text\(&raw\);/, 'a gzipped playlist is decoded before it is rewritten')
 assert.match(proxyRs, /fn manifest_text[\s\S]*?GzDecoder/, 'by its gzip magic')
-assert.match(proxyRs, /starts_with\('#'\) \{[\s\S]{0,400}?rewrite_uri_attrs\(line, base, user_agent, referer\)/, 'URI="…" inside a tag goes through the proxy too')
+assert.match(proxyRs, /starts_with\('#'\) \{[\s\S]{0,400}?rewrite_uri_attrs\(line, base, user_agent, referer[,)]/, 'URI="…" inside a tag goes through the proxy too')
 assert.match(proxyRs, /fn is_xtream_media_url\(url: &str\) -> bool \{\s+xtream_kind\(url\)\.is_some\(\)/, 'Xtream is the panel shape, not "/live/ somewhere in the path"')
 assert.doesNotMatch(proxyRs, /path\.contains\("\/live\/"\)/, 'no substring test for /live/ is left')
 

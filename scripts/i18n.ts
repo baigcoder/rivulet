@@ -237,7 +237,8 @@ for (const { code, name } of locales) {
     '',
   ].filter(line => line !== null && line !== false).join('\n')
 
-  if ((existsSync(file) ? readFileSync(file, 'utf8') : null) !== content) {
+  // A Windows checkout with core.autocrlf has CRLF on disk; that is not a stale catalog.
+  if ((existsSync(file) ? readFileSync(file, 'utf8').replace(/\r\n/g, '\n') : null) !== content) {
     if (!CHECK)
       writeFileSync(file, content)
     changed++

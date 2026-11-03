@@ -167,8 +167,9 @@ check('the duplicate premium player is gone', () => {
 check('no premium component implements playback itself', () => {
   for (const f of TEMPLATES) {
     const s = read(f)
-    for (const own of ['hls.js', 'new Hls(', '<video']) {
-      assert.ok(!s.includes(own), `${f.replace(ROOT, '')} implements its own playback (${own})`)
+    // `<video` alone also matches `<videos-row>`, the trailers shelf on the detail page.
+    for (const own of [/hls\.js/, /new Hls\(/, /<video[\s>/]/]) {
+      assert.ok(!own.test(s), `${f.replace(ROOT, '')} implements its own playback (${own.source})`)
     }
   }
 })
