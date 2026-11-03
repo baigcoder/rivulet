@@ -72,6 +72,7 @@ const search = defineModel<string>('search', { required: true })
     </div>
 
     <search-field
+      data-live-search
       v-model="search"
       :placeholder="searchPlaceholder ?? $t('Search channels')"
       density="default"

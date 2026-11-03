@@ -5,7 +5,8 @@ export default defineNuxtPlugin(() => {
   function onKeydown(e: KeyboardEvent) {
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
       e.preventDefault()
-      const el = document.querySelector<HTMLInputElement>('[data-live-search]')
+      // The attribute sits on SearchField's wrapper; the input is inside it.
+      const el = document.querySelector<HTMLInputElement>('[data-live-search] input')
       if (el) {
         if (document.activeElement === el) {
           el.blur()

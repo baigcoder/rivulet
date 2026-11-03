@@ -6,7 +6,7 @@
 // the probe verdict (what counts as alive) and the skip (where to go when
 // it is not), and both are pure, so both are checkable without a network.
 import assert from 'node:assert'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { MAX_AUTO_SKIPS, nextPlayable, pool, probeVerdict } from '../app/utils/livehealth'
 import { liveTvBackPath, liveTvFrom, readLivePlay, saveLivePlay } from '../app/utils/liveNav'
 import { connectionLimitMessage, fmtHudTime, friendlyPlaybackError, isProviderConnectionLimit, isProviderVodSlateDuration } from '../app/utils/playbackError'
@@ -631,6 +631,14 @@ for (const [name, page] of [['free', liveWatch], ['premium', premiumWatchSrc]] a
     `and the ${name} page does not keep its own copy of the rule`,
   )
 }
+
+// Ctrl/Cmd+K: the shortcut looked for a field only an unmounted component had.
+const browseHeader = readFileSync(new URL('../app/components/live-tv/LiveBrowseHeader.vue', import.meta.url), 'utf8')
+assert.match(browseHeader, /<search-field\s[^>]*\bdata-live-search\b/, 'the mounted live search carries the Ctrl+K hook')
+const shortcuts = readFileSync(new URL('../app/plugins/keyboard-shortcuts.client.ts', import.meta.url), 'utf8')
+assert.match(shortcuts, /\[data-live-search\] input/, 'Ctrl+K focuses the input inside the field, not its wrapper')
+for (const gone of ['LiveEpgDrawer', 'LiveEpgSheet', 'LiveTvSearch', 'LiveFilterDrawer'])
+  assert.ok(!existsSync(new URL(`../app/components/live-tv/${gone}.vue`, import.meta.url)), `${gone} was never mounted`)
 
 // eslint-disable-next-line no-console
 console.info('free tv health: ok')
