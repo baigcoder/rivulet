@@ -73,6 +73,16 @@ export interface PremiumAccount {
   maxConnections?: number | null
 }
 
+/** One saved provider login, as the account switcher lists it. */
+export interface ConnectionSummary {
+  id: string
+  providerType: string
+  displayName: string
+  accountName?: string | null
+  expiresAt?: string | null
+  active: boolean
+}
+
 export interface PlaybackSource {
   url: string
   mimeType?: string | null

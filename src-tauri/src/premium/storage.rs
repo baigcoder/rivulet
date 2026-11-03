@@ -397,6 +397,80 @@ pub fn delete_connection(conn: &Connection, id: &str) -> Result<(), PremiumError
     Ok(())
 }
 
+/// One saved account, as the account switcher lists it. Carries no
+/// server URL or username: those stay in the vault.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionSummary {
+    pub id: String,
+    pub provider_type: String,
+    pub display_name: String,
+    pub account_name: Option<String>,
+    pub expires_at: Option<String>,
+    pub active: bool,
+}
+
+/// Every saved account, the active one first.
+pub fn list_connections(conn: &Connection) -> Result<Vec<ConnectionSummary>, PremiumError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, provider_type, display_name, account_name, expires_at, status = 'active'
+         FROM iptv_premium_connections
+         ORDER BY status = 'active' DESC, activated_at DESC, inserted_at DESC, rowid DESC",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(ConnectionSummary {
+            id: row.get(0)?,
+            provider_type: row.get(1)?,
+            display_name: row.get(2)?,
+            account_name: row.get(3)?,
+            expires_at: row.get(4)?,
+            active: row.get(5)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// Make `id` the one active account. Same one-flag rule as
+/// `insert_connection`, in one transaction so no reader sees zero or two.
+pub fn activate_connection(conn: &Connection, id: &str) -> Result<(), PremiumError> {
+    let tx = conn.unchecked_transaction()?;
+    let known: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM iptv_premium_connections WHERE id = ?1)",
+        [id],
+        |row| row.get(0),
+    )?;
+    if !known {
+        return Err(PremiumError::ProviderNotConnected);
+    }
+    tx.execute(
+        "UPDATE iptv_premium_connections SET status = 'inactive' WHERE status = 'active'",
+        [],
+    )?;
+    tx.execute(
+        "UPDATE iptv_premium_connections SET status = 'active', activated_at = strftime('%s','now')
+         WHERE id = ?1",
+        [id],
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Delete the other rows for the same login. Signing in again with the
+/// same account inserts a fresh row, and without this every reconnect
+/// would add another identical entry to the switcher.
+pub fn drop_duplicate_connections(conn: &Connection, keep_id: &str) -> Result<usize, PremiumError> {
+    Ok(conn.execute(
+        "DELETE FROM iptv_premium_connections
+         WHERE id <> ?1 AND EXISTS (
+           SELECT 1 FROM iptv_premium_connections k
+           WHERE k.id = ?1
+             AND k.provider_type = iptv_premium_connections.provider_type
+             AND k.display_name = iptv_premium_connections.display_name
+             AND k.account_name IS iptv_premium_connections.account_name)",
+        [keep_id],
+    )?)
+}
+
 /// One stored provider connection, as `/status` reports it.
 ///
 /// The columns this does *not* carry — `id`, `inserted_at`,
@@ -599,4 +673,55 @@ pub fn channel_count(conn: &Connection, connection_id: &str) -> Result<usize, Pr
         |row| row.get(0),
     )?;
     Ok(n as usize)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        migrate(&conn).unwrap();
+        conn
+    }
+
+    fn ids(conn: &Connection) -> Vec<(String, bool)> {
+        list_connections(conn).unwrap().into_iter().map(|c| (c.id, c.active)).collect()
+    }
+
+    #[test]
+    fn list_puts_active_first_and_activate_switches() {
+        let conn = db();
+        insert_connection(&conn, "a", "xtream", "Alpha").unwrap();
+        insert_connection(&conn, "b", "xtream", "Beta").unwrap();
+        assert_eq!(ids(&conn), vec![("b".into(), true), ("a".into(), false)]);
+        activate_connection(&conn, "a").unwrap();
+        assert_eq!(ids(&conn), vec![("a".into(), true), ("b".into(), false)]);
+        assert_eq!(active_connection(&conn).unwrap().as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn activate_unknown_is_not_connected() {
+        let conn = db();
+        insert_connection(&conn, "a", "xtream", "Alpha").unwrap();
+        assert!(matches!(
+            activate_connection(&conn, "nope"),
+            Err(PremiumError::ProviderNotConnected)
+        ));
+        assert_eq!(active_connection(&conn).unwrap().as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn duplicates_are_dropped_on_reconnect() {
+        let conn = db();
+        insert_connection(&conn, "old", "xtream", "Alpha").unwrap();
+        update_account(&conn, "old", Some("alpha1"), None, None, None, None).unwrap();
+        insert_connection(&conn, "other", "xtream", "Beta").unwrap();
+        insert_connection(&conn, "new", "xtream", "Alpha").unwrap();
+        update_account(&conn, "new", Some("alpha1"), None, None, None, None).unwrap();
+        assert_eq!(drop_duplicate_connections(&conn, "new").unwrap(), 1);
+        assert_eq!(ids(&conn), vec![("new".into(), true), ("other".into(), false)]);
+    }
 }

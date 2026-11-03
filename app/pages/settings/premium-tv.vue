@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { mdiCheck, mdiShieldOffOutline, mdiTelevisionPlay } from '@mdi/js'
+import type { ConnectionSummary } from '~/types/premium'
+import { mdiAccountPlus, mdiCheck, mdiShieldOffOutline, mdiTelevisionPlay } from '@mdi/js'
 import { premiumApi } from '~/utils/premiumTv'
 
 const settings = useSettingsStore()
@@ -13,7 +14,7 @@ onMounted(async () => {
     .then(() => console.log('[premium-tv] API server is up'))
     .catch((e: unknown) => console.error('[premium-tv] API server unreachable:', e))
   try {
-    await premium.loadStatus()
+    await Promise.all([premium.loadStatus(), premium.loadConnections()])
   }
   finally {
     // This marks only the initial status lookup. A provider connection also
@@ -37,7 +38,35 @@ async function withBusy(fn: () => Promise<unknown>): Promise<void> {
 }
 
 const refresh = () => withBusy(() => premium.refresh(true))
-const disconnect = () => withBusy(() => premium.disconnect())
+// Signing out of the active account hands over to the next saved one,
+// rather than leaving the others stranded behind the sign-in form.
+function disconnect() {
+  return withBusy(() => {
+    const active = premium.connections.find(c => c.active)
+    return active ? premium.removeConnection(active.id) : premium.disconnect()
+  })
+}
+
+const others = computed(() => premium.connections.filter(c => !c.active))
+const switchTo = (id: string) => withBusy(() => premium.switchTo(id))
+
+/** The sign-in form under a connected account, for a second login. */
+const adding = ref(false)
+function addAnother(): void {
+  adding.value = true
+}
+
+const removing = ref<ConnectionSummary | null>(null)
+async function confirmRemove(): Promise<void> {
+  const target = removing.value
+  removing.value = null
+  if (target)
+    await withBusy(() => premium.removeConnection(target.id))
+}
+
+function accountKind(c: ConnectionSummary): string {
+  return c.providerType === 'm3u' ? $t('M3U / M3U+') : $t('Xtream Codes')
+}
 
 /**
  * Where the user is in getting Premium TV going. It needs one thing: their own
@@ -113,10 +142,45 @@ const currentStep = computed(() => steps.value.findIndex(s => !s.done))
           <v-progress-circular indeterminate color="primary" size="32" />
         </div>
 
+        <!-- Saved logins other than the active one. Switching drops the
+             stream of the old one: a provider counts it as a connection. -->
+        <ul v-if="statusLoaded && others.length" class="m-0 flex list-none flex-col gap-2 p-0" :aria-label="$t('Other accounts')">
+          <li
+            v-for="c in others"
+            :key="c.id"
+            class="flex flex-wrap items-center gap-3 rounded-2xl border border-white/8 bg-surface-container/40 px-4 py-3"
+          >
+            <div class="min-w-0 flex-1">
+              <p class="truncate text-body-medium font-medium">
+                {{ c.accountName || c.displayName }}
+              </p>
+              <p class="text-body-small opacity-60">
+                {{ accountKind(c) }}
+              </p>
+            </div>
+            <v-btn size="small" variant="tonal" color="primary" :disabled="busy" @click="switchTo(c.id)">
+              {{ $t('Switch') }}
+            </v-btn>
+            <v-btn size="small" variant="text" :disabled="busy" @click="removing = c">
+              {{ $t('Remove') }}
+            </v-btn>
+          </li>
+        </ul>
+
         <!-- The same form the Premium TV page mounts, without its heading:
              this section already has one. On success it opens Premium TV,
              which is where the channels are. -->
-        <premium-tv-premium-connect-form v-else :heading="false" />
+        <premium-tv-premium-connect-form v-if="statusLoaded && (!premium.connected || adding)" :heading="false" />
+        <v-btn
+          v-else-if="premium.connected"
+          variant="tonal"
+          size="small"
+          class="self-start"
+          :prepend-icon="mdiAccountPlus"
+          @click="addAnother"
+        >
+          {{ $t('Add another account') }}
+        </v-btn>
 
         <v-btn
           v-if="premium.connected"
@@ -160,5 +224,29 @@ const currentStep = computed(() => steps.value.findIndex(s => !s.done))
         </div>
       </v-card>
     </settings-section>
+
+    <v-dialog
+      :model-value="!!removing"
+      max-width="480"
+      @update:model-value="open => !open && (removing = null)"
+    >
+      <v-card rounded="xl">
+        <v-card-title class="text-title-medium">
+          {{ $t('Remove this account?') }}
+        </v-card-title>
+        <v-card-text class="text-body-medium">
+          {{ $t('{name} and its saved login will be deleted from this device.', { name: removing?.accountName || removing?.displayName || '' }) }}
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="removing = null">
+            {{ $t('Cancel') }}
+          </v-btn>
+          <v-btn variant="tonal" color="error" @click="confirmRemove">
+            {{ $t('Remove') }}
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </div>
 </template>

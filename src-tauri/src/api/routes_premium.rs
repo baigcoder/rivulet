@@ -253,21 +253,32 @@ pub async fn connect(
         let display = display_name(&req, &cfg);
 
         let id = storage::new_connection_id();
+        let previous;
         {
             let conn = lock(&state)?;
+            previous = storage::active_connection(&conn)?;
             storage::insert_connection(&conn, &id, kind, &display)?;
             let blob = cfg.encrypt(&state.premium.vault)?;
             storage::set_secret(&conn, &id, &blob)?;
         }
 
         match sync::connect(state.premium.clone(), &id).await {
-            Ok((account, report)) => return Ok(Json(ConnectResponse { account, report })),
+            Ok((account, report)) => {
+                if let Ok(conn) = lock(&state) {
+                    let _ = storage::drop_duplicate_connections(&conn, &id);
+                }
+                return Ok(Json(ConnectResponse { account, report }));
+            }
             Err(e) => {
                 // Roll the connection back. `delete_connection` cascades to
                 // the secret, so the rejected password does not stay on disk
-                // either.
+                // either — and the account that was playing before stays the
+                // active one instead of leaving the user signed out.
                 if let Ok(conn) = lock(&state) {
                     let _ = storage::delete_connection(&conn, &id);
+                    if let Some(prev) = &previous {
+                        let _ = storage::activate_connection(&conn, prev);
+                    }
                 }
                 last = Some(e.into());
             }
@@ -387,6 +398,50 @@ pub async fn disconnect(
     if let Some(id) = storage::active_connection(&conn)? {
         state.premium.vod_cache.clear_connection(&id);
         storage::delete_connection(&conn, &id)?;
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ── Saved accounts ─────────────────────────────────────────────────
+
+pub async fn connections(
+    State(state): State<ApiState>,
+    headers: axum::http::HeaderMap,
+) -> Result<Json<Vec<storage::ConnectionSummary>>, super::ApiError> {
+    guard(&state, &headers)?;
+    let conn = lock(&state)?;
+    Ok(Json(storage::list_connections(&conn)?))
+}
+
+pub async fn activate(
+    State(state): State<ApiState>,
+    headers: axum::http::HeaderMap,
+    Path(id): Path<String>,
+) -> Result<StatusCode, super::ApiError> {
+    guard(&state, &headers)?;
+    let conn = lock(&state)?;
+    storage::activate_connection(&conn, &id)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Remove one saved account. Ungated for the same reason as
+/// `disconnect`. Removing the active one hands the flag to the most
+/// recently used of the rest, so the user lands on an account rather
+/// than the sign-in form whenever they still have one.
+pub async fn remove_connection(
+    State(state): State<ApiState>,
+    headers: axum::http::HeaderMap,
+    Path(id): Path<String>,
+) -> Result<StatusCode, super::ApiError> {
+    require_auth(&headers)?;
+    let conn = lock(&state)?;
+    let was_active = storage::active_connection(&conn)?.as_deref() == Some(id.as_str());
+    state.premium.vod_cache.clear_connection(&id);
+    storage::delete_connection(&conn, &id)?;
+    if was_active {
+        if let Some(next) = storage::list_connections(&conn)?.first() {
+            storage::activate_connection(&conn, &next.id)?;
+        }
     }
     Ok(StatusCode::NO_CONTENT)
 }

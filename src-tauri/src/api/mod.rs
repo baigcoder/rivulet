@@ -195,6 +195,15 @@ pub fn build_router(state: ApiState) -> Router {
         .route("/api/premium-tv/account", get(routes_premium::account))
         .route("/api/premium-tv/connect", post(routes_premium::connect))
         .route("/api/premium-tv/disconnect", post(routes_premium::disconnect))
+        .route("/api/premium-tv/connections", get(routes_premium::connections))
+        .route(
+            "/api/premium-tv/connections/:id/activate",
+            post(routes_premium::activate),
+        )
+        .route(
+            "/api/premium-tv/connections/:id",
+            axum::routing::delete(routes_premium::remove_connection),
+        )
         .route("/api/premium-tv/refresh", post(routes_premium::refresh))
         .route("/api/premium-tv/dashboard", get(routes_premium::dashboard))
         .route("/api/premium-tv/categories", get(routes_premium::categories))

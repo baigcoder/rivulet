@@ -1,5 +1,6 @@
 import type {
   CategoryCount,
+  ConnectionSummary,
   ConnectResult,
   EpgProgram,
   IPTVCategory,
@@ -342,6 +343,20 @@ export const premiumApi = {
 
   disconnect(): Promise<void> {
     return request<void>('POST', '/api/premium-tv/disconnect')
+  },
+
+  /** Every saved account, the active one first. */
+  connections(): Promise<ConnectionSummary[]> {
+    return request('GET', '/api/premium-tv/connections')
+  },
+
+  activate(id: string): Promise<void> {
+    return request<void>('POST', `/api/premium-tv/connections/${encodeURIComponent(id)}/activate`)
+  },
+
+  /** Removing the active account hands the flag to the next one, if any. */
+  removeConnection(id: string): Promise<void> {
+    return request<void>('DELETE', `/api/premium-tv/connections/${encodeURIComponent(id)}`)
   },
 
   /**
