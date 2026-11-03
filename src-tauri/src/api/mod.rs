@@ -222,7 +222,9 @@ pub fn build_router(state: ApiState) -> Router {
         .route("/api/premium-tv/vod/movies/:id/play", post(routes_premium::vod_play_movie))
         .route("/api/premium-tv/vod/episodes/:id/play", post(routes_premium::vod_play_episode))
         .route("/premium-stream/:token", get(routes_premium::stream_redirect))
-        .route("/api/premium-tv/proxy/image", get(proxy_image))
+        // No image proxy here: it takes no token (an <img> cannot send one),
+        // so on this origin it was an open proxy beside the authenticated API.
+        // Logos are served only from their own origin, `build_logo_router`.
         .layer(cors)
         .with_state(state)
 }

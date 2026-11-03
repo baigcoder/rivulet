@@ -27,7 +27,9 @@ interface Answer { status: number, body: string }
 
 function send(port: number, path: string, headers: Record<string, string> = {}, method = 'GET', body = ''): Promise<Answer> {
   return new Promise((resolve, reject) => {
-    const req = request({ host: '127.0.0.1', port, path, method, headers, timeout: 8000 }, res => {
+    // Generous: refusing a folder resolves every approved one, and a sleeping
+    // USB drive among them takes five to twelve seconds to answer that.
+    const req = request({ host: '127.0.0.1', port, path, method, headers, timeout: 30_000 }, res => {
       let text = ''
       res.setEncoding('utf8')
       res.on('data', (c: string) => (text += c))

@@ -25,7 +25,11 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const API = 'http://127.0.0.1:3032'
 
 const CLIENT = readFileSync(`${ROOT}app/utils/premiumTv.ts`, 'utf8')
-const ROUTER = readFileSync(`${ROOT}src-tauri/src/api/mod.rs`, 'utf8')
+const API_SOURCE = readFileSync(`${ROOT}src-tauri/src/api/mod.rs`, 'utf8')
+// The authenticated API only. The logo proxy has a router of its own, on its
+// own origin, and takes no token by design (an <img> cannot send one).
+const ROUTER = API_SOURCE.slice(API_SOURCE.indexOf('pub fn build_router'), API_SOURCE.indexOf('fn build_logo_router'))
+const LOGO_ROUTER = API_SOURCE.slice(API_SOURCE.indexOf('fn build_logo_router'))
 const HANDLERS = readFileSync(`${ROOT}src-tauri/src/api/routes_premium.rs`, 'utf8')
 
 interface CheckResult {
@@ -141,22 +145,22 @@ function clientRoutes(): Route[] {
 }
 
 /** What the server registers. */
-function serverRoutes(): Route[] {
+function serverRoutes(src = ROUTER): Route[] {
   const out: Route[] = []
   // `.route("<path>", get(h).post(h).delete(h))` — *every* verb on the method
   // router, not just the first. One path serving several methods is a single
   // `.route` call in axum (a second call with the same path panics on the
   // overlap), so reading only the leading verb reported the rest as
   // unregistered — which is a 404 this script would have to invent.
-  for (const m of ROUTER.matchAll(/\.route\(\s*"([^"]+)",\s*/g)) {
+  for (const m of src.matchAll(/\.route\(\s*"([^"]+)",\s*/g)) {
     const path = m[1]!
     // The method-router expression, up to the paren closing `.route(`.
     // Depth counting rather than a regex: a handler can be a closure with
     // parens of its own.
     let depth = 1
     let expr = ''
-    for (let i = m.index! + m[0].length; i < ROUTER.length; i++) {
-      const c = ROUTER[i]!
+    for (let i = m.index! + m[0].length; i < src.length; i++) {
+      const c = src[i]!
       if (c === '(') {
         depth++
       }
@@ -173,6 +177,7 @@ function serverRoutes(): Route[] {
 
 const client = clientRoutes()
 const server = serverRoutes()
+const logoRoutes = serverRoutes(LOGO_ROUTER)
 const key = (r: Route) => `${r.method} ${r.path}`
 
 await check('both parsers found the whole surface', () => {
@@ -182,7 +187,7 @@ await check('both parsers found the whole surface', () => {
 })
 
 await check('every route the client calls is registered on the server', () => {
-  const registered = new Set(server.map(key))
+  const registered = new Set([...server, ...logoRoutes].map(key))
   for (const r of client) {
     assert.ok(
       registered.has(key(r)),
