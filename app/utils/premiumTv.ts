@@ -328,7 +328,8 @@ export const premiumApi = {
     m3uUrl?: string
     accountName?: string
   }): Promise<ConnectResult> {
-    return request('POST', '/api/premium-tv/connect', { body })
+    // A sign-in imports the whole lineup before it answers.
+    return request('POST', '/api/premium-tv/connect', { body, timeoutMs: CATALOG_TIMEOUT_MS })
   },
 
   /**
@@ -365,7 +366,9 @@ export const premiumApi = {
    * TTLs and is what a page load wants.
    */
   refresh(force = false): Promise<SyncReport> {
-    return request('POST', `/api/premium-tv/refresh${force ? '?force=true' : ''}`)
+    // An abort here is not only a lost answer: the server drops a handler
+    // whose caller hung up, so the import itself stops half done.
+    return request('POST', `/api/premium-tv/refresh${force ? '?force=true' : ''}`, { timeoutMs: CATALOG_TIMEOUT_MS })
   },
 
   dashboard(): Promise<PremiumDashboard> {

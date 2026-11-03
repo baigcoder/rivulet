@@ -89,8 +89,51 @@ fn is_decor_run(s: &str) -> bool {
 /// `None` means the row is not a channel: a divider, or a name with
 /// nothing legible left in it. A caller drops the row rather than
 /// rendering `##########` or an empty card.
+/// Windows-1252's characters for the bytes 0x80-0x9F, where it differs
+/// from Latin-1. Undefined bytes (0x81, 0x8D, 0x8F, 0x90, 0x9D) are absent.
+const CP1252_HIGH: [(char, u8); 27] = [
+    ('€', 0x80), ('‚', 0x82), ('ƒ', 0x83), ('„', 0x84), ('…', 0x85), ('†', 0x86),
+    ('‡', 0x87), ('ˆ', 0x88), ('‰', 0x89), ('Š', 0x8A), ('‹', 0x8B), ('Œ', 0x8C),
+    ('Ž', 0x8E), ('‘', 0x91), ('’', 0x92), ('“', 0x93), ('”', 0x94), ('•', 0x95),
+    ('–', 0x96), ('—', 0x97), ('˜', 0x98), ('™', 0x99), ('š', 0x9A), ('›', 0x9B),
+    ('œ', 0x9C), ('ž', 0x9E), ('Ÿ', 0x9F),
+];
+
+/// Undo UTF-8 that a panel read as Windows-1252 and wrote out again
+/// (`AmÃ©rica` for `América`) — the commonest corruption in provider
+/// lineups, and one that loses nothing: every character maps back to
+/// the byte it was, and those bytes are the original UTF-8.
+///
+/// Only taken when the round trip is valid UTF-8, which real text in a
+/// single-byte script almost never is: `SÃO` re-encodes to 0xC3 0x4F, a
+/// lead byte followed by a plain letter, and is left as it was.
+fn repair_mojibake(s: &str) -> std::borrow::Cow<'_, str> {
+    // Every mis-decoded accented letter starts with the lead byte of a
+    // two- or three-byte sequence, which Windows-1252 shows as one of these.
+    if !s.contains(['Ã', 'Â', 'â', 'Å', 'Ä', 'Ð', 'Ñ']) {
+        return s.into();
+    }
+    let mut bytes = Vec::with_capacity(s.len());
+    for c in s.chars() {
+        let byte = match u32::from(c) {
+            n @ 0..=0x7F | n @ 0xA0..=0xFF => n as u8,
+            _ => match CP1252_HIGH.iter().find(|(ch, _)| *ch == c) {
+                Some(&(_, b)) => b,
+                // A character Windows-1252 cannot produce: this text was
+                // never through that mistake.
+                None => return s.into(),
+            },
+        };
+        bytes.push(byte);
+    }
+    match String::from_utf8(bytes) {
+        Ok(fixed) => fixed.into(),
+        Err(_) => s.into(),
+    }
+}
+
 pub fn clean_channel_name(raw: &str) -> Option<String> {
-    let decoded = decode_entities(raw);
+    let decoded = decode_entities(&repair_mojibake(raw));
     // Control characters and U+FFFD (what a mis-decoded byte becomes)
     // carry no information and are what renders as `?????`. Collapse
     // the whitespace runs a stripped character leaves behind.
@@ -187,6 +230,30 @@ pub fn is_adult_category(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repairs_utf8_read_as_windows_1252() {
+        // Seen in a real lineup: `Latin AmÃ©ricaTevÃ© (WJPX-TV) Puerto Rico`.
+        assert_eq!(
+            clean_channel_name("Latin AmÃ©ricaTevÃ© (WJPX-TV)").as_deref(),
+            Some("Latin AméricaTevé (WJPX-TV)")
+        );
+        // The bytes 0x80-0x9F come back through Windows-1252's own table.
+        assert_eq!(clean_channel_name("Ã€ la carte").as_deref(), Some("À la carte"));
+        assert_eq!(clean_channel_name("Ã‰cole TV").as_deref(), Some("École TV"));
+        assert_eq!(clean_channel_name("TÃ¼rk TV").as_deref(), Some("Türk TV"));
+    }
+
+    #[test]
+    fn leaves_real_accents_and_scripts_alone() {
+        // `Ã` followed by an ordinary letter is not valid UTF-8 once
+        // re-encoded, so a genuinely Portuguese name stays as it is.
+        assert_eq!(clean_channel_name("SÃO PAULO TV").as_deref(), Some("SÃO PAULO TV"));
+        assert_eq!(clean_channel_name("Télé Québec").as_deref(), Some("Télé Québec"));
+        assert_eq!(clean_channel_name("ESPAÑA TV").as_deref(), Some("ESPAÑA TV"));
+        assert_eq!(clean_channel_name("Ärzte TV").as_deref(), Some("Ärzte TV"));
+        assert_eq!(clean_channel_name("Первый канал").as_deref(), Some("Первый канал"));
+    }
 
     #[test]
     fn keeps_a_plain_name_unchanged() {
