@@ -167,6 +167,13 @@ pub async fn live_dashboard(
     db::build_dashboard(&conn, &source_id).map_err(map_err)
 }
 
+/// Free TV was opened: check the channels now unless they were checked
+/// within the last half hour. Progress arrives as `live_health` events.
+#[tauri::command]
+pub fn live_check_health(app: tauri::AppHandle) {
+    super::health::check_on_open(app);
+}
+
 /// How many channels the health sweep is hiding from this source's lists.
 #[tauri::command]
 pub async fn live_offline_count(

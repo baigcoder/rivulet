@@ -23,12 +23,12 @@
  */
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import type { LiveView } from '~/stores/liveTv'
-import type { LiveChannel } from '~/utils/iptv'
+import type { LiveChannel, LiveHealthProgress } from '~/utils/iptv'
 import { mdiCalendarClock, mdiClose, mdiDeleteSweepOutline, mdiTelevisionOff, mdiViewGridOutline, mdiViewList } from '@mdi/js'
 import { listen } from '@tauri-apps/api/event'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { featuredFromFree } from '~/utils/featuredChannel'
-import { liveOfflineCount } from '~/utils/iptv'
+import { liveCheckHealth, liveOfflineCount } from '~/utils/iptv'
 
 definePageMeta({ layout: 'default' })
 
@@ -75,6 +75,13 @@ async function readHiddenOffline(): Promise<void> {
 
 /** What the rail calls "All channels": the ones that are not hidden as offline. */
 const onlineTotal = computed(() => Math.max(0, liveTv.totalChannels - hiddenOffline.value))
+
+/**
+ * The check Rust runs when this page opens (`health.rs`): how far it is, so
+ * the page can say it is still finding out rather than show every channel as
+ * if it worked. `null` while no check is running.
+ */
+const healthCheck = ref<{ checked: number, total: number } | null>(null)
 
 const statusMeta = computed(() => {
   if (hiddenOffline.value)
@@ -208,7 +215,14 @@ onMounted(async () => {
   // scrolled into the grid, where a reset would yank the page back to the
   // top; the next page they open is filtered anyway.
   try {
-    unlistenHealth = await listen<{ done: boolean }>('live_health', async ({ payload }) => {
+    unlistenHealth = await listen<LiveHealthProgress>('live_health', async ({ payload }) => {
+      // Each batch marks its channels at once: a dead one already on screen
+      // dims and says Offline, one that answered loses the mark.
+      for (const id of payload.dead ?? [])
+        liveTv.markOffline(id)
+      for (const id of payload.alive ?? [])
+        liveTv.markLive(id)
+      healthCheck.value = payload.done ? null : { checked: payload.checked, total: payload.total }
       if (!payload.done)
         return
       void readHiddenOffline()
@@ -235,6 +249,8 @@ onMounted(async () => {
   // Free TV must never inherit the premium source: the two entry points
   // are separate libraries, not two views of one list.
   await liveTv.useFreeSource()
+  // Find out which channels answer, now that someone is looking at them.
+  void liveCheckHealth().catch(() => { /* browser dev server: no Tauri */ })
   void readHiddenOffline()
   const category = liveCategory.value
   if (category)
@@ -369,6 +385,29 @@ watch(liveCategory, name => {
       </aside>
 
       <section class="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
+        <!-- Said on screen, on a TV too (the header's meta line is desktop
+             only): until this finishes, a channel in the grid may be dead. -->
+        <div
+          v-if="healthCheck"
+          class="flex shrink-0 flex-col gap-1.5 rounded-xl bg-surface-container/60 px-3 py-2"
+          role="status"
+        >
+          <p class="text-body-medium">
+            {{ $t('Checking which channels work… {checked} of {total}', {
+              checked: healthCheck.checked.toLocaleString(),
+              total: healthCheck.total.toLocaleString(),
+            }) }}
+            <span v-if="liveTv.offlineIds.size" class="opacity-60">
+              · {{ $t('{count} not working', { count: liveTv.offlineIds.size.toLocaleString() }) }}
+            </span>
+          </p>
+          <div class="h-1 overflow-hidden rounded-full bg-white/10">
+            <div
+              class="h-full w-full origin-left rounded-full bg-primary transition-transform duration-500"
+              :style="{ transform: `scaleX(${healthCheck.total ? healthCheck.checked / healthCheck.total : 0})` }"
+            />
+          </div>
+        </div>
         <!-- Importing: an empty grid here means "not yet", not "none". -->
         <div v-if="liveTv.m3uImporting && channels.length === 0" class="grid flex-1 place-items-center text-center">
           <div class="flex flex-col items-center gap-3">

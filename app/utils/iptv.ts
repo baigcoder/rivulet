@@ -277,6 +277,25 @@ export function liveGroupStats(sourceId: string, limit = 200): Promise<GroupCoun
 
 // ── Player-side (Free TV) ──────────────────────────────────────────
 
+/**
+ * Free TV was opened: have Rust check which channels answer, unless it did
+ * within the last half hour. Verdicts arrive as `live_health` events.
+ */
+export function liveCheckHealth(): Promise<void> {
+  return invoke<void>('live_check_health')
+}
+
+/** What one `live_health` event carries. */
+export interface LiveHealthProgress {
+  checked: number
+  total: number
+  offline: number
+  done: boolean
+  /** Channels found answering / dead since the last event. */
+  alive?: string[]
+  dead?: string[]
+}
+
 /** Channels the background health check is leaving out of the lists. */
 export function liveOfflineCount(sourceId: string): Promise<number> {
   return invoke<number>('live_offline_count', { sourceId })

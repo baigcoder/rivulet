@@ -1325,6 +1325,7 @@ pub fn run() {
             iptv::commands::live_remove_source,
             iptv::commands::live_dashboard,
             iptv::commands::live_offline_count,
+            iptv::commands::live_check_health,
             iptv::commands::live_query_channels,
             iptv::commands::live_search_channels,
             iptv::commands::live_country_channels,

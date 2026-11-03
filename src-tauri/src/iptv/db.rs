@@ -1101,7 +1101,12 @@ pub struct HealthTarget {
 /// Every channel of a source, dead ones included — a sweep re-asks those.
 pub fn health_targets(conn: &Connection, source_id: &str) -> Result<Vec<HealthTarget>, IptvError> {
     let mut stmt = conn
-        .prepare("SELECT id, stream_url, user_agent, referer FROM iptv_channels WHERE source_id = ?1")
+        // The grid's own order (`build_sort`'s "az"), so what is on screen
+        // when Free TV opens is what gets its verdict first.
+        .prepare(
+            "SELECT id, stream_url, user_agent, referer FROM iptv_channels
+             WHERE source_id = ?1 ORDER BY name COLLATE NOCASE ASC, id ASC",
+        )
         .map_err(|e| IptvError::Database(e.to_string()))?;
     let rows = stmt
         .query_map(params![source_id], |row| {

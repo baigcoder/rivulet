@@ -407,7 +407,11 @@ assert.match(m3u, /const IMPORT_REVISION: &str = "r4"/, 'and installs holding th
 const libRs = rust('lib.rs')
 assert.equal(libRs.match(/iptv::health::spawn_sweep\(/g)?.length, 2, 'a sweep follows the boot import, or runs at boot when there is none')
 assert.match(rust('iptv/commands.rs'), /spawn_sweep\(app\.clone\(\), true\)/, 'and follows Refresh')
-assert.match(freePage, /listen<\{ done: boolean \}>\('live_health'/, 'the page re-reads the list when a sweep lands')
+assert.match(freePage, /listen<LiveHealthProgress>\('live_health'/, 'the page re-reads the list when a sweep lands')
+assert.match(freePage, /liveCheckHealth\(\)/, 'opening Free TV checks its channels')
+assert.match(freePage, /markOffline\(id\)/, 'and a dead channel already on screen is marked as each batch lands')
+assert.match(healthRs, /ORDER BY|record\(&batch/, 'verdicts are written and sent in batches, not at the end')
+assert.match(rust('iptv/db.rs'), /WHERE source_id = \?1 ORDER BY name COLLATE NOCASE ASC, id ASC",/, 'in the order the grid shows them')
 assert.match(freePage, /liveOfflineCount\(/, 'and says how many channels it is hiding')
 
 // --- A guide, not a logo wall ------------------------------------------------
@@ -749,12 +753,12 @@ for (const gone of ['LiveEpgDrawer', 'LiveEpgSheet', 'LiveTvSearch', 'LiveFilter
   assert.match(read('pages/live-tv/free.vue'), /featuredFromFree\(/)
   assert.match(read('components/premium-tv/PremiumBrowser.vue'), /featuredFromPremium\(/)
 
-  // The TV page: what is on, from both services, under the same banner.
+  // The TV page is the two services and nothing else: channels live on each
+  // service's own page, where they can be filtered and checked.
   const hub = read('pages/live-tv/index.vue')
-  assert.match(hub, /<live-tv-live-featured-banner/, 'the TV page has the banner')
-  assert.match(hub, /useFeaturedChannel\(/, 'and it follows the rows')
-  assert.match(hub, /categoryPreviews/, 'rows come from each service\'s top categories')
-  assert.doesNotMatch(hub, /recentChannels|Recently watched/, 'no recently watched row on the TV page')
+  assert.match(hub, /live-tv\/free/)
+  assert.match(hub, /live-tv\/premium/)
+  assert.doesNotMatch(hub, /scroll-row|featured-banner|categoryPreviews|recentChannels/, 'no channel rows on the TV page')
 }
 
 // Reminders ring a minute ahead, and are forgotten once well past.
