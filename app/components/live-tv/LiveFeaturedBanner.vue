@@ -12,20 +12,13 @@
  * and a still tint rather than a blurred backdrop: this spans the page and
  * redraws on every focus move (check:perf).
  */
+import type { FeaturedProgramme } from '~/utils/featuredChannel'
 import { mdiPlay, mdiStar, mdiStarOutline } from '@mdi/js'
 import { useNow } from '@vueuse/core'
 import { computed, ref, watch } from 'vue'
 import { channelTileStyle, isPlaceholderLogoUrl, isTinyLogo } from '~/utils/channelLogo'
 import { minutesLeft } from '~/utils/epgNow'
 import { proxyLogo } from '~/utils/premiumTv'
-
-/** Times in epoch milliseconds. */
-export interface FeaturedProgramme {
-  title: string
-  description?: string | null
-  start: number
-  stop?: number | null
-}
 
 const props = defineProps<{
   id: string

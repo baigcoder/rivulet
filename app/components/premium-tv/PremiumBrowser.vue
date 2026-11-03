@@ -21,7 +21,7 @@ import type { PremiumView } from '~/stores/premiumTv'
 import type { IPTVChannel, PremiumSeriesItem, PremiumVodItem } from '~/types/premium'
 import { mdiAccountCircle, mdiClose, mdiDeleteSweepOutline, mdiTelevisionOff, mdiViewGridOutline, mdiViewList } from '@mdi/js'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { parseChannelName } from '~/utils/channelName'
+import { featuredFromPremium } from '~/utils/featuredChannel'
 import { vodDisplayName } from '~/utils/providerTitle'
 
 /**
@@ -209,25 +209,7 @@ const featured = computed(() => {
     ?? resumeStrip.value?.channels.find(c => c.id === id)
     ?? resumeStrip.value?.channels[0]
     ?? premium.channels[0]
-  if (!ch)
-    return null
-  const { now, next } = premium.nowNext(ch.id)
-  // Premium's guide is in seconds; the banner takes milliseconds.
-  const ms = (p: { title: string, description?: string | null, start: number, stop?: number | null }) => ({
-    title: p.title,
-    description: p.description,
-    start: p.start * 1000,
-    stop: p.stop ? p.stop * 1000 : null,
-  })
-  const parsed = parseChannelName(ch.name || '', $t('Channel'))
-  return {
-    channel: ch,
-    name: parsed.name,
-    quality: ch.quality || parsed.quality,
-    subtitle: ch.country || (ch.categoryName ? categoryLabel(ch.categoryName) : ''),
-    now: now ? ms(now) : null,
-    next: next ? ms(next) : null,
-  }
+  return ch ? featuredFromPremium(ch, premium.nowNext(ch.id)) : null
 })
 
 function primeMovie(item: PremiumVodItem): void {
@@ -516,7 +498,7 @@ async function disconnect(): Promise<void> {
             :id="featured.channel.id"
             :name="featured.name"
             :logo-url="featured.channel.logoUrl"
-            :tint="featured.channel.categoryName || featured.channel.id"
+            :tint="featured.tint"
             :quality="featured.quality"
             :subtitle="featured.subtitle"
             :now="featured.now"

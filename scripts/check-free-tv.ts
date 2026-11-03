@@ -9,6 +9,7 @@ import assert from 'node:assert'
 import { existsSync, readFileSync } from 'node:fs'
 import { appendDigit, channelDigitKey, channelIndexFor } from '../app/utils/channelDigits'
 import { currentProgram, minutesLeft } from '../app/utils/epgNow'
+import { featuredFromFree, featuredFromPremium } from '../app/utils/featuredChannel'
 import { MAX_AUTO_SKIPS, nextPlayable, pool, probeVerdict } from '../app/utils/livehealth'
 import { liveTvBackPath, liveTvFrom, readLivePlay, saveLivePlay } from '../app/utils/liveNav'
 import { nextLiveAction } from '../app/utils/liveRecovery'
@@ -298,7 +299,7 @@ assert.doesNotMatch(freePage, /max-width="320"/, 'the category sheet is not a 32
 assert.match(freePage, /:fullscreen="!smAndUp"/, 'phones get a full-width category sheet')
 
 const hubPage = readFileSync(new URL('../app/pages/live-tv/index.vue', import.meta.url), 'utf8')
-assert.match(hubPage, /list-none/, 'hub tags are chips, not a bulleted list')
+assert.doesNotMatch(hubPage, /<ul(?![^>]*list-none)/, 'any list on the hub is chips, not a bulleted list')
 assert.doesNotMatch(hubPage, /(?<![a-z]:)text-(?:display|headline-large)/, 'hub titles fit a phone width without clipping')
 assert.match(hubPage, /class="truncate">\{\{ tile\.title \}\}/, 'and a long translation ellipsizes rather than overflowing the tile')
 
@@ -725,6 +726,34 @@ for (const gone of ['LiveEpgDrawer', 'LiveEpgSheet', 'LiveTvSearch', 'LiveFilter
     assert.match(src, /<live-tv-live-featured-banner/, `${page} shows the banner`)
     assert.match(src, /useFeaturedChannel\(/, `${page} follows focus into it`)
   }
+}
+
+// One mapping onto the banner per service, shared by every page that has one:
+// Free's guide is ISO strings, Premium's epoch seconds, the banner's ms.
+{
+  const at = (h: number) => `2026-11-03T${String(h).padStart(2, '0')}:00:00Z`
+  const ch = { id: 'a', name: 'News 24 HD', categoryName: 'News', country: 'Chile' } as never
+  const free = featuredFromFree(ch, [
+    { title: 'Morning', start: at(8), stop: at(9) },
+    { title: 'Noon', start: at(9), stop: at(10) },
+  ], Date.parse(at(8)) + 60_000)
+  assert.equal(free.now?.title, 'Morning')
+  assert.equal(free.next?.title, 'Noon', 'next is the programme after the one on now')
+  assert.equal(free.now?.start, Date.parse(at(8)))
+  assert.equal(free.quality, 'HD')
+  assert.equal(free.subtitle, 'Chile')
+  const premium = featuredFromPremium({ id: 'p', name: 'Film 4K' } as never, { now: { channelId: 'p', title: 'Film', start: 100, stop: 200 }, next: null })
+  assert.equal(premium.now?.start, 100_000, 'Premium seconds become milliseconds')
+  const read = (f: string) => readFileSync(new URL(`../app/${f}`, import.meta.url), 'utf8')
+  assert.match(read('pages/live-tv/free.vue'), /featuredFromFree\(/)
+  assert.match(read('components/premium-tv/PremiumBrowser.vue'), /featuredFromPremium\(/)
+
+  // The TV page: what is on, from both services, under the same banner.
+  const hub = read('pages/live-tv/index.vue')
+  assert.match(hub, /<live-tv-live-featured-banner/, 'the TV page has the banner')
+  assert.match(hub, /useFeaturedChannel\(/, 'and it follows the rows')
+  assert.match(hub, /categoryPreviews/, 'rows come from each service\'s top categories')
+  assert.doesNotMatch(hub, /recentChannels|Recently watched/, 'no recently watched row on the TV page')
 }
 
 // eslint-disable-next-line no-console
