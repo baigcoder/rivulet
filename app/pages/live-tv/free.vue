@@ -360,7 +360,7 @@ watch(liveCategory, name => {
         />
       </aside>
 
-      <section class="flex min-h-0 flex-1 flex-col gap-2">
+      <section class="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
         <!-- Importing: an empty grid here means "not yet", not "none". -->
         <div v-if="liveTv.m3uImporting && channels.length === 0" class="grid flex-1 place-items-center text-center">
           <div class="flex flex-col items-center gap-3">
