@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import {
   mdiCheck,
-  mdiClockOutline,
   mdiInfinity,
   mdiLogout,
   mdiShieldCheckOutline,
@@ -14,7 +13,6 @@ const settings = useSettingsStore()
 const premium = usePremiumTvStore()
 
 const DAY_MS = 24 * 60 * 60 * 1000
-const TRIAL_DAYS = 30
 /** "No expiry" as a date, because the gate's contract is a timestamp. */
 const UNLIMITED_DAYS = 100 * 365
 const statusLoaded = ref(false)
@@ -89,10 +87,6 @@ async function activate(tier: 'free' | 'premium', expiresAt: number): Promise<vo
   finally {
     activationBusy.value = false
   }
-}
-
-function activateTrial() {
-  return activate('premium', Date.now() + TRIAL_DAYS * DAY_MS)
 }
 
 function activateUnlimited() {
@@ -189,14 +183,10 @@ function formatExpiry(ms: number): string {
         <p v-if="unlimited" class="flex items-center gap-1.5 text-body-medium opacity-80">
           <v-icon :icon="mdiInfinity" size="18" /> {{ $t('Unlimited — no expiry') }}
         </p>
-        <template v-else-if="settings.subscriptionExpiresAt">
-          <p class="text-body-medium opacity-80">
-            {{ $t('{days} days left · expires {date}', { days: daysLeft, date: formatExpiry(settings.subscriptionExpiresAt) }) }}
-          </p>
-          <div class="h-1.5 w-full max-w-sm overflow-hidden rounded-full bg-white/10">
-            <div class="h-full rounded-full bg-success" :style="{ width: `${Math.min(100, (daysLeft / TRIAL_DAYS) * 100)}%` }" />
-          </div>
-        </template>
+        <!-- Only an older, time-limited activation still has a date. -->
+        <p v-else-if="settings.subscriptionExpiresAt" class="text-body-medium opacity-80">
+          {{ $t('{days} days left · expires {date}', { days: daysLeft, date: formatExpiry(settings.subscriptionExpiresAt) }) }}
+        </p>
         <p v-else class="text-body-small opacity-70">
           {{ $t('No expiry date set.') }}
         </p>
@@ -212,20 +202,9 @@ function formatExpiry(ms: number): string {
         </v-btn>
       </v-card>
 
-      <!-- Two choices, each saying what it is. The first button used to read
-           "Login via IPTV" and started a thirty-day trial — nothing was logged
-           into, and the IPTV login is the section below. -->
-      <div v-else class="grid gap-3 sm:grid-cols-2">
-        <button
-          type="button"
-          class="flex flex-col items-start gap-2 rounded-2xl border border-white/10 bg-surface-container/60 p-5 text-start outline-none transition-colors hover:border-primary/60 focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
-          :disabled="activationBusy"
-          @click="activateTrial"
-        >
-          <v-icon :icon="mdiClockOutline" size="28" class="text-primary" />
-          <span class="text-title-medium font-bold">{{ $t('Start a 30-day trial') }}</span>
-          <span class="text-body-medium opacity-70">{{ $t('Everything in Premium TV for thirty days. Turn it off any time.') }}</span>
-        </button>
+      <!-- Premium TV is for a paid IPTV account: there is no time-limited
+           free period, only activation for the provider the user pays for. -->
+      <div v-else class="grid gap-3">
         <button
           type="button"
           class="flex flex-col items-start gap-2 rounded-2xl border border-white/10 bg-surface-container/60 p-5 text-start outline-none transition-colors hover:border-primary/60 focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"

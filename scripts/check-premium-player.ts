@@ -580,6 +580,11 @@ check('the VOD grid draws the section it was told to draw', () => {
   )
 })
 
+check('Premium TV offers no free trial', () => {
+  const page = read(`${ROOT}app/pages/settings/premium-tv.vue`)
+  assert.ok(!/trial/i.test(page), 'Premium TV is for paid accounts only — no trial button, wording or timer')
+})
+
 // ── Report ───────────────────────────────────────────────────────
 
 const passed = results.filter(r => r.passed).length
