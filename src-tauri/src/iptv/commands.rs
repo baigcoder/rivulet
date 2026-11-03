@@ -462,9 +462,21 @@ pub async fn live_set_guide_urls(
 
 #[tauri::command]
 pub async fn live_import_guides(state: State<'_, IptvState>) -> Result<super::guides::GuideReport, String> {
-    super::guides::import_guides(&state, sources::FREE_TV_SOURCE_ID, 0)
+    super::guides::import_guides(&state, sources::FREE_TV_SOURCE_ID)
         .await
         .map_err(map_err)
+}
+
+#[tauri::command]
+pub async fn live_guide_offset(state: State<'_, IptvState>) -> Result<i32, String> {
+    let conn = state.db.lock().map_err(map_err)?;
+    Ok(super::guides::guide_offset(&conn))
+}
+
+#[tauri::command]
+pub async fn live_set_guide_offset(state: State<'_, IptvState>, minutes: i32) -> Result<i32, String> {
+    let conn = state.db.lock().map_err(map_err)?;
+    super::guides::set_guide_offset(&conn, minutes).map_err(map_err)
 }
 
 // ── Imports (Free TV only) ─────────────────────────────────────────

@@ -8,8 +8,8 @@
  * link on the index page keep working.
  */
 import type { GuideReport } from '~/utils/iptv'
-import { mdiCheck, mdiChevronLeft, mdiClose, mdiPlus, mdiRefresh, mdiTelevision } from '@mdi/js'
-import { guideUrls, importGuides, liveRemoveSource, liveSetActive, setGuideUrls } from '~/utils/iptv'
+import { mdiCheck, mdiChevronLeft, mdiClose, mdiMinus, mdiPlus, mdiRefresh, mdiTelevision } from '@mdi/js'
+import { guideOffset, guideUrls, importGuides, liveRemoveSource, liveSetActive, setGuideOffset, setGuideUrls } from '~/utils/iptv'
 import { mapIptvError } from '~/utils/iptvErrors'
 
 definePageMeta({ layout: 'default' })
@@ -71,9 +71,35 @@ const guideBusy = ref(false)
 const guideReport = ref<GuideReport | null>(null)
 const guideError = ref('')
 
+const offset = ref(0)
+const OFFSET_STEP = 30
+
 onMounted(async () => {
   guides.value = await guideUrls().catch(() => [])
+  offset.value = await guideOffset().catch(() => 0)
 })
+
+const offsetText = computed(() => {
+  if (!offset.value)
+    return $t('No correction')
+  const sign = offset.value > 0 ? '+' : '−'
+  const h = Math.floor(Math.abs(offset.value) / 60)
+  const m = Math.abs(offset.value) % 60
+  return `${sign}${h}:${String(m).padStart(2, '0')}`
+})
+
+/** Buttons, not a slider, so a remote can set it; the guide re-reads at once. */
+async function shiftGuide(by: number) {
+  guideError.value = ''
+  try {
+    offset.value = await setGuideOffset(offset.value + by)
+    if (guides.value.length)
+      await updateGuide()
+  }
+  catch (e) {
+    guideError.value = String(e)
+  }
+}
 
 async function saveGuides(next: string[]) {
   guideError.value = ''
@@ -284,6 +310,28 @@ function statusLabel(status: string): string {
             <span v-if="guideReport" class="text-body-small opacity-80" role="status">
               {{ $t('{programs} programmes for {channels} channels', { programs: guideReport.programs.toLocaleString(), channels: guideReport.channels.toLocaleString() }) }}
             </span>
+          </div>
+          <div class="mt-4 flex flex-wrap items-center gap-3">
+            <span class="text-body-medium">{{ $t('Guide time correction') }}</span>
+            <div class="flex items-center gap-1" role="group" :aria-label="$t('Guide time correction')">
+              <v-btn
+                :icon="mdiMinus"
+                variant="tonal"
+                size="small"
+                :disabled="offset <= -720 || guideBusy"
+                :aria-label="$t('Earlier by 30 minutes')"
+                @click="shiftGuide(-OFFSET_STEP)"
+              />
+              <span class="min-w-24 text-center font-mono tabular-nums" aria-live="polite">{{ offsetText }}</span>
+              <v-btn
+                :icon="mdiPlus"
+                variant="tonal"
+                size="small"
+                :disabled="offset >= 720 || guideBusy"
+                :aria-label="$t('Later by 30 minutes')"
+                @click="shiftGuide(OFFSET_STEP)"
+              />
+            </div>
           </div>
           <p v-for="url in guideReport?.failed ?? []" :key="url" class="mt-2 text-body-small text-error">
             {{ $t('Could not read {url}', { url }) }}

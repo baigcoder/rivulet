@@ -345,6 +345,16 @@ export function importGuides(): Promise<GuideReport> {
   return invoke<GuideReport>('live_import_guides')
 }
 
+/** Minutes added to every guide time, for a guide that runs early or late. */
+export function guideOffset(): Promise<number> {
+  return invoke<number>('live_guide_offset')
+}
+
+/** Resolves to the value stored, clamped to ±720. */
+export function setGuideOffset(minutes: number): Promise<number> {
+  return invoke<number>('live_set_guide_offset', { minutes })
+}
+
 // ── Free TV refresh ────────────────────────────────────────────────
 
 export function liveRefreshFreeTv(): Promise<LiveTvSource> {

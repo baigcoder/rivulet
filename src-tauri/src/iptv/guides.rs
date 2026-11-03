@@ -229,6 +229,22 @@ pub fn programs_for(
     Ok(out)
 }
 
+const OFFSET_KEY: &str = "guide_offset_minutes";
+/// Twelve hours either way covers every guide stamped in the wrong zone.
+const MAX_OFFSET_MINUTES: i32 = 12 * 60;
+
+/// Minutes added to every guide time: for a guide that runs early or late
+/// because its publisher stamped local time as UTC.
+pub fn guide_offset(conn: &Connection) -> i32 {
+    meta(conn, OFFSET_KEY).and_then(|v| v.parse().ok()).unwrap_or(0)
+}
+
+pub fn set_guide_offset(conn: &Connection, minutes: i32) -> Result<i32, IptvError> {
+    let clamped = minutes.clamp(-MAX_OFFSET_MINUTES, MAX_OFFSET_MINUTES);
+    set_meta(conn, OFFSET_KEY, &clamped.to_string())?;
+    Ok(clamped)
+}
+
 pub fn imported_at(conn: &Connection) -> Option<i64> {
     meta(conn, IMPORTED_KEY).and_then(|v| v.parse().ok())
 }
@@ -250,10 +266,10 @@ async fn fetch(url: &str) -> Result<Vec<u8>, IptvError> {
 
 /// Fetch every guide address, match it to the free channels, and replace the
 /// stored guide. One address failing is reported, not fatal to the others.
-pub async fn import_guides(state: &IptvState, source_id: &str, offset_minutes: i32) -> Result<GuideReport, IptvError> {
-    let urls = {
+pub async fn import_guides(state: &IptvState, source_id: &str) -> Result<GuideReport, IptvError> {
+    let (urls, offset_minutes) = {
         let conn = state.db.lock().map_err(db_err)?;
-        guide_urls(&conn)?
+        (guide_urls(&conn)?, guide_offset(&conn))
     };
     let mut report = GuideReport::default();
     let mut programs = Vec::new();
@@ -367,6 +383,19 @@ mod tests {
         std::io::Write::write_all(&mut gz, &vec![b'a'; MAX_GUIDE_BYTES + 1]).unwrap();
         assert!(decode_guide(&gz.finish().unwrap()).is_err());
         assert_eq!(decode_guide(b"<tv/>").unwrap(), "<tv/>");
+    }
+
+    #[test]
+    fn offset_shifts_start_and_stop() {
+        let conn = conn_with_channel("x.ua");
+        let xml = guide("x.ua", "20240101120000 +0000", "20240101130000 +0000");
+        store_programs(&conn, SRC, &xmltv::parse_xmltv(&xml).unwrap(), NOON, 60).unwrap();
+        let got = programs_for(&conn, SRC, &["ch1".into()], NOON).unwrap();
+        assert!(got[0].start.starts_with("2024-01-01T13:00:00"), "{}", got[0].start);
+        assert!(got[0].stop.as_deref().unwrap().starts_with("2024-01-01T14:00:00"));
+        assert_eq!(set_guide_offset(&conn, 5000).unwrap(), 720);
+        assert_eq!(guide_offset(&conn), 720);
+        assert_eq!(set_guide_offset(&conn, -90).unwrap(), -90);
     }
 
     #[test]

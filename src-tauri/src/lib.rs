@@ -1344,6 +1344,8 @@ pub fn run() {
             iptv::commands::live_guide_urls,
             iptv::commands::live_set_guide_urls,
             iptv::commands::live_import_guides,
+            iptv::commands::live_guide_offset,
+            iptv::commands::live_set_guide_offset,
             iptv::commands::live_cancel_import,
             iptv::commands::live_refresh_free_tv,
             iptv::commands::get_iptv_countries,
@@ -1652,7 +1654,7 @@ pub fn run() {
                         stale && iptv::guides::guide_urls(&conn).is_ok_and(|u| !u.is_empty())
                     });
                     if due {
-                        match iptv::guides::import_guides(&state, iptv::sources::FREE_TV_SOURCE_ID, 0).await {
+                        match iptv::guides::import_guides(&state, iptv::sources::FREE_TV_SOURCE_ID).await {
                             // A page already open cached the old guide; tell it to re-read.
                             Ok(_) => {
                                 use tauri::Emitter;
