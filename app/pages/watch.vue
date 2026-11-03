@@ -6,12 +6,13 @@ import {
   mdiAlertCircleOutline,
   mdiArrowLeft,
   mdiDownload,
+  mdiHarddisk,
   mdiPlay,
   mdiPowerPlugOutline,
   mdiReload,
 } from '@mdi/js'
 import { useTitleImages } from '~/utils/titleImages'
-import { findReleasesFast, NoServerStream, releaseKey, releaseLangs, releaseQuality, serverCandidates } from '~/utils/torrents'
+import { findReleasesFast, NoDiskSpace, NoServerStream, releaseKey, releaseLangs, releaseQuality, serverCandidates } from '~/utils/torrents'
 
 // The player owns the whole window: no app bar, no drawer, no page scroll.
 definePageMeta({ layout: false })
@@ -68,6 +69,8 @@ const title = computed(() => media.value ?? known.value)
 
 const step = ref($t('Loading title…'))
 const errorMsg = ref('')
+/** The download drive had no room — the fix is under Storage, not Sources. */
+const noDiskSpace = ref(false)
 const torrent = ref<Release | null>(null)
 const torrentId = ref<number | null>(null)
 const src = ref('')
@@ -229,6 +232,7 @@ async function start() {
   releasePriming()
   errorMsg.value = ''
   noServerStream.value = false
+  noDiskSpace.value = false
   cloudDown.value = false
   src.value = ''
   resolving.value = true
@@ -353,6 +357,7 @@ async function start() {
     if (mine !== generation)
       return
     noServerStream.value = e instanceof NoServerStream
+    noDiskSpace.value = e instanceof NoDiskSpace
     errorMsg.value = e instanceof Error ? e.message : String(e)
     // Keep the loading spinner visible for at least 400ms so the user sees
     // that something was attempted, rather than a flash of spinner → error
@@ -532,6 +537,11 @@ function goToSources() {
   navigateTo(localePath('/settings/sources'))
 }
 
+function goToStorage() {
+  leave()
+  navigateTo(localePath('/settings/storage'))
+}
+
 /** Host of a source base URL — "https://addon.example/manifest…" → "addon.example". */
 function hostOf(via: string) {
   try {
@@ -655,6 +665,30 @@ const progressPct = computed(() => {
  * and there was no swarm: a full disk had stopped it before the first piece.
  */
 const fault = computed(() => engineFault(stats.value))
+
+// A full drive mid-play is the same problem as a full drive at Play, and gets
+// the same answer: the drive picker, not the player's Retry, which cannot help.
+watch(() => diskFull(stats.value), full => {
+  if (!full)
+    return
+  errorMsg.value = fault.value
+  noDiskSpace.value = true
+  src.value = ''
+})
+
+/**
+ * Play from the full-disk overlay. The torrent that hit the wall is dropped
+ * first when it holds nothing — otherwise the same release, picked again, is
+ * that same stopped torrent on the old drive. One with bytes in it is kept:
+ * that is the user's download, and the Downloads page is where they decide.
+ */
+async function retryOnNewDrive() {
+  const failed = downloads.torrents.find(t => t.id === torrentId.value)
+  if (failed && diskFull(failed.stats) && !failed.stats?.progress_bytes)
+    await torrentAction(failed.id, 'delete').catch(() => {})
+  torrentId.value = null
+  await start()
+}
 
 const speed = computed(() => stats.value?.live?.download_speed.human_readable ?? '—')
 const peers = computed(() => stats.value?.live?.snapshot.peer_stats.live ?? 0)
@@ -806,8 +840,11 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
            The `!resolving` guard keeps it hidden while sources are still being
            searched — the player's own loading overlay is what the user should
            see during that window. -->
+      <!-- `model-value` is what opens a v-overlay; `v-if` alone mounts it closed,
+           and every failure here was a silent black player. -->
       <v-overlay
         v-if="failure && !src && !resolving"
+        :model-value="true"
         class="place-items-center"
         persistent
       >
@@ -821,7 +858,7 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
         <div class="relative flex max-w-xl flex-col items-center gap-3 px-6 text-center">
           <v-icon :icon="mdiAlertCircleOutline" color="error" size="40" />
           <div class="text-title-large">
-            {{ cloudDown ? $t('Your cloud service is unavailable') : noServerStream ? $t('Your sources only provide downloads') : $t('Nothing to play') }}
+            {{ cloudDown ? $t('Your cloud service is unavailable') : noServerStream ? $t('Your sources only provide downloads') : noDiskSpace ? $t('Not enough free space') : $t('Nothing to play') }}
           </div>
           <p class="text-body-medium opacity-70">
             {{ failure }}
@@ -846,6 +883,22 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
             <v-btn variant="text" :prepend-icon="mdiArrowLeft" @click="leave">
               {{ $t('Back') }}
             </v-btn>
+          </div>
+          <!-- The drive is picked here, not on a settings page: the film they
+               pressed Play on is one button away once it has room. -->
+          <div v-else-if="noDiskSpace" class="mt-2 flex w-full flex-col items-stretch gap-3">
+            <drive-picker />
+            <div class="flex flex-wrap justify-center gap-2">
+              <v-btn color="primary" variant="flat" :prepend-icon="mdiPlay" @click="retryOnNewDrive">
+                {{ $t('Play') }}
+              </v-btn>
+              <v-btn variant="tonal" :prepend-icon="mdiHarddisk" @click="goToStorage">
+                {{ $t('Storage settings') }}
+              </v-btn>
+              <v-btn variant="text" :prepend-icon="mdiArrowLeft" @click="leave">
+                {{ $t('Back') }}
+              </v-btn>
+            </div>
           </div>
           <div v-else-if="cloudDown" class="mt-2 flex flex-wrap justify-center gap-2">
             <v-btn color="primary" variant="flat" :prepend-icon="mdiDownload" @click="forceTorrent = true; start()">
