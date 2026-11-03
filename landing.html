@@ -148,175 +148,141 @@
     .band:hover .head, .band:focus-visible .head { transform: translate(-50%, -50%) scale(1.15); }
     .band-wrap { overflow: hidden; padding-inline: var(--gutter); padding-bottom: 8px; }
 
-    /* ── How it plays: one film card, four fields ── */
+    /* ── Shared: a whole screenshot in a frame one tone up. Never cropped:
+       every picture keeps its own aspect ratio. ── */
     .chapter { margin-top: var(--gap); }
-    .fields { display: grid; grid-template-columns: repeat(4, 1fr); }
-    .field { min-height: 84svh; padding: clamp(24px, 2.4vw, 40px); display: grid; grid-template-rows: auto 1fr auto; gap: 2rem; }
-    .field:nth-child(1) { background: var(--field-1); }
-    .field:nth-child(2) { background: var(--field-2); }
-    .field:nth-child(3) { background: var(--field-3); }
-    .field:nth-child(4) { background: var(--field-4); }
-    .field h2 { align-self: start; }
-    .field .clause { font-size: var(--step-lead); line-height: 1.25; font-weight: 500; max-width: 16ch; }
-    .field .clause span { display: block; color: var(--muted); font-size: var(--step-body); font-weight: 400; margin-top: .6rem; max-width: 26ch; line-height: 1.45; }
-    .card-slot { align-self: center; display: grid; place-items: center; }
-    .card {
-      width: min(260px, 100%); background: var(--surface); padding: 16px; border-radius: 14px;
-      font-size: 14px; line-height: 1.35; transition: transform .15s var(--ease);
-    }
-    .field:hover .card { transform: translateY(-6px); }
-    .card .poster { aspect-ratio: 16 / 9; background: #000 url(app-home.jpg) 88% 22% / 260% no-repeat; border-radius: 8px; }
-    .card .t { margin-top: 12px; font-weight: 700; font-size: 16px; }
-    .card .m { color: var(--muted); }
-    .card .bar { margin-top: 12px; height: 6px; border-radius: var(--round); background: var(--coming); position: relative; overflow: hidden; }
-    .card .bar i, .card .bar b { position: absolute; inset: 0 auto 0 0; border-radius: var(--round); }
-    .card .bar b { background: var(--landed); }
-    .card .bar i { background: var(--accent); }
-    .card .row { display: flex; justify-content: space-between; gap: 8px; margin-top: 8px; color: var(--muted); }
-    .card .play { margin-top: 12px; display: inline-flex; align-items: center; gap: 6px; background: #fff; color: #000; font-weight: 700; padding: 7px 14px; border-radius: 8px; }
-    .card .play svg { width: 14px; height: 14px; }
-    .card .tag { display: inline-block; margin-top: 10px; padding: 3px 8px; border-radius: 6px; font-weight: 700; }
-    .tag.cloud { background: rgba(111, 227, 255, .16); color: var(--accent); }
-    .tag.done { background: rgba(110, 231, 183, .16); color: #6ee7b7; }
-    .also { display: grid; grid-template-columns: repeat(3, 1fr); gap: clamp(24px, 3vw, 48px); padding: clamp(40px, 4vw, 64px) var(--gutter) 0; }
-    .also h3 { font-size: var(--step-lead); letter-spacing: -0.02em; line-height: 1.15; margin-bottom: .6rem; }
-    @media (max-width: 1100px) {
-      .fields { grid-template-columns: 1fr 1fr; }
-      .field { min-height: 64svh; }
-      .also { grid-template-columns: 1fr; }
-    }
-    @media (max-width: 600px) {
-      .fields { grid-template-columns: 1fr; }
-      .field { min-height: 0; grid-template-rows: auto auto auto; }
-      .field h2 { order: -2; }
-      .field .clause { order: -1; }
-    }
+    .band-field { padding-block: clamp(72px, 8vw, 136px); }
+    .f1 { background: var(--field-1); }
+    .f2 { background: var(--field-2); }
+    .f3 { background: var(--field-3); }
+    .f4 { background: var(--field-4); }
+    .shot { margin: 0; background: var(--surface); padding: clamp(6px, .7vw, 10px); border-radius: 18px; }
+    .shot img { width: 100%; border-radius: 11px; }
+    .shot figcaption { padding: .9rem .4rem .3rem; font-size: var(--step-small); color: var(--muted); }
+    .shot figcaption strong { color: var(--ink); font-weight: 500; }
+    .intro { display: grid; grid-template-columns: 5fr 7fr; gap: 1.5rem clamp(24px, 4vw, 64px); align-items: end; margin-bottom: clamp(40px, 4vw, 64px); }
+    .intro .lead { max-width: 46ch; }
+    h3 { font-size: var(--step-lead); letter-spacing: -0.02em; line-height: 1.15; }
+    @media (max-width: 900px) { .intro { grid-template-columns: 1fr; } }
 
-    /* ── The app: one screen on the bar shape, chosen from a list ── */
-    .stage-section { display: grid; grid-template-columns: 4fr 8fr; gap: clamp(24px, 4vw, 64px); align-items: center; }
-    .index { list-style: none; display: grid; gap: .25rem; }
-    .index h2 { color: var(--muted); font-size: var(--step-head); margin-bottom: 1rem; }
-    .index button {
-      background: none; border: 0; cursor: pointer; text-align: left; padding: .1rem 0;
-      font-size: var(--step-head); font-weight: 700; letter-spacing: -0.04em; line-height: 1.1;
-      color: var(--muted); text-transform: lowercase; transition: color .2s;
+    /* ── Inside: every screen, whole, picked from a list ── */
+    .inside { display: grid; grid-template-columns: 5fr 7fr; gap: clamp(24px, 4vw, 64px); align-items: start; }
+    .tabs { list-style: none; display: grid; gap: .2rem; }
+    .tabs button {
+      width: 100%; text-align: left; background: none; border: 0; cursor: pointer; border-radius: 14px;
+      padding: .8rem 1rem; transition: background-color .2s var(--ease), transform .2s var(--ease);
     }
-    .index button[aria-pressed="true"], .index button:hover, .index button:focus-visible { color: var(--ink); }
-    .index button[aria-pressed="true"]::after { content: ''; display: inline-block; width: .9em; height: .22em; margin-inline-start: .3em; border-radius: var(--round); background: var(--accent); vertical-align: middle; }
-    .stage { position: relative; }
-    .stage .disc { position: absolute; inset: 18% 0 0; border-radius: var(--round); background: var(--field-1); transition: background-color .3s; }
-    .stage figure { position: relative; margin: 0 6%; }
-    .stage figure img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; object-position: top left; transition: opacity .3s; }
-    .stage figcaption { position: relative; margin: 1.5rem 6% 1.75rem; display: grid; grid-template-columns: auto 1fr; gap: 1.5rem; align-items: baseline; }
-    .stage figcaption strong { font-size: var(--step-lead); letter-spacing: -0.02em; }
+    .tabs button strong { display: block; font-size: var(--step-lead); font-weight: 700; letter-spacing: -0.02em; color: var(--muted); transition: color .2s; }
+    .tabs button span { display: none; margin-top: .3rem; color: var(--ink); }
+    .tabs button:hover, .tabs button:focus-visible { background: var(--surface); }
+    .tabs button:hover strong, .tabs button:focus-visible strong { color: var(--ink); }
+    .tabs button[aria-pressed="true"] { background: var(--raised); }
+    .tabs button[aria-pressed="true"] strong { color: var(--accent); }
+    .tabs button[aria-pressed="true"] span { display: block; }
+    .viewer { position: sticky; top: 88px; }
+    .viewer img { aspect-ratio: 16 / 10; object-fit: contain; background: #0b0d10; transition: opacity .25s var(--ease), transform .4s var(--ease); }
+    .viewer img.swap { opacity: 0; transform: scale(.985); }
     @media (max-width: 900px) {
-      .stage-section { grid-template-columns: 1fr; min-height: 0; }
-      .stage-section .index { order: 2; }
-      .stage figcaption { grid-template-columns: 1fr; gap: .5rem; }
+      .inside { grid-template-columns: 1fr; }
+      .viewer { position: static; order: -1; }
+      .tabs { grid-template-columns: 1fr 1fr; }
+      .tabs button strong { font-size: var(--step-body); }
+      .tabs button span { display: none !important; }
     }
 
-    /* ── The player: close-ups on a board ── */
-    .board {
-      display: grid; grid-template-columns: repeat(12, 1fr); grid-auto-rows: clamp(84px, 7.2vw, 112px); gap: 8px; padding-inline: var(--gutter);
-      grid-template-areas:
-        "h h h h h h c c c c c c"
-        "h h h h h h c c c c c c"
-        "p p p p p p s s s m m m"
-        "p p p p p p s s s m m m"
-        "p p p p p p s s s m m m"
-        "p p p p p p s s s m m m"
-        "q q q d d d e e e e e e"
-        "q q q d d d e e e e e e";
-    }
-    .tile { position: relative; overflow: hidden; padding: 20px; display: flex; flex-direction: column; justify-content: flex-end; }
-    .tile h3 { font-size: var(--step-body); font-weight: 500; letter-spacing: -0.01em; line-height: 1.2; text-transform: none; position: relative; }
-    .tile p { font-size: var(--step-small); color: var(--muted); position: relative; max-width: 34ch; }
-    .tile [data-ui] { position: absolute; }
-    .t-h { grid-area: h; background: var(--accent); color: var(--accent-ink); justify-content: space-between; }
-    .t-h h2 { font-size: var(--step-head); }
-    .t-h p { color: var(--accent-ink); font-size: var(--step-body); max-width: 40ch; }
-    .t-c { grid-area: c; background: var(--field-2); }
-    .t-p { grid-area: p; background: var(--field-1); }
-    .t-s { grid-area: s; background: var(--field-4); }
-    .t-m { grid-area: m; background: var(--field-3); }
-    .t-q { grid-area: q; background: var(--raised); }
-    .t-d { grid-area: d; background: var(--field-2); }
-    .t-e { grid-area: e; background: var(--landed); color: var(--landed-ink); }
-    .t-e p { color: var(--landed-ink); }
-    /* Interface parts, built at true size in em and enlarged. */
-    .ui-chips { font-size: 34px; top: 22px; left: 20px; display: flex; gap: .3em; flex-wrap: nowrap; }
-    .ui-chips span { padding: .12em .45em; border-radius: .25em; background: rgba(255, 201, 120, .16); color: var(--landed); font-weight: 700; white-space: nowrap; }
-    .ui-player { font-size: 22px; left: 20px; right: -60px; top: 26px; background: rgba(0, 0, 0, .55); border-radius: .5em; padding: .9em 1em; }
-    .ui-player .bar { height: .3em; border-radius: var(--round); background: var(--coming); position: relative; overflow: hidden; }
-    .ui-player .bar i, .ui-player .bar b { position: absolute; inset: 0 auto 0 0; border-radius: var(--round); }
-    .ui-player .bar b { width: 71%; background: var(--landed); }
-    .ui-player .bar i { width: 38%; background: var(--accent); }
-    .ui-player .row { display: flex; gap: 1.2em; margin-top: .8em; align-items: center; white-space: nowrap; }
-    .ui-player .row em { font-style: normal; color: var(--muted); }
-    .ui-player .pill { padding: .1em .5em; border-radius: .3em; background: rgba(255, 255, 255, .1); }
-    .ui-toggle { font-size: 30px; top: 24px; left: 20px; display: grid; gap: .5em; }
-    .ui-toggle .sw { width: 2.4em; height: 1.3em; border-radius: var(--round); background: var(--accent); position: relative; }
-    .ui-toggle .sw::after { content: ''; position: absolute; top: .15em; right: .15em; width: 1em; height: 1em; border-radius: 50%; background: #fff; }
-    .ui-toggle span { font-weight: 700; white-space: nowrap; }
-    .ui-list { font-size: 22px; top: 22px; left: 20px; right: -40px; display: grid; gap: .25em; }
-    .ui-list div { display: flex; justify-content: space-between; gap: 1em; padding: .35em .6em; border-radius: .35em; background: rgba(0, 0, 0, .3); white-space: nowrap; }
-    .ui-list b { color: var(--accent); font-weight: 500; }
-    .ui-quality { font-size: 26px; top: 16px; left: 20px; display: grid; gap: .2em; }
-    .ui-quality div { display: flex; gap: .5em; align-items: center; white-space: nowrap; }
-    .ui-quality div:first-child { color: var(--accent); font-weight: 700; }
-    .ui-drive { font-size: 26px; top: 16px; left: 20px; right: -30px; }
-    .ui-drive .bar { height: .4em; border-radius: var(--round); background: var(--coming); margin-top: .35em; overflow: hidden; }
-    .ui-drive .bar i { display: block; width: 62%; height: 100%; border-radius: var(--round); background: var(--landed); }
-    .ui-clock { font-size: clamp(56px, 6vw, 96px); font-weight: 700; letter-spacing: -0.04em; top: 8px; right: 24px; line-height: 1; white-space: nowrap; }
-    @media (max-width: 600px) {
-      .board {
-        grid-template-columns: 1fr 1fr; grid-auto-rows: 28vw; gap: 6px; padding-inline: var(--gutter);
-        grid-template-areas: "h h" "h h" "p p" "p p" "p p" "c c" "c c" "s m" "s m" "q d" "q d" "e e" "e e";
-      }
-      .tile h3 { font-size: 1rem; }
-      .ui-player { font-size: 16px; }
-      .ui-chips, .ui-toggle, .ui-quality, .ui-drive { font-size: 20px; }
-      .ui-list { font-size: 15px; }
-      .ui-list div:nth-child(n+3) { display: none; }
-    }
+    /* ── Two ways to press Play: two whole interface fragments ── */
+    .modes { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(12px, 1.4vw, 20px); }
+    .mode { border-radius: 24px; padding: clamp(24px, 3.2vw, 48px); display: grid; align-content: start; gap: 1.5rem; }
+    .mode h3 { font-size: var(--step-head); letter-spacing: -0.04em; line-height: .95; }
+    .mode .k { color: var(--accent); }
+    .mode.dl .k { color: var(--landed); }
+    .mode .bars { margin-top: .5rem; }
+    .mode.dl .bars li::before { background: var(--landed); border-right-color: var(--accent); }
+    .also { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(12px, 1.4vw, 20px); margin-top: clamp(12px, 1.4vw, 20px); }
+    .also > div { background: var(--surface); border-radius: 24px; padding: clamp(24px, 2.6vw, 40px); display: grid; grid-template-columns: auto 1fr; gap: 1.5rem; align-items: center; }
+    .also p { margin-top: .4rem; }
+    @media (max-width: 900px) { .modes, .also { grid-template-columns: 1fr; } .also > div { grid-template-columns: 1fr; } }
 
-    /* ── Live TV: a wall of tiles ── */
-    .wall { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding-inline: var(--gutter); }
-    .cell { aspect-ratio: 1; position: relative; overflow: hidden; display: grid; place-items: center; text-align: center; }
-    .cell .w { font-size: clamp(3rem, 1rem + 5vw, 7rem); font-weight: 700; letter-spacing: -0.05em; line-height: 1; text-transform: lowercase; }
-    .cell .cap { position: absolute; left: 0; right: 0; bottom: 18px; font-size: var(--step-small); font-weight: 500; }
-    .cell h2 { font-size: var(--step-head); }
-    .cell img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: top left; transition: transform .6s var(--ease); }
-    .cell:hover img { transform: scale(1.04); }
-    .c1 { background: var(--field-1); color: var(--accent); }
-    .c2 { background: var(--field-2); color: var(--landed); }
-    .c3 { background: var(--field-3); color: #8be0a4; }
-    .c4 { background: var(--field-4); color: #ffb3c4; }
-    .cell .cap { color: var(--ink); }
-    .live-text { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(24px, 4vw, 64px); padding: clamp(72px, 7vw, 112px) var(--gutter) 0; }
-    .live-text h3 { font-size: var(--step-head); margin-bottom: 1.25rem; }
-    .live-text .bars { margin-top: 1.25rem; }
+    /* The fragments: the app's own panels, built at true size. */
+    .ui { background: #101318; border-radius: 16px; padding: 18px; font-size: 15px; line-height: 1.35; transition: transform .3s var(--ease); }
+    .mode:hover .ui { transform: translateY(-4px); }
+    .ui .h { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; margin-bottom: 12px; }
+    .ui .h b { font-size: 17px; }
+    .ui .h span, .ui .dim { color: var(--muted); }
+    .ui .rel { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; padding: 11px 12px; border-radius: 10px; background: #171b21; margin-top: 6px; }
+    .ui .rel.first { background: #1c2a30; }
+    .ui .tag { padding: 3px 8px; border-radius: 6px; font-weight: 700; font-size: 13px; white-space: nowrap; }
+    .ui .tag.cloud { background: rgba(111, 227, 255, .16); color: var(--accent); }
+    .ui .tag.torrent { background: rgba(255, 201, 120, .16); color: var(--landed); }
+    .ui .tag.done { background: rgba(110, 231, 183, .16); color: #6ee7b7; }
+    .ui .play { display: inline-flex; align-items: center; gap: 6px; background: var(--accent); color: var(--accent-ink); font-weight: 700; padding: 7px 14px; border-radius: 999px; white-space: nowrap; }
+    .ui .play.light { background: #fff; color: #000; }
+    .ui .play svg { width: 13px; height: 13px; fill: currentColor; }
+    .ui .opt { display: grid; grid-template-columns: auto 1fr; gap: 12px; padding: 12px; border-radius: 12px; background: #171b21; margin-top: 8px; }
+    .ui .opt.on { background: #2a2212; }
+    .ui .radio { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--muted); margin-top: 2px; }
+    .ui .opt.on .radio { border-color: var(--landed); display: grid; place-items: center; }
+    .ui .opt.on .radio::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--landed); }
+    .ui .rec { color: var(--landed); font-weight: 700; font-size: 13px; margin-left: 6px; }
+    .ui .drives { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .ui .drives span { padding: 5px 10px; border-radius: 999px; background: #22272f; font-size: 13px; }
+    .ui .drives span.on { background: var(--landed); color: var(--landed-ink); font-weight: 700; }
+    .ui .foot { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; gap: 1rem; }
+    .ui .check { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); }
+    .ui .check i { width: 16px; height: 16px; border-radius: 4px; background: #22272f; }
+    .ui .bar { height: 6px; border-radius: 999px; background: var(--coming); position: relative; overflow: hidden; margin-top: 10px; }
+    .ui .bar b, .ui .bar i { position: absolute; inset: 0 auto 0 0; border-radius: 999px; }
+    .ui .bar b { background: var(--landed); }
+    .ui .bar i { background: var(--accent); }
+    .ui.small { font-size: 14px; padding: 14px; min-width: 0; }
+
+    /* ── Sources: the steps beside the real screens ── */
+    .src { display: grid; grid-template-columns: 5fr 7fr; gap: clamp(24px, 4vw, 64px); align-items: start; }
+    .src .l { position: sticky; top: 88px; display: grid; gap: 2rem; }
+    .steps { list-style: none; display: grid; gap: .75rem; }
+    .steps li { background: var(--surface); border-radius: 18px; padding: 1.25rem 1.4rem; display: grid; grid-template-columns: 2.6rem 1fr; gap: 1rem; }
+    .steps li::before { content: ''; height: .55rem; margin-top: .55rem; border-radius: var(--round); background: var(--accent); border-right: 1rem solid var(--landed); }
+    .steps li:nth-child(2)::before { border-right-width: 1.6rem; }
+    .steps li:nth-child(3)::before { background: var(--landed); }
+    .steps h3 { font-size: var(--step-body); font-weight: 700; letter-spacing: -0.01em; text-transform: none; }
+    .steps p { margin-top: .3rem; color: var(--muted); }
+    .src .r { display: grid; gap: clamp(16px, 2vw, 28px); }
+    .rule { background: var(--field-2); border-radius: 18px; padding: 1.25rem 1.4rem; }
+    @media (max-width: 900px) { .src { grid-template-columns: 1fr; } .src .l { position: static; } }
+
+    /* ── The player: the whole frame, then what it does ── */
+    .facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: clamp(24px, 4vw, 64px); margin-top: clamp(32px, 3vw, 48px); }
+    .facts h3 { margin-bottom: .6rem; }
+    .pause { display: grid; grid-template-columns: 7fr 5fr; gap: clamp(24px, 4vw, 64px); align-items: center; margin-top: clamp(48px, 5vw, 80px); }
+    @media (max-width: 900px) { .facts, .pause { grid-template-columns: 1fr; } }
+
+    /* ── Live TV: two services, each with its own field ── */
+    .svc { display: grid; grid-template-columns: 5fr 7fr; gap: clamp(24px, 4vw, 64px); align-items: center; }
+    .svc.flip { grid-template-columns: 7fr 5fr; }
+    .svc.flip .t { order: 2; }
+    .svc h2 { margin-bottom: 1.25rem; }
+    .svc .bars { margin-top: 1.5rem; }
+    .pair { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(12px, 1.4vw, 20px); margin-top: clamp(32px, 3vw, 48px); }
+    .live-switch { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(12px, 1.4vw, 20px); margin-top: clamp(32px, 3vw, 48px); }
+    .live-switch .ui { background: var(--surface); }
+    .ui .chan { display: grid; grid-template-columns: 3rem 1fr auto; gap: 12px; align-items: center; padding: 9px 10px; border-radius: 10px; background: #171b21; margin-top: 6px; }
+    .ui .chan .n { color: var(--muted); font-weight: 700; }
+    .ui .chan.dead { opacity: .55; }
+    .ui .now { color: var(--muted); font-size: 13px; }
     @media (max-width: 900px) {
-      .wall { grid-template-columns: 1fr 1fr; gap: 6px; }
-      .cell .w { font-size: 18vw; }
-      .live-text { grid-template-columns: 1fr; }
+      .svc, .svc.flip, .pair, .live-switch { grid-template-columns: 1fr; }
+      .svc.flip .t { order: 0; }
     }
 
-    /* ── Yours: an inset panel ── */
-    .panel { margin-inline: var(--gutter); background: var(--field-1); border-radius: 12px; overflow: hidden; display: grid; grid-template-columns: 58fr 42fr; min-height: 100svh; }
-    .panel .l { padding: 56px; display: grid; grid-template-rows: auto 1fr; gap: 3rem; }
-    .panel h2 { font-size: var(--step-display); max-width: 8ch; }
-    .panel .shaped { align-self: end; margin-bottom: -5vw; width: 100%; max-width: 760px; aspect-ratio: 16 / 9; object-fit: cover; object-position: 62% 40%; border-radius: var(--round); }
-    .panel .r { padding: 56px 56px 56px 0; display: grid; align-content: start; gap: 64px; }
-    .panel .r h3 { font-size: var(--step-lead); letter-spacing: -0.02em; line-height: 1.15; margin-bottom: .75rem; text-transform: none; }
-    @media (max-width: 900px) {
-      .panel { grid-template-columns: 1fr; min-height: 0; }
-      .panel .l { padding: 32px 24px 0; }
-      .panel .r { padding: 24px 24px 0; gap: 40px; }
-      .panel .shaped { width: 86vw; margin: 40px auto -20vw; grid-row: 3; }
-      .panel h2 { font-size: 13vw; }
-    }
-
+    /* ── Android & TV: three whole phone screens ── */
+    .phones { display: grid; grid-template-columns: 5fr 7fr; gap: clamp(24px, 4vw, 64px); align-items: center; }
+    .phones .row { display: grid; grid-template-columns: repeat(3, 1fr); gap: clamp(10px, 1.4vw, 20px); align-items: start; }
+    .phones .row .shot { border-radius: 30px; }
+    .phones .row .shot img { border-radius: 24px; }
+    .phones .row .shot:nth-child(2) { margin-top: clamp(24px, 4vw, 64px); }
+    .phones .row .shot:nth-child(3) { margin-top: clamp(48px, 8vw, 128px); }
+    .phones .bars { margin-top: 1.5rem; }
+    @media (max-width: 900px) { .phones { grid-template-columns: 1fr; } .phones .row .shot { margin-top: 0 !important; } }
     /* ── Download: the sentence with a blank ── */
     .sentence { font-size: clamp(2.5rem, 1rem + 5vw, 6rem); font-weight: 700; letter-spacing: -0.04em; line-height: 1.1; text-transform: lowercase; max-width: 15em; }
     .sentence h2 { display: inline; font-size: inherit; line-height: inherit; }
@@ -343,7 +309,8 @@
     }
 
     /* ── Questions: tabbed cards ── */
-    .faq { padding-inline: var(--gutter); max-width: 1100px; margin-inline: auto; }
+    .faq { padding-inline: var(--gutter); }
+    .faq .cards { max-width: 1100px; }
     .faq h2 { margin-bottom: 2.5rem; }
     .cards { display: grid; }
     .qcard { position: relative; margin-top: -24px; padding-top: 40px; }
@@ -399,10 +366,11 @@
   <header class="top wrap">
     <a href="#top" class="mark"><img src="logo.svg" alt="" width="30" height="30" /><span>rivulet</span></a>
     <nav aria-label="Sections">
-      <a href="#how">How it plays</a>
-      <a href="#app">The app</a>
-      <a href="#player">The player</a>
+      <a href="#inside">The app</a>
+      <a href="#modes">Two ways to play</a>
+      <a href="#sources">Sources</a>
       <a href="#live">Live TV</a>
+      <a href="#android">Android</a>
       <a href="#faq">Questions</a>
     </nav>
     <a class="btn" href="#download">Download</a>
@@ -420,7 +388,7 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4h2v9.2l3.6-3.6 1.4 1.4-6 6-6-6 1.4-1.4 3.6 3.6zM5 18h14v2H5z"/></svg>
               <span id="hero-dl-text">Download for your system</span>
             </a>
-            <a class="btn quiet" href="#how">How it plays</a>
+            <a class="btn quiet" href="#modes">How it plays</a>
             <small>Free and open source. No account, no ads, no bundled sources.</small>
           </div>
         </div>
@@ -450,208 +418,208 @@
       </div>
     </section>
 
-    <!-- How it plays: the same film, four moments. -->
-    <section id="how" class="chapter">
-      <div class="fields">
-        <div class="field">
-          <h2 class="rise">how it plays</h2>
-          <div class="card-slot rise" style="--i:1">
-            <div class="card" data-ui>
-              <div class="poster"></div>
-              <div class="t">Your next film</div>
-              <div class="m">2026 · 2h 4m · Drama</div>
-              <span class="tag cloud">Torrent · 48 peers</span><br />
-              <span class="play"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>Play</span>
-            </div>
-          </div>
-          <p class="clause rise" style="--i:2">First you press Play.<span>Nothing has landed yet, and nothing needs to.</span></p>
-        </div>
-        <div class="field">
-          <span></span>
-          <div class="card-slot rise" style="--i:1">
-            <div class="card" data-ui>
-              <div class="poster"></div>
-              <div class="t">Your next film</div>
-              <div class="bar"><b style="width:9%"></b><i style="width:2%"></i></div>
-              <div class="row"><span>Playing · 2:31</span><span>2:04:10</span></div>
-            </div>
-          </div>
-          <p class="clause rise" style="--i:2">It starts on the first bytes.<span>The engine fetches what the player needs next, before anything else.</span></p>
-        </div>
-        <div class="field">
-          <span></span>
-          <div class="card-slot rise" style="--i:1">
-            <div class="card" data-ui>
-              <div class="poster"></div>
-              <div class="t">Your next film</div>
-              <div class="bar"><b style="width:81%"></b><i style="width:38%"></i></div>
-              <div class="row"><span>Landed 81%</span><span>D: 1.4 TB free</span></div>
-            </div>
-          </div>
-          <p class="clause rise" style="--i:2">The rest lands while you watch.<span>On the drive you chose, at the speed you set.</span></p>
-        </div>
-        <div class="field">
-          <span></span>
-          <div class="card-slot rise" style="--i:1">
-            <div class="card" data-ui>
-              <div class="poster"></div>
-              <div class="t">Your next film</div>
-              <div class="bar"><b style="width:100%"></b><i style="width:38%"></i></div>
-              <span class="tag done">Downloaded · plays offline</span>
-              <div class="row"><span>Resume from 47:12</span></div>
-            </div>
-          </div>
-          <p class="clause rise" style="--i:2">Then it's yours, offline.<span>It replays with the network unplugged, from where you stopped.</span></p>
-        </div>
+    <!-- Inside: what the app offers, each as its real screen, whole. -->
+    <section id="inside" class="chapter wrap" aria-labelledby="inside-h">
+      <div class="intro">
+        <h2 id="inside-h" class="rise">everything, in one app</h2>
+        <p class="lead rise" style="--i:1">Films, shows and anime with their posters, cast and trailers; free and paid Live TV; downloads; and a player that handles any file. Pick a screen to see it as it is.</p>
       </div>
-      <div class="also">
-        <div class="rise">
-          <h3>A cloud service skips the wait</h3>
-          <p>If a source you add answers with direct links from a cloud (debrid) service you pay for, Play starts in a second: no engine, no disk.</p>
-        </div>
-        <div class="rise" style="--i:1">
-          <h3>Play says what it will do</h3>
-          <p>Each source is labelled Instant or Torrents when you add it. A torrent-only title asks first: download while playing, or stream from a cache deleted when you leave.</p>
-        </div>
-        <div class="rise" style="--i:2">
-          <h3>A service outage is said in words</h3>
-          <p>When your cloud service is down, the title page says so before you press Play, with the torrent one tap away. Its error clip never plays as your film.</p>
-        </div>
-      </div>
-    </section>
-
-    <!-- The app: real screens, chosen from a list. -->
-    <section id="app" class="chapter wrap stage-section">
-      <div class="index">
-        <h2 class="rise">every screen, for the couch</h2>
-        <ul class="index" id="screens" style="padding:0">
-          <li><button type="button" aria-pressed="true" data-img="app-home.jpg" data-alt="Home: a full-bleed featured title with its logo, rating, overview, Play and an Up next card" data-name="A home that sells the film" data-fact="The title's own logo over its backdrop, with Play, the trailer and Up next one press away." data-field="var(--field-1)">home</button></li>
-          <li><button type="button" aria-pressed="false" data-img="app-detail.jpg" data-alt="A title page with logo, rating, genres, a source status badge and the Play button" data-name="Title pages that tell you first" data-fact="Instant, a torrent and how healthy it is, already downloaded, or nothing found, said before you press Play." data-field="var(--field-2)">title page</button></li>
-          <li><button type="button" aria-pressed="false" data-img="app-season.jpg" data-alt="A season page with backdrop, progress bar and episode cards" data-name="Seasons at a glance" data-fact="Your progress through the season, the next episode marked, and every episode one card." data-field="var(--field-3)">seasons</button></li>
-          <li><button type="button" aria-pressed="false" data-img="app-episode.jpg" data-alt="An episode page with a full-bleed still, credits and the episodes either side" data-name="Each episode, its own page" data-fact="Still, synopsis, guest cast and crew, and the episodes either side of it." data-field="var(--field-4)">episodes</button></li>
-          <li><button type="button" aria-pressed="false" data-img="app-search.jpg" data-alt="Search results with posters for films and shows" data-name="One search box" data-fact="Films and shows together, straight through to what you can play." data-field="var(--field-1)">search</button></li>
-          <li><button type="button" aria-pressed="false" data-img="app-sources.jpg" data-alt="Settings, Sources: each source with its kind, speed and health" data-name="Sources you add, checked" data-fact="Each one labelled Instant (cloud) or Torrents, with its speed and health. Rivulet ships with none." data-field="var(--field-2)">sources</button></li>
+      <div class="inside">
+        <ul class="tabs" id="screens">
+          <li><button type="button" aria-pressed="true" data-img="app-home.jpg" data-alt="The Rivulet home screen: a large featured film above rows of posters"><strong>Home</strong><span>What's new, what's trending and where you left off, in rows you can scroll with a mouse or a remote.</span></button></li>
+          <li><button type="button" aria-pressed="false" data-img="app-detail.jpg" data-alt="A title page for Lupin with Play S1 E1, Download, Releases and Trailer"><strong>Title pages</strong><span>Every film and show gets its own page: backdrop, logo, rating, cast, trailer, and Play or Download in one place.</span></button></li>
+          <li><button type="button" aria-pressed="false" data-img="app-season.jpg" data-alt="A season page with its list of episodes and their stills"><strong>Seasons</strong><span>Each episode with its still, synopsis and how much you've watched. Next episode is always one press away.</span></button></li>
+          <li><button type="button" aria-pressed="false" data-img="app-search.jpg" data-alt="Search results for a title, with posters in a grid"><strong>Search</strong><span>One box for films, shows and people, with results as you type.</span></button></li>
+          <li><button type="button" aria-pressed="false" data-img="app-anime.jpg" data-alt="The anime section with seasonal rows of posters"><strong>Anime</strong><span>A section of its own, with this season's shows and the classics.</span></button></li>
+          <li><button type="button" aria-pressed="false" data-img="app-streaming.jpg" data-alt="Browsing titles by streaming service"><strong>By service</strong><span>Browse what each streaming service carries, to know what a title is and where it's from.</span></button></li>
+          <li><button type="button" aria-pressed="false" data-img="app-subtitles.jpg" data-alt="Subtitle settings: language, size, colour and background"><strong>Subtitles</strong><span>Found in your language and styled the way you read best: size, colour, background and position.</span></button></li>
+          <li><button type="button" aria-pressed="false" data-img="app-appearance.jpg" data-alt="Appearance settings with a grid of colour themes"><strong>Themes</strong><span>Twenty-eight themes, a colour of your own, and a backdrop picture behind it all.</span></button></li>
         </ul>
-      </div>
-      <div class="stage rise" style="--i:1">
-        <div class="disc" id="stage-disc"></div>
-        <figure>
-          <img id="stage-img" src="app-home.jpg" alt="Home: a full-bleed featured title with its logo, rating, overview, Play and an Up next card" width="1600" height="900" />
-          <figcaption><strong id="stage-name">A home that sells the film</strong><span id="stage-fact">The title's own logo over its backdrop, with Play, the trailer and Up next one press away.</span></figcaption>
+        <figure class="shot viewer rise" style="--i:1">
+          <img id="stage-img" src="app-home.jpg" alt="The Rivulet home screen: a large featured film above rows of posters" width="1600" height="900" />
         </figure>
       </div>
     </section>
 
-    <!-- The player: close-ups of its parts. -->
-    <section id="player" class="chapter board" aria-labelledby="player-h">
-      <div class="tile t-h">
-        <h2 id="player-h" class="rise">a real player</h2>
-        <p class="rise" style="--i:1">mpv on Windows, Linux and macOS, libVLC on Android. Both carry their own decoders, so what a browser drops just plays.</p>
+    <!-- Two ways to press Play: the dual mode, as the app shows it. -->
+    <section id="modes" class="chapter wrap" aria-labelledby="modes-h">
+      <div class="intro">
+        <h2 id="modes-h" class="rise">two ways to press play</h2>
+        <p class="lead rise" style="--i:1">Every release your sources return is one of two kinds, and Rivulet labels it before you choose. Either way, Play is one press.</p>
       </div>
-      <div class="tile t-c">
-        <div class="ui-chips" data-ui aria-hidden="true"><span>HEVC</span><span>AV1</span><span>DTS</span><span>TrueHD</span><span>E-AC-3</span></div>
-        <h3>Its own decoders</h3>
-        <p>4K and HDR 10-bit, Dolby and DTS, in MKV or MP4.</p>
-      </div>
-      <div class="tile t-p">
-        <div class="ui-player" data-ui aria-hidden="true">
-          <div class="bar"><b></b><i></i></div>
-          <div class="row"><span>47:12 <em>/ 2:04:10</em></span><span class="pill">2160p · HDR</span><span class="pill">EN · CC</span></div>
-        </div>
-        <h3>Seek previews and resume</h3>
-        <p>Frames as you scrub, chapters, audio and subtitle tracks, and every episode picks up where you left it.</p>
-      </div>
-      <div class="tile t-s">
-        <div class="ui-toggle" data-ui aria-hidden="true"><div class="sw"></div><span>Auto-sync</span></div>
-        <h3>Subtitles that fit</h3>
-        <p>From the release and OpenSubtitles in one menu, synced to the audio.</p>
-      </div>
-      <div class="tile t-m">
-        <div class="ui-list" data-ui aria-hidden="true">
-          <div>Windows <b>mpv</b></div><div>Linux <b>mpv</b></div><div>macOS <b>libmpv</b></div><div>Android <b>libVLC</b></div>
-        </div>
-        <h3>Nothing to install</h3>
-        <p>Windows ships its own mpv and ffmpeg; macOS links it in.</p>
-      </div>
-      <div class="tile t-q">
-        <div class="ui-quality" data-ui aria-hidden="true"><div><svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor" aria-hidden="true"><path d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>2160p</div><div>1080p</div></div>
-        <h3>Fails over quietly</h3>
-        <p>A dead server moves to the next.</p>
-      </div>
-      <div class="tile t-d">
-        <div class="ui-drive" data-ui aria-hidden="true">D: 1.4 TB free<div class="bar"><i></i></div></div>
-        <h3>Downloads that behave</h3>
-        <p>Your drive, speed limits, a disk budget.</p>
-      </div>
-      <div class="tile t-e">
-        <div class="ui-clock" data-ui aria-hidden="true">ends 22:41</div>
-        <h3>An ends-at clock</h3>
-        <p>Paused, it shows the title's logo, synopsis and when it will finish.</p>
-      </div>
-    </section>
-
-    <!-- Live TV: a wall of tiles, then what each half does. -->
-    <section id="live" class="chapter">
-      <div class="wall">
-        <div class="cell c1"><h2 class="rise">live tv</h2><span class="cap">Free or your own</span></div>
-        <div class="cell"><img src="live-free.jpg" alt="Free TV: a guide list of channels with numbers, logos, country and an HD badge" loading="lazy" width="1200" height="1200" /></div>
-        <div class="cell c2"><span class="w">dead</span><span class="cap">Channels marked</span></div>
-        <div class="cell c3"><span class="w">4k</span><span class="cap">Rows badged</span></div>
-        <div class="cell c4"><span class="w">m3u</span><span class="cap">Or Xtream Codes</span></div>
-        <div class="cell"><img src="live-premium.jpg" alt="Premium TV: a category as a guide list, every row badged 4K" loading="lazy" width="1200" height="1200" /></div>
-        <div class="cell c1"><span class="w">0–9</span><span class="cap">Number keys</span></div>
-        <div class="cell c2"><span class="w">guide</span><span class="cap">Now and next</span></div>
-        <div class="cell"><img src="live-movies.jpg" alt="Premium TV movies: a grid of film posters from the provider's catalogue" loading="lazy" width="1200" height="1200" /></div>
-        <div class="cell c3"><span class="w">back</span><span class="cap">Catch-up</span></div>
-        <div class="cell c4"><span class="w">ring</span><span class="cap">Reminders</span></div>
-        <div class="cell"><img src="live-shows.jpg" alt="Premium TV series: a grid of show posters with episode counts" loading="lazy" width="1200" height="1200" /></div>
-      </div>
-      <div class="live-text">
-        <div class="rise">
-          <h3>free tv</h3>
-          <p class="lead">Thousands of public channels from around the world, numbered like a set and grouped by country and category. No account needed.</p>
+      <div class="modes">
+        <article class="mode f1 rise">
+          <h3><span class="k">instant</span> from your cloud</h3>
+          <p>When a source answers with a link from a cloud (debrid) service you subscribe to, the film streams straight from it. Nothing is downloaded and nothing waits for peers.</p>
+          <div class="ui" data-ui aria-label="A title page's list of releases, the first marked Instant">
+            <div class="h"><b>Lupin · S1 E1</b><span>3 releases</span></div>
+            <div class="rel first"><span class="tag cloud">Instant</span><span>2160p · HDR · your cloud</span><span class="play"><svg viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></svg>Play</span></div>
+            <div class="rel"><span class="tag cloud">Instant</span><span>1080p · 4.1 GB · your cloud</span><span class="dim">Play</span></div>
+            <div class="rel"><span class="tag torrent">Torrent</span><span>1080p · 412 peers</span><span class="dim">Play</span></div>
+          </div>
           <ul class="bars">
-            <li>Every channel is checked as you open it; dead ones are marked, then hidden.</li>
-            <li>A guide from your own XMLTV links, with what's on now and how long is left.</li>
-            <li>Channel up and down, number keys, and 0 for the last channel.</li>
+            <li>Starts in about a second, at full quality from the first frame.</li>
+            <li>Seek anywhere at once: the whole film is already there.</li>
+            <li>If the cloud service is down, Rivulet says so in words and offers the torrent instead.</li>
           </ul>
+        </article>
+        <article class="mode dl f2 rise" style="--i:1">
+          <h3><span class="k">play</span> while it downloads</h3>
+          <p>A torrent plays through the engine built into the app. It starts on the first pieces and keeps landing while you watch, onto the drive you pick, or into a cache that is gone when you close the player.</p>
+          <div class="ui" data-ui aria-label="The Play dialog for a source with no cloud service">
+            <div class="h"><b>This source has no cloud service</b></div>
+            <div class="opt on"><span class="radio"></span><div><b>Play while downloading</b><span class="rec">Recommended</span><div class="dim">Starts in seconds and keeps the file.</div><div class="drives"><span>C: 212 GB free</span><span class="on">D: 1.4 TB free</span></div></div></div>
+            <div class="opt"><span class="radio"></span><div><b>Stream with a temporary cache</b><div class="dim">Nothing is kept after the player closes.</div></div></div>
+            <div class="foot"><span class="check"><i></i>Always do this</span><span class="play light"><svg viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></svg>Play</span></div>
+          </div>
+          <ul class="bars">
+            <li>The pieces you're about to watch are fetched first.</li>
+            <li>Downloads carry on in the background, on Android too.</li>
+            <li>Once it has landed, it plays offline, with no search and no peers.</li>
+          </ul>
+        </article>
+      </div>
+      <div class="also">
+        <div class="rise">
+          <div class="ui small" data-ui aria-label="A downloaded film ready to resume">
+            <span class="tag done">Downloaded</span>
+            <div class="bar" style="width:220px"><b style="width:100%"></b><i style="width:58%"></i></div>
+            <div class="dim" style="margin-top:8px">Resume from 47:12</div>
+          </div>
+          <div><h3>already downloaded? it just plays</h3><p>A film you've kept opens straight from the disk: no lookup, no source and no network.</p></div>
         </div>
         <div class="rise" style="--i:1">
-          <h3>premium tv</h3>
-          <p class="lead">The IPTV service you already pay for, through an Xtream Codes login or an M3U link. Live channels, films and series side by side.</p>
-          <ul class="bars">
-            <li>Catch-up on channels your provider keeps an archive for.</li>
-            <li>Several accounts, switched in a press; your login stays on this device.</li>
-            <li>A reminder a minute before a programme starts.</li>
-          </ul>
+          <div class="ui small" data-ui aria-label="Download progress of a film still landing">
+            <span class="tag torrent">Landing · 64%</span>
+            <div class="bar" style="width:220px"><b style="width:64%"></b><i style="width:21%"></i></div>
+            <div class="dim" style="margin-top:8px">18.4 MB/s · 9 min left</div>
+          </div>
+          <div><h3>downloads, with or without play</h3><p>Press Download to keep a film for later, or paste a magnet link: the engine is a full torrent client.</p></div>
         </div>
       </div>
     </section>
 
-    <!-- Yours: an inset panel. -->
-    <section id="yours" class="chapter">
-      <div class="panel">
+    <!-- Sources: how a user adds one, on the real screens. -->
+    <section id="sources" class="chapter band-field f3" aria-labelledby="sources-h">
+      <div class="wrap src">
         <div class="l">
-          <h2 class="rise">yours, not ours</h2>
-          <img class="shaped rise" style="--i:1" src="app-appearance.jpg" alt="Settings, Appearance with the grid of theme presets" loading="lazy" width="1600" height="900" />
+          <h2 id="sources-h" class="rise">add a source, press play</h2>
+          <ol class="steps">
+            <li class="rise" style="--i:1"><div><h3>Paste the address you were given</h3><p>In Settings → Sources, paste the source's URL and press Add. Rivulet never suggests one.</p></div></li>
+            <li class="rise" style="--i:2"><div><h3>Rivulet checks it and labels it</h3><p>It asks the source what it offers and marks it Instant (cloud) or Torrents, so you know how its releases will play.</p></div></li>
+            <li class="rise" style="--i:3"><div><h3>Open any title and press Play</h3><p>Every source you added is searched at once, and the best release starts. Releases lists them all if you'd rather choose.</p></div></li>
+          </ol>
+          <p class="rule rise" style="--i:4">Rivulet ships with no sources and links to none. A link that offers to add one always asks you first.</p>
         </div>
         <div class="r">
-          <div class="rise">
-            <h3>No account, no server</h3>
-            <p>Open it and use it. History, progress, favourites, the watchlist and your 26 themes stay on this device, in 72 languages, and one backup file moves them.</p>
-          </div>
-          <div class="rise" style="--i:1">
-            <h3>No bundled sources</h3>
-            <p>Rivulet searches only the servers you add yourself. It ships with none and suggests none, and it works as a player and torrent client with none at all.</p>
-          </div>
-          <div class="rise" style="--i:2">
-            <a class="btn" href="https://github.com/baigcoder/rivulet" rel="noreferrer">Read the code on GitHub</a>
-          </div>
+          <figure class="shot rise">
+            <img src="app-sources.jpg" alt="Settings, Sources: a field for the source URL with an Add button, how to add a source, and how Play works with Download while watching or Stream only" width="1600" height="900" loading="lazy" />
+            <figcaption><strong>Settings → Sources.</strong> Add a source, and choose whether Play keeps the file or only streams it.</figcaption>
+          </figure>
+          <figure class="shot rise" style="--i:1">
+            <img src="app-detail.jpg" alt="The Lupin title page with Play S1 E1, Download, Releases and Trailer" width="1600" height="900" loading="lazy" />
+            <figcaption><strong>A title page.</strong> Play, Download to keep, or open Releases to pick one yourself.</figcaption>
+          </figure>
         </div>
       </div>
     </section>
 
-    <!-- Download: the sentence's blank is your system. -->
+    <!-- The player: the whole frame. -->
+    <section id="player" class="chapter wrap" aria-labelledby="player-h">
+      <div class="intro">
+        <h2 id="player-h" class="rise">a real player inside</h2>
+        <p class="lead rise" style="--i:1">Rivulet plays through mpv on the desktop and libVLC on Android, so the files a browser gives up on simply play.</p>
+      </div>
+      <figure class="shot rise">
+        <img src="player.png" alt="The Rivulet player mid-film, with subtitles, the seek bar, quality, audio language and subtitle controls" width="1920" height="1080" loading="lazy" />
+      </figure>
+      <div class="facts">
+        <div class="rise"><h3>plays what you have</h3><p>MKV, MP4, HEVC, AV1, HDR and surround sound, at any bitrate your screen can take.</p></div>
+        <div class="rise" style="--i:1"><h3>your language</h3><p>Subtitles searched for you, audio tracks by language, and the quality picker one press away.</p></div>
+        <div class="rise" style="--i:2"><h3>says what's on</h3><p>Pause and the screen tells you what you're watching: the logo, the year, the rating and the story.</p></div>
+      </div>
+    </section>
+
+    <!-- Live TV: the two services. -->
+    <section id="live" class="chapter band-field f1" aria-labelledby="free-h">
+      <div class="wrap svc">
+        <div class="t">
+          <h2 id="free-h" class="rise">free tv, checked for you</h2>
+          <p class="lead rise" style="--i:1">Thousands of free channels from public playlists, sorted by country and category.</p>
+          <ul class="bars rise" style="--i:2">
+            <li>Each time you open it, every channel is tried, and the dead ones are marked and set aside.</li>
+            <li>A guide from any XMLTV link you add, with reminders before a programme starts.</li>
+            <li>Type a channel number on the remote; one key goes back to the last channel.</li>
+          </ul>
+        </div>
+        <figure class="shot rise" style="--i:1">
+          <img src="live-free.jpg" alt="Free TV: all channels by country, with 1,057 offline channels hidden and one marked Offline" width="1600" height="828" loading="lazy" />
+          <figcaption><strong>Free TV.</strong> 1,057 channels that didn't answer are hidden; the rest play.</figcaption>
+        </figure>
+      </div>
+      <div class="wrap live-switch">
+        <div class="ui rise" data-ui aria-label="Free TV while it checks its channels">
+          <div class="h"><b>Checking which channels work…</b><span>1,240 of 2,800</span></div>
+          <div class="bar"><b style="width:44%"></b></div>
+          <div class="chan"><span class="n">001</span><div><b>Riccanza</b><div class="now">Now · Cucine da incubo · 22 min left</div></div><span class="tag done">Live</span></div>
+          <div class="chan dead"><span class="n">007</span><div><b>Peach</b><div class="now">Didn't answer</div></div><span class="tag torrent">Offline</span></div>
+        </div>
+        <div class="ui rise" style="--i:1" data-ui aria-label="A programme reminder">
+          <div class="h"><b>Starting in 5 minutes</b><span>Reminder</span></div>
+          <div class="chan"><span class="n">014</span><div><b>The evening news</b><div class="now">Today, 22:30</div></div><span class="play"><svg viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></svg>Watch</span></div>
+          <p class="dim" style="margin-top:12px">Set a bell on any programme in the guide. Rivulet tells you a few minutes before, even from another app.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="band-field f4" aria-labelledby="premium-h">
+      <div class="wrap svc flip">
+        <div class="t">
+          <h2 id="premium-h" class="rise">premium tv, your own iptv</h2>
+          <p class="lead rise" style="--i:1">Already pay for an IPTV service? Sign in with its Xtream Codes login or M3U link, and it lives in Rivulet beside everything else.</p>
+          <ul class="bars rise" style="--i:2">
+            <li>Live channels, Movies and TV shows, each with posters, ratings and its own detail page.</li>
+            <li>Catch-up on channels that keep an archive: watch what aired yesterday.</li>
+            <li>Keep several accounts and switch between them in one press.</li>
+            <li>Your login is encrypted on this device and never leaves it. Rivulet doesn't sell IPTV.</li>
+          </ul>
+        </div>
+        <figure class="shot rise" style="--i:1">
+          <img src="live-premium.jpg" alt="Premium TV: a provider's All Sports 4K category with numbered channels and Live channels, Movies and TV shows tabs" width="1600" height="826" loading="lazy" />
+          <figcaption><strong>Premium TV.</strong> A provider's 13,849 channels in 246 categories, searchable and numbered.</figcaption>
+        </figure>
+      </div>
+      <div class="wrap pair">
+        <figure class="shot rise">
+          <img src="live-movies.jpg" alt="Premium TV movies: a provider's films as a poster grid" width="1600" height="826" loading="lazy" />
+          <figcaption><strong>Movies</strong> from your provider, with their posters and details.</figcaption>
+        </figure>
+        <figure class="shot rise" style="--i:1">
+          <img src="live-shows.jpg" alt="Premium TV shows: a provider's series as a poster grid" width="1600" height="828" loading="lazy" />
+          <figcaption><strong>TV shows</strong> by season and episode, picked up where you stopped.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <!-- Android: three phone screens, whole. -->
+    <section id="android" class="chapter wrap phones" aria-labelledby="android-h">
+      <div>
+        <h2 id="android-h" class="rise">on a phone, on the sofa</h2>
+        <p class="lead rise" style="--i:1">One APK for phones, tablets and Android TV.</p>
+        <ul class="bars rise" style="--i:2">
+          <li>Every screen works with up, down, left, right, OK and back.</li>
+          <li>A tile on the Android TV launcher, and touch on a phone.</li>
+          <li>Downloads keep going while you use another app.</li>
+          <li>Your library stays on the device; a backup file moves it.</li>
+        </ul>
+      </div>
+      <div class="row">
+        <figure class="shot rise"><img src="phone-home.jpg" alt="Rivulet on a phone: the home screen" width="824" height="1830" loading="lazy" /></figure>
+        <figure class="shot rise" style="--i:1"><img src="phone-search.jpg" alt="Rivulet on a phone: search" width="824" height="1830" loading="lazy" /></figure>
+        <figure class="shot rise" style="--i:2"><img src="phone-streaming.jpg" alt="Rivulet on a phone: browsing by streaming service" width="824" height="1830" loading="lazy" /></figure>
+      </div>
+    </section>
+
     <section id="download" class="chapter wrap">
       <div class="sentence rise">
         <h2 id="dl-h">put rivulet on my</h2>
@@ -707,8 +675,8 @@
         <li><a href="https://github.com/baigcoder/rivulet/releases/latest/download/Rivulet.dmg">macOS</a></li>
       </ul></div>
       <div><h3>Read</h3><ul>
-        <li><a href="#how">How it plays</a></li>
-        <li><a href="#player">The player</a></li>
+        <li><a href="#modes">Two ways to play</a></li>
+        <li><a href="#sources">Adding a source</a></li>
         <li><a href="#live">Live TV</a></li>
         <li><a href="#faq">Questions</a></li>
       </ul></div>
@@ -831,25 +799,20 @@
       paint();
     })();
 
-    // The app: choosing a screen swaps the picture, its words and the stage colour.
+    // Inside: choosing a screen swaps the whole screenshot.
     (function screens() {
       var buttons = document.querySelectorAll('#screens button');
-      var img = document.getElementById('stage-img'), disc = document.getElementById('stage-disc');
-      var name = document.getElementById('stage-name'), fact = document.getElementById('stage-fact');
+      var img = document.getElementById('stage-img');
       function pick(b) {
         if (b.getAttribute('aria-pressed') === 'true') return;
         buttons.forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
-        img.style.opacity = '0';
-        setTimeout(function () {
-          img.src = b.dataset.img; img.alt = b.dataset.alt;
-          name.textContent = b.dataset.name; fact.textContent = b.dataset.fact;
-          disc.style.background = b.dataset.field;
-          img.style.opacity = '1';
-        }, 160);
+        img.classList.add('swap');
+        setTimeout(function () { img.src = b.dataset.img; img.alt = b.dataset.alt; }, 180);
       }
+      img.addEventListener('load', function () { img.classList.remove('swap'); });
       buttons.forEach(function (b) {
+        new Image().src = b.dataset.img;
         b.addEventListener('click', function () { pick(b); });
-        b.addEventListener('pointerenter', function (e) { if (e.pointerType === 'mouse') pick(b); });
         b.addEventListener('focus', function () { pick(b); });
       });
     })();
