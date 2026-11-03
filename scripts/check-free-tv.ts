@@ -710,5 +710,22 @@ for (const gone of ['LiveEpgDrawer', 'LiveEpgSheet', 'LiveTvSearch', 'LiveFilter
     assert.match(readFileSync(new URL(`../app/pages/live-tv/${page}`, import.meta.url), 'utf8'), /@recall=/, `${page} wires recall`)
 }
 
+// The featured banner follows the card the viewer is on, in both browsers.
+{
+  const read = (f: string) => readFileSync(new URL(`../app/${f}`, import.meta.url), 'utf8')
+  for (const card of ['components/live-tv/LiveChannelCard.vue', 'components/live-tv/ChannelStrip.vue', 'components/premium-tv/PremiumChannelCard.vue'])
+    assert.match(read(card), /data-channel-id/, `${card} says which channel it is, for the banner to follow`)
+  const banner = read('components/live-tv/LiveFeaturedBanner.vue')
+  assert.match(banner, /emit\('play'\)/, 'the banner plays its channel')
+  // One large surface: a blur here is a full-width frame-buffer readback on
+  // every focus move (check:perf has the numbers).
+  assert.doesNotMatch(banner, /backdrop-|blur-/, 'the banner draws no blur')
+  for (const page of ['pages/live-tv/free.vue', 'components/premium-tv/PremiumBrowser.vue']) {
+    const src = read(page)
+    assert.match(src, /<live-tv-live-featured-banner/, `${page} shows the banner`)
+    assert.match(src, /useFeaturedChannel\(/, `${page} follows focus into it`)
+  }
+}
+
 // eslint-disable-next-line no-console
 console.info('free tv health: ok')

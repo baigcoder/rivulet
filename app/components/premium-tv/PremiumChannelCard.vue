@@ -101,6 +101,7 @@ function onLogoLoad(e: Event): void {
 <template>
   <button
     type="button"
+    :data-channel-id="channel.id"
     class="group relative flex cursor-pointer flex-col gap-1.5 text-start outline-none"
     :aria-label="[displayName, nowProgram?.title].filter(Boolean).join(', ')"
     @click="emit('play', channel)"

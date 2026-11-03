@@ -639,6 +639,7 @@ export default {
   "See all": "TODO_TRANSLATION: See all",
   "See all {title}": "TODO_TRANSLATION: See all {title}",
   "Select": "TODO_TRANSLATION: Select",
+  "Selected channel": "TODO_TRANSLATION: Selected channel",
   "Server": "Servidor",
   "Server URL": "TODO_TRANSLATION: Server URL",
   "Server URL, username and password are all required.": "TODO_TRANSLATION: Server URL, username and password are all required.",

@@ -132,6 +132,7 @@ function onLogoLoad(e: Event): void {
 <template>
   <button
     type="button"
+    :data-channel-id="channel.id"
     class="group relative flex flex-col gap-1.5 text-start outline-none [content-visibility:auto]"
     :class="hasStream ? 'cursor-pointer' : 'cursor-not-allowed opacity-40'"
     :style="{ containIntrinsicSize: compact ? 'auto 200px' : 'auto 248px' }"

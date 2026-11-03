@@ -27,6 +27,8 @@ import type { LiveChannel } from '~/utils/iptv'
 import { mdiCalendarClock, mdiClose, mdiDeleteSweepOutline, mdiTelevisionOff, mdiViewGridOutline, mdiViewList } from '@mdi/js'
 import { listen } from '@tauri-apps/api/event'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { parseChannelName } from '~/utils/channelName'
+import { currentProgram } from '~/utils/epgNow'
 import { liveOfflineCount } from '~/utils/iptv'
 
 definePageMeta({ layout: 'default' })
@@ -161,6 +163,32 @@ const showShelves = computed(() =>
 function playChannel(ch: LiveChannel): void {
   play(ch, channels.value)
 }
+
+// The banner over the grid: the card the viewer is on, else the first one.
+const { featuredId, track } = useFeaturedChannel()
+const featured = computed(() => {
+  const ch = channels.value.find(c => c.id === featuredId.value) ?? channels.value[0]
+  if (!ch)
+    return null
+  const guide = liveTv.getEpg(ch.id)
+  const on = currentProgram(guide, Date.now())
+  const after = on ? guide[guide.indexOf(on) + 1] : undefined
+  const ms = (p: { title: string, description?: string | null, start: string, stop?: string | null }) => ({
+    title: p.title,
+    description: p.description,
+    start: Date.parse(p.start),
+    stop: p.stop ? Date.parse(p.stop) : null,
+  })
+  const parsed = parseChannelName(ch.name, ch.name)
+  return {
+    channel: ch,
+    name: parsed.name,
+    quality: parsed.quality,
+    subtitle: ch.country || (ch.categoryName ? categoryLabel(ch.categoryName) : ''),
+    now: on ? ms(on) : null,
+    next: after ? ms(after) : null,
+  }
+})
 
 /**
  * The importer's own progress, rather than a poll for it. Rust emits
@@ -412,6 +440,21 @@ watch(liveCategory, name => {
         </div>
 
         <template v-else>
+          <live-tv-live-featured-banner
+            v-if="featured"
+            :id="featured.channel.id"
+            :name="featured.name"
+            :logo-url="featured.channel.logoUrl"
+            :tint="featured.channel.categoryName || featured.channel.id"
+            :quality="featured.quality"
+            :subtitle="featured.subtitle"
+            :now="featured.now"
+            :next="featured.next"
+            :favorite="liveTv.isFavorite(featured.channel)"
+            :offline="liveTv.isOffline(featured.channel)"
+            @play="playChannel(featured.channel)"
+            @toggle-favorite="liveTv.toggleFavorite(featured.channel)"
+          />
           <live-tv-live-channel-grid
             class="min-h-0 flex-1"
             :channels="channels"
@@ -423,6 +466,8 @@ watch(liveCategory, name => {
             :layout="layout"
             :has-more="hasMore"
             :loading="liveTv.visibleLoading"
+            @focusin="track"
+            @pointerover="track"
             @load-more="liveTv.loadMore()"
             @play="playChannel"
             @toggle-favorite="liveTv.toggleFavorite($event)"

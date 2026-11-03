@@ -21,6 +21,7 @@ import type { PremiumView } from '~/stores/premiumTv'
 import type { IPTVChannel, PremiumSeriesItem, PremiumVodItem } from '~/types/premium'
 import { mdiAccountCircle, mdiClose, mdiDeleteSweepOutline, mdiTelevisionOff, mdiViewGridOutline, mdiViewList } from '@mdi/js'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { parseChannelName } from '~/utils/channelName'
 import { vodDisplayName } from '~/utils/providerTitle'
 
 /**
@@ -199,6 +200,35 @@ function play(channel: IPTVChannel): void {
     query: { id: channel.id, from: route.fullPath },
   })
 }
+
+// The banner over the grid: the card the viewer is on, else the first one.
+const { featuredId, track } = useFeaturedChannel()
+const featured = computed(() => {
+  const id = featuredId.value
+  const ch = premium.channels.find(c => c.id === id)
+    ?? resumeStrip.value?.channels.find(c => c.id === id)
+    ?? resumeStrip.value?.channels[0]
+    ?? premium.channels[0]
+  if (!ch)
+    return null
+  const { now, next } = premium.nowNext(ch.id)
+  // Premium's guide is in seconds; the banner takes milliseconds.
+  const ms = (p: { title: string, description?: string | null, start: number, stop?: number | null }) => ({
+    title: p.title,
+    description: p.description,
+    start: p.start * 1000,
+    stop: p.stop ? p.stop * 1000 : null,
+  })
+  const parsed = parseChannelName(ch.name || '', $t('Channel'))
+  return {
+    channel: ch,
+    name: parsed.name,
+    quality: ch.quality || parsed.quality,
+    subtitle: ch.country || (ch.categoryName ? categoryLabel(ch.categoryName) : ''),
+    now: now ? ms(now) : null,
+    next: next ? ms(next) : null,
+  }
+})
 
 function primeMovie(item: PremiumVodItem): void {
   warmUrl(proxyLogo(item.posterUrl))
@@ -481,6 +511,20 @@ async function disconnect(): Promise<void> {
         </div>
 
         <template v-else-if="isLive">
+          <live-tv-live-featured-banner
+            v-if="featured"
+            :id="featured.channel.id"
+            :name="featured.name"
+            :logo-url="featured.channel.logoUrl"
+            :tint="featured.channel.categoryName || featured.channel.id"
+            :quality="featured.quality"
+            :subtitle="featured.subtitle"
+            :now="featured.now"
+            :next="featured.next"
+            :favorite="premium.isFavorite(featured.channel.id)"
+            @play="play(featured.channel)"
+            @toggle-favorite="premium.toggleFavorite(featured.channel)"
+          />
           <premium-tv-premium-channel-scroll-row
             v-if="resumeStrip"
             class="shrink-0"
@@ -488,6 +532,8 @@ async function disconnect(): Promise<void> {
             :channels="resumeStrip.channels"
             :now-next="premium.nowNext"
             :favorite="premium.isFavorite"
+            @focusin="track"
+            @pointerover="track"
             @play="play"
             @toggle-favorite="premium.toggleFavorite($event)"
           />
@@ -501,6 +547,8 @@ async function disconnect(): Promise<void> {
             :load-epg="premium.loadNowNext"
             :has-more="premium.hasMore"
             :loading="premium.listLoading"
+            @focusin="track"
+            @pointerover="track"
             @load-more="premium.loadMore()"
             @play="play"
             @toggle-favorite="premium.toggleFavorite($event)"

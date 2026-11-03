@@ -639,6 +639,7 @@ export default {
   "See all": "See all",
   "See all {title}": "See all {title}",
   "Select": "Select",
+  "Selected channel": "Selected channel",
   "Server": "Server",
   "Server URL": "Server URL",
   "Server URL, username and password are all required.": "Server URL, username and password are all required.",
