@@ -41,6 +41,8 @@ export interface IPTVChannel {
   quality?: string | null
   /** Adult content flag from the provider or category name detection. */
   isAdult?: boolean
+  /** Days of catch-up the provider keeps for this channel; absent without any. */
+  archiveDays?: number | null
 }
 
 export interface IPTVChannelPage {

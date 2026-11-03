@@ -140,6 +140,7 @@ const ADDED_COLUMNS: &[(&str, &str)] = &[
     ("iptv_premium_connections", "epg_synced_at INTEGER"),
     ("iptv_premium_channels", "quality TEXT"),
     ("iptv_premium_channels", "is_adult INTEGER NOT NULL DEFAULT 0"),
+    ("iptv_premium_channels", "archive_days INTEGER"),
 ];
 
 fn migrate(conn: &Connection) -> Result<(), PremiumError> {
@@ -466,8 +467,8 @@ pub fn replace_channels(
             "INSERT OR REPLACE INTO iptv_premium_channels
              (connection_id, id, name, logo_url, category_id, category_name,
               country, language, epg_id, stream_type, user_agent, referer,
-              stream_url, sort_key, name_lower, quality, is_adult)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+              stream_url, sort_key, name_lower, quality, is_adult, archive_days)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
         )?;
         for (i, ch) in channels.iter().enumerate() {
             stmt.execute(rusqlite::params![
@@ -488,6 +489,7 @@ pub fn replace_channels(
                 ch.name.to_lowercase(),
                 ch.quality,
                 ch.is_adult as i64,
+                ch.archive_days,
             ])?;
         }
     }

@@ -141,6 +141,8 @@ impl PendingEntry {
             quality,
             is_adult,
             is_favorite: false,
+            // An M3U carries no catch-up the app could ask for.
+            archive_days: None,
         })
     }
 }

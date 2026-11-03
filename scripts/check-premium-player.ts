@@ -23,7 +23,7 @@
 //   because the remote has no pointer.
 
 import assert from 'node:assert'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, globSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { MAX_RECONNECT_ATTEMPTS, reconnectDelayMs } from '../app/stores/premiumTv'
 import { categoryLabel, isBundleCategory, parseCategoryName } from '../app/utils/categoryLabel'
@@ -589,6 +589,18 @@ check('Premium TV is active when a paid provider is signed in, and only then', (
   assert.ok(/premium\.connected/.test(hub), 'the hub says Active from the signed-in provider')
   const page = read(`${ROOT}app/pages/settings/premium-tv.vue`)
   assert.ok(!/Subscription active|activateUnlimited|Activate unlimited/.test(page), 'no activation button and no "subscription active" without an account')
+})
+
+check('catch-up goes through the API, never a URL', () => {
+  const panel = read(`${ROOT}app/components/premium-tv/PremiumEpgPanel.vue`)
+  assert.ok(panel.includes('archiveDays'), 'only channels that keep an archive offer it')
+  assert.ok(/emit\('watchFromStart'/.test(panel), 'the panel asks the page to play a past programme')
+  const watch = read(`${ROOT}app/pages/live-tv/premium/watch.vue`)
+  assert.ok(watch.includes(`kind: 'archive'`), 'the page plays a past programme as an archive source')
+  const source = read(`${ROOT}app/composables/usePlaybackSource.ts`)
+  assert.ok(/premiumApi\.archive\(/.test(source), 'the archive source comes from the API')
+  for (const f of globSync('app/**/*.{vue,ts}', { cwd: ROOT }))
+    assert.ok(!read(`${ROOT}${f}`).includes('/timeshift/'), `${f} must not build a timeshift URL`)
 })
 
 check('Premium TV offers no free trial', () => {

@@ -44,7 +44,7 @@ const playback = usePlaybackSource()
 
 const playKind = computed(() => {
   const k = String(route.query.kind ?? 'live')
-  if (k === 'movie' || k === 'episode')
+  if (k === 'movie' || k === 'episode' || k === 'archive')
     return k
   return 'live'
 })
@@ -53,7 +53,8 @@ const playId = computed(() => String(route.query.id ?? ''))
 const playExt = computed(() => String(route.query.ext ?? 'mkv'))
 const playTitle = computed(() => String(route.query.title ?? ''))
 
-const isVod = computed(() => playKind.value === 'movie' || playKind.value === 'episode')
+// A catch-up programme is a finished file like a film: seekable, with a clock.
+const isVod = computed(() => playKind.value === 'movie' || playKind.value === 'episode' || playKind.value === 'archive')
 const playerMode = computed(() => isVod.value ? 'vod' : 'live')
 
 const channelId = computed(() => isVod.value ? '' : String(route.query.id ?? ''))
@@ -296,7 +297,9 @@ async function load({ fresh } = { fresh: true }): Promise<void> {
     ? 'movie' as const
     : playKind.value === 'episode'
       ? 'episode' as const
-      : 'channel' as const
+      : playKind.value === 'archive'
+        ? 'archive' as const
+        : 'channel' as const
   clearReconnect()
   if (!id) {
     premium.setPlayer('error', isVod.value ? $t('Nothing was given to play.') : $t('No channel was given to play.'))
@@ -355,7 +358,38 @@ async function load({ fresh } = { fresh: true }): Promise<void> {
     void premium.addRecent(id)
     void loadGuide(id)
     void loadQualityVariants(id)
+    void loadPast(ch)
   }
+}
+
+/** Finished programmes for a channel that keeps an archive — the catch-up list. */
+const pastGuide = ref<EpgProgram[]>([])
+async function loadPast(ch: IPTVChannel | null): Promise<void> {
+  pastGuide.value = []
+  if (!ch?.archiveDays)
+    return
+  try {
+    const past = await premiumApi.epgPast(ch.id, ch.archiveDays)
+    if (ch.id === channelId.value)
+      pastGuide.value = past
+  }
+  catch { /* no past listings: the panel just offers none */ }
+}
+
+/** Play a finished programme from the start, as a seekable file. */
+function watchFromStart(span: { start: number, end: number }): void {
+  if (!channel.value)
+    return
+  void router.push({
+    path: localePath('/live-tv/premium/watch'),
+    query: {
+      kind: 'archive',
+      id: channel.value.id,
+      ext: `${span.start}-${span.end}`,
+      title: channel.value.name,
+      from: String(route.query.from ?? ''),
+    },
+  })
 }
 
 /**
@@ -753,7 +787,14 @@ onUnmounted(() => {
       class="pointer-events-none absolute bottom-24 left-4 z-30 w-80 max-w-[85vw] rounded-2xl bg-black/70 p-4 text-white ring-1 ring-white/10 transition-opacity duration-300"
       :class="overlayRef?.visible ? 'opacity-100' : 'opacity-0'"
     >
-      <premium-tv-premium-epg-panel :programs="guide" :loading="guideLoading" :up-next="3" />
+      <premium-tv-premium-epg-panel
+        :programs="guide"
+        :loading="guideLoading"
+        :up-next="3"
+        :past="pastGuide"
+        :archive-days="channel?.archiveDays"
+        @watch-from-start="watchFromStart"
+      />
     </div>
 
     <!-- Quality picker. A compact card, not a full-height drawer: the

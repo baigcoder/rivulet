@@ -18,7 +18,13 @@ const props = defineProps<{
   loading?: boolean
   /** How many "up next" rows to list under the current programme. */
   upNext?: number
+  /** Finished programmes, newest first — offered only when the channel keeps an archive. */
+  past?: EpgProgram[]
+  /** Days of catch-up the provider keeps; absent means none. */
+  archiveDays?: number | null
 }>()
+
+const emit = defineEmits<{ watchFromStart: [span: { start: number, end: number }] }>()
 
 /** Ticks once a minute — the resolution a guide needs and no more. */
 const nowSecs = ref(Math.floor(Date.now() / 1000))
@@ -66,8 +72,22 @@ function clock(secs: number): string {
   return new Date(secs * 1000).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
 }
 
+/**
+ * What can be watched again: finished, and inside the archive. The server
+ * enforces the same window (`archive_window_ok`); this only decides what to offer.
+ */
+const catchUp = computed(() => {
+  const days = props.archiveDays ?? 0
+  if (days <= 0)
+    return []
+  const oldest = nowSecs.value - days * 86_400
+  return (props.past ?? [])
+    .filter(p => p.stop != null && p.stop <= nowSecs.value && p.start >= oldest)
+    .slice(0, 12)
+})
+
 /** Nothing to show and nothing in flight: render nothing. */
-const empty = computed(() => !props.loading && !current.value && upcoming.value.length === 0)
+const empty = computed(() => !props.loading && !current.value && upcoming.value.length === 0 && catchUp.value.length === 0)
 </script>
 
 <template>
@@ -119,6 +139,25 @@ const empty = computed(() => !props.loading && !current.value && upcoming.value.
         >
           <span class="shrink-0 tabular-nums opacity-50">{{ clock(p.start) }}</span>
           <span class="line-clamp-1 opacity-80">{{ p.title }}</span>
+        </li>
+      </ul>
+    </div>
+
+    <div v-if="catchUp.length > 0" class="flex flex-col gap-1">
+      <p class="text-label-small font-semibold uppercase tracking-wide opacity-45">
+        {{ $t('Catch up') }}
+      </p>
+      <ul class="flex flex-col gap-0.5">
+        <li v-for="p in catchUp" :key="`past-${p.channelId}-${p.start}`">
+          <button
+            type="button"
+            class="flex w-full items-baseline gap-2 rounded-md px-2 py-1 text-start text-body-small transition-colors hover:bg-white/10 focus-visible:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            :aria-label="$t('Watch from start: {title}', { title: p.title })"
+            @click="emit('watchFromStart', { start: p.start, end: p.stop! })"
+          >
+            <span class="shrink-0 tabular-nums opacity-50">{{ clock(p.start) }}</span>
+            <span class="line-clamp-1 opacity-80">{{ p.title }}</span>
+          </button>
         </li>
       </ul>
     </div>

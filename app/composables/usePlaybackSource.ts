@@ -42,7 +42,8 @@ export function usePlaybackSource() {
     return hit.source
   }
 
-  async function load(id: string, opts: { kind?: 'channel' | 'movie' | 'episode', ext?: string } = {}): Promise<void> {
+  /** `archive` plays a past programme: `ext` is then "{start}-{end}" in unix seconds. */
+  async function load(id: string, opts: { kind?: 'channel' | 'movie' | 'episode' | 'archive', ext?: string } = {}): Promise<void> {
     if (controller)
       controller.abort()
     const own = new AbortController()
@@ -64,11 +65,14 @@ export function usePlaybackSource() {
     // awaited, while the replacement is already calling `player_start` —
     // two mpv processes on a 1-slot account, and a ghosted Playback Error.
     try {
+      const [start = 0, end = 0] = kind === 'archive' ? (opts.ext ?? '').split('-').map(Number) : []
       const next = kind === 'movie'
         ? await premiumApi.vodPlayMovie(id, opts.ext, own.signal)
         : kind === 'episode'
           ? await premiumApi.vodPlayEpisode(id, opts.ext, own.signal)
-          : await premiumApi.play(id, own.signal)
+          : kind === 'archive'
+            ? await premiumApi.archive(id, start, end, own.signal)
+            : await premiumApi.play(id, own.signal)
       if (reqId !== requestId)
         return
       source.value = next

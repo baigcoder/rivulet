@@ -412,6 +412,19 @@ export const premiumApi = {
     return request('GET', `/api/premium-tv/channels/${encodeURIComponent(channelId)}/epg?limit=${limit}`)
   },
 
+  /** Finished programmes from the last `days`, newest first — the catch-up list. */
+  epgPast(channelId: string, days: number, limit = 24): Promise<EpgProgram[]> {
+    return request('GET', `/api/premium-tv/channels/${encodeURIComponent(channelId)}/epg?past=${days}&limit=${limit}`)
+  },
+
+  /**
+   * A finished programme from the channel's archive. The server checks the
+   * window and builds the catch-up URL; the page only ever sees the redirector.
+   */
+  archive(channelId: string, start: number, end: number, signal?: AbortSignal): Promise<PlaybackSource> {
+    return request('POST', `/api/premium-tv/channels/${encodeURIComponent(channelId)}/archive`, { body: { start, end }, signal })
+  },
+
   /**
    * Now-and-next for a page of channels in one request. Per-card calls
    * would be sixty round trips per page and a visibly staggered grid.

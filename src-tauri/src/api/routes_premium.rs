@@ -523,6 +523,8 @@ pub async fn channel(
 #[derive(Deserialize, Default)]
 pub struct EpgQuery {
     pub limit: Option<usize>,
+    /// Days back: past programmes for catch-up instead of what is coming.
+    pub past: Option<i64>,
 }
 
 /// One channel's guide.
@@ -548,6 +550,9 @@ pub async fn epg(
     let cid = active_connection(&state)?;
     let limit = q.limit.unwrap_or(DEFAULT_EPG_LIMIT).clamp(1, MAX_EPG_LIMIT);
     let r = repo(&state);
+    if let Some(days) = q.past {
+        return Ok(Json(r.read_epg_past(&cid, &id, limit, days.clamp(1, 30) * 86_400)?));
+    }
     let cached = r.read_epg(&cid, &id, limit)?;
     if !cached.is_empty() {
         return Ok(Json(cached));
@@ -816,6 +821,39 @@ pub async fn vod_play_episode(
     Ok(Json(source))
 }
 
+#[derive(Deserialize)]
+pub struct ArchiveRequest {
+    start: i64,
+    end: i64,
+}
+
+/// A finished programme from the channel's archive (Xtream catch-up). The
+/// window is enforced here, not by the button: a programme still on air, one
+/// in the future or one older than the archive is refused.
+pub async fn archive_play(
+    State(state): State<ApiState>,
+    headers: axum::http::HeaderMap,
+    Path(id): Path<String>,
+    Json(req): Json<ArchiveRequest>,
+) -> Result<Json<PlaybackSource>, super::ApiError> {
+    guard(&state, &headers)?;
+    let cid = active_connection(&state)?;
+    factory::xtream_for(state.premium.clone(), &cid)?;
+    let days = repo(&state)
+        .channel_by_id(&cid, &id)?
+        .and_then(|c| c.archive_days)
+        .ok_or_else(|| super::ApiError::BadRequest("this channel keeps no archive".into()))?;
+    let now = chrono::Utc::now().timestamp();
+    if !crate::premium::xtream::archive_window_ok(days, req.start, req.end, now) {
+        return Err(super::ApiError::BadRequest("that programme is not in the archive".into()));
+    }
+    // Panels cap a timeshift request; six hours covers any one programme.
+    let minutes = ((req.end - req.start + 59) / 60).min(360);
+    let play_id = format!("archive:{id}:{}:{minutes}", req.start);
+    let source = player::build_vod_source(state.premium.clone(), &cid, &play_id, "ts")?;
+    Ok(Json(source))
+}
+
 // ── The redirector ─────────────────────────────────────────────────
 
 /// `/premium-stream/:token` — the only route a player opens, and the
@@ -848,6 +886,14 @@ pub async fn stream_redirect(
         let upstream = match kind {
             "movie" => xtream.resolve_movie_url(id, ext).await?,
             "series" => xtream.resolve_series_episode_url(id, ext).await?,
+            // `ext` carries "{start_unix}:{minutes}" for a catch-up id.
+            "archive" => {
+                let (start, minutes) = ext
+                    .split_once(':')
+                    .and_then(|(s, m)| Some((s.parse::<i64>().ok()?, m.parse::<i64>().ok()?)))
+                    .ok_or_else(|| super::ApiError::NotFound("stream not found".into()))?;
+                xtream.resolve_archive_url(id, start, minutes).await?
+            }
             _ => return Err(super::ApiError::NotFound("stream not found".into())),
         };
         let proxied = crate::iptv::commands::proxy_free_stream_url(

@@ -33,7 +33,7 @@ const CHANNEL_COLUMNS: &str = "c.id, c.name, c.logo_url, c.category_id, c.catego
             c.country, c.language, c.epg_id, c.stream_type, c.user_agent, c.referer,
             EXISTS(SELECT 1 FROM iptv_premium_favorites f
                    WHERE f.connection_id = c.connection_id AND f.channel_id = c.id),
-            c.quality, c.is_adult";
+            c.quality, c.is_adult, c.archive_days";
 
 /// Strip known quality tokens from a channel name, leaving the base
 /// name for matching. The tokens match what `names::detect_quality`
@@ -645,20 +645,49 @@ impl PremiumRepository {
         channel_id: &str,
         limit: usize,
     ) -> Result<Vec<super::models::EpgProgram>, PremiumError> {
+        self.read_epg_window(connection_id, channel_id, limit, None)
+    }
+
+    /// Programmes that have ended within the last `past_secs` — the catch-up
+    /// list, newest first. Separate from `read_epg` so the limit on what is
+    /// coming is not spent on what has gone.
+    pub fn read_epg_past(
+        &self,
+        connection_id: &str,
+        channel_id: &str,
+        limit: usize,
+        past_secs: i64,
+    ) -> Result<Vec<super::models::EpgProgram>, PremiumError> {
+        self.read_epg_window(connection_id, channel_id, limit, Some(past_secs))
+    }
+
+    fn read_epg_window(
+        &self,
+        connection_id: &str,
+        channel_id: &str,
+        limit: usize,
+        past_secs: Option<i64>,
+    ) -> Result<Vec<super::models::EpgProgram>, PremiumError> {
         let conn = self
             .state
             .db
             .lock()
             .map_err(|e| PremiumError::Database(format!("lock: {e}")))?;
         let now = chrono_now_secs();
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare(if past_secs.is_some() {
             "SELECT channel_id, title, description, start_ts, stop_ts
              FROM iptv_premium_epg
-             WHERE connection_id = ?1 AND channel_id = ?2 AND stop_ts > ?3
-             ORDER BY start_ts ASC LIMIT ?4",
-        )?;
+             WHERE connection_id = ?1 AND channel_id = ?2 AND stop_ts <= ?3 AND start_ts >= ?5
+             ORDER BY start_ts DESC LIMIT ?4"
+        } else {
+            "SELECT channel_id, title, description, start_ts, stop_ts
+             FROM iptv_premium_epg
+             WHERE connection_id = ?1 AND channel_id = ?2 AND stop_ts > ?3 AND ?5 = ?5
+             ORDER BY start_ts ASC LIMIT ?4"
+        })?;
+        let since = now - past_secs.unwrap_or(0);
         let rows = stmt.query_map(
-            rusqlite::params![connection_id, channel_id, now, limit as i64],
+            rusqlite::params![connection_id, channel_id, now, limit as i64, since],
             |row| {
                 Ok(super::models::EpgProgram {
                     channel_id: row.get(0)?,
@@ -876,6 +905,7 @@ fn channel_row(row: &rusqlite::Row) -> rusqlite::Result<super::models::IPTVChann
         is_favorite: row.get::<_, i64>(11)? != 0,
         quality: row.get(12).ok(),
         is_adult: row.get::<_, i64>(13).ok().unwrap_or(0) != 0,
+        archive_days: row.get(14).ok().flatten(),
     })
 }
 
