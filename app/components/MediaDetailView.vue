@@ -5,7 +5,25 @@
  * case it stays on the caller's stream.
  */
 import type { Media, MediaType, Person } from '~/utils/tmdb'
-import { mdiAlertCircleOutline, mdiBookmark, mdiBookmarkOutline, mdiClose, mdiEye, mdiEyeOutline, mdiHeart, mdiHeartOutline, mdiOpenInNew, mdiPlay, mdiShieldLockOutline, mdiStar, mdiVolumeHigh, mdiVolumeOff, mdiYoutube } from '@mdi/js'
+import {
+  mdiAlertCircleOutline,
+  mdiBookmark,
+  mdiBookmarkOutline,
+  mdiClose,
+  mdiCrown,
+  mdiEye,
+  mdiEyeOutline,
+  mdiHeart,
+  mdiHeartOutline,
+  mdiLightningBolt,
+  mdiOpenInNew,
+  mdiPlay,
+  mdiShieldLockOutline,
+  mdiStar,
+  mdiVolumeHigh,
+  mdiVolumeOff,
+  mdiYoutube,
+} from '@mdi/js'
 import { useTitleImages } from '~/utils/titleImages'
 
 const props = defineProps<{
@@ -19,6 +37,8 @@ const props = defineProps<{
   fallbackOverview?: string
   fallbackYear?: string
   fallbackRating?: number
+  /** The provider's quality stamp (`4K`, `FHD`), shown in the Premium badge row. */
+  providerQuality?: string
 }>()
 
 const emit = defineEmits<{
@@ -31,11 +51,11 @@ const premium = usePremiumTvStore()
 const { mobile } = useDisplay()
 const settings = useSettingsStore()
 
-/** Who is serving this title. Library pages have no provider. */
+/** Which signed-in account serves this title. Library pages have none. */
 const sourceLabel = computed(() => {
   if (!props.providerPlay)
     return ''
-  return premium.account?.accountName?.trim() || premium.account?.username || $t('Premium TV')
+  return premium.account?.accountName?.trim() || premium.account?.username || ''
 })
 
 const { data: fetched, status, error } = useMediaDetail(() => props.type, () => props.id)
@@ -727,13 +747,6 @@ watch(() => props.id, () => {
             style="background: linear-gradient(to top, rgb(var(--v-theme-background)) 2%, rgba(var(--v-theme-background), 0.85) 25%, transparent)"
           />
 
-          <p
-            v-if="sourceLabel"
-            class="absolute start-4 top-4 z-10 max-w-[min(70%,18rem)] truncate rounded-full border border-white/20 bg-black/70 px-3 py-1 text-label-small font-semibold tracking-wide text-white"
-          >
-            {{ sourceLabel }}
-          </p>
-
           <div v-if="trailerKey" class="absolute right-4 top-4 z-10 flex items-center gap-2">
             <button
               v-tooltip:bottom="heroMuted ? $t('Sound on') : $t('Sound off')"
@@ -765,13 +778,34 @@ watch(() => props.id, () => {
       >
         <div class="flex flex-col gap-6 sm:flex-row sm:items-end">
           <div
-            class="aspect-2/3 w-32 shrink-0 overflow-hidden rounded-2xl shadow-2xl sm:w-44"
-            :class="pinnedBackdrop ? 'md:hidden' : 'lg:w-52'"
+            class="relative aspect-2/3 w-32 shrink-0 overflow-hidden rounded-2xl shadow-2xl sm:w-44"
+            :class="[pinnedBackdrop ? 'md:hidden' : 'lg:w-52', providerPlay && 'ring-2 ring-amber-300/70 shadow-[0_18px_60px_-10px_rgba(251,191,36,0.45)]']"
           >
             <media-poster eager :src="posterUrl(cover?.poster, ui.posterSize) || fallbackPoster" :alt="cover?.title" />
+            <!-- A Premium title is the provider's copy, not a library search:
+                 the poster says so the way a streaming service marks its own. -->
+            <span
+              v-if="providerPlay"
+              class="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-gradient-to-r from-amber-300 to-yellow-500 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-black"
+            >
+              <v-icon :icon="mdiCrown" size="13" />
+              {{ $t('Premium') }}
+            </span>
           </div>
 
           <div v-if="cover && !heroPending" class="flex min-w-0 max-w-4xl flex-1 flex-col gap-4">
+            <div v-if="providerPlay" class="flex flex-wrap items-center gap-2">
+              <span class="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-amber-300 to-yellow-500 px-3 py-1 text-label-medium font-bold uppercase tracking-wider text-black shadow-[0_4px_20px_rgba(251,191,36,0.35)]">
+                <v-icon :icon="mdiCrown" size="16" />
+                {{ $t('Premium TV') }}
+              </span>
+              <span v-if="providerQuality" class="rounded-md border border-amber-300/70 px-2 py-0.5 text-label-medium font-bold text-amber-200">
+                {{ providerQuality }}
+              </span>
+              <span v-if="sourceLabel" class="text-label-large opacity-80">
+                {{ $t('From your account {account}', { account: sourceLabel }) }}
+              </span>
+            </div>
             <img
               v-if="coverLogo"
               :src="logoUrl(coverLogo)!"
@@ -895,6 +929,10 @@ watch(() => props.id, () => {
                 :episode="target?.episode"
                 :size="mobile ? 'default' : 'large'"
               />
+              <p v-if="providerPlay" class="flex basis-full items-center gap-2 text-body-medium opacity-70">
+                <v-icon :icon="mdiLightningBolt" size="18" class="text-amber-300" />
+                {{ $t('Streams straight from your IPTV provider. Nothing is downloaded.') }}
+              </p>
               <v-btn
                 v-if="trailerKeys.length"
                 :prepend-icon="mdiYoutube"

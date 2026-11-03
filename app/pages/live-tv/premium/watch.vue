@@ -59,6 +59,57 @@ const playerMode = computed(() => isVod.value ? 'vod' : 'live')
 
 const channelId = computed(() => isVod.value ? '' : String(route.query.id ?? ''))
 
+// ── What a paused film or episode shows ────────────────────────────────
+// The detail page matched the title to TMDB and hands that id on, so the
+// pause screen draws the same logo, synopsis and rating the library's
+// player does. The provider's own plot and rating stand in without one.
+const tmdbType = computed<'movie' | 'tv'>(() => route.query.tt === 'tv' ? 'tv' : 'movie')
+const tmdbId = computed(() => isVod.value ? String(route.query.tmdb ?? '') : '')
+const vodSeason = computed(() => Number(route.query.s) || undefined)
+const vodEpisode = computed(() => Number(route.query.e) || undefined)
+const { data: tmdbMedia } = useMediaDetail(tmdbType, tmdbId)
+const { data: tmdbArt, execute: loadTmdbArt } = useTitleImages(tmdbType, tmdbId, () => tmdbMedia.value?.lang)
+watch(tmdbId, id => {
+  if (id)
+    void loadTmdbArt()
+}, { immediate: true })
+const vodEpisodeInfo = ref<{ name: string, overview: string } | null>(null)
+watch(() => [tmdbId.value, vodSeason.value, vodEpisode.value] as const, async ([id, s, e]) => {
+  vodEpisodeInfo.value = null
+  if (!id || !s || !e || tmdbType.value !== 'tv')
+    return
+  const got = await loadEpisode(id, s, e).catch(() => null)
+  if (got && id === tmdbId.value)
+    vodEpisodeInfo.value = { name: got.name, overview: got.overview }
+}, { immediate: true })
+
+/** The provider's own entry: the catalogue row for a film, the episode for a show. */
+const providerEntry = computed(() => {
+  if (playKind.value === 'movie') {
+    const m = premium.vodMovies.find(x => x.id === playId.value)
+    return m ? { plot: m.plot ?? '', rating: Number(m.rating) || 0 } : null
+  }
+  if (playKind.value === 'episode') {
+    const series = premium.seriesDetailCache.get(String(route.query.series ?? ''))
+    const ep = series?.episodes.find(x => x.id === playId.value)
+    return ep ? { plot: ep.plot ?? '', rating: Number(series?.rating) || 0, title: ep.title } : null
+  }
+  return null
+})
+
+const pause = computed(() => {
+  const labelled = vodDisplayName(playTitle.value)
+  return {
+    title: tmdbMedia.value?.title || labelled.name || playTitle.value,
+    logo: tmdbMedia.value?.logo || tmdbArt.value?.logo || null,
+    year: tmdbMedia.value?.year || labelled.year || undefined,
+    overview: tmdbMedia.value?.overview || providerEntry.value?.plot || '',
+    rating: tmdbMedia.value?.rating || providerEntry.value?.rating || 0,
+    episodeTitle: vodEpisodeInfo.value?.name || (providerEntry.value && 'title' in providerEntry.value ? providerEntry.value.title : '') || undefined,
+    episodeOverview: vodEpisodeInfo.value?.overview || undefined,
+  }
+})
+
 /**
  * The channel being watched. Usually already in the store's page, but a
  * direct load or a reload has an empty list, so it is fetched by id — the
@@ -716,7 +767,16 @@ onUnmounted(() => {
         :src="playback.source.value.url"
         :status="statusLine"
         :resolving="!isVod && hudConnecting"
-        :title="channelName"
+        :title="isVod ? pause.title : channelName"
+        :logo="isVod ? pause.logo : null"
+        :year="isVod ? pause.year : undefined"
+        :overview="isVod ? pause.overview : undefined"
+        :rating="isVod ? pause.rating : undefined"
+        :season="isVod ? vodSeason : undefined"
+        :episode="isVod ? vodEpisode : undefined"
+        :episode-title="isVod ? pause.episodeTitle : undefined"
+        :episode-overview="isVod ? pause.episodeOverview : undefined"
+        :badge="isVod ? $t('Premium TV') : undefined"
         :mode="playerMode"
         :aspect="aspectRatio"
         :fullscreen="isFullscreen"

@@ -466,6 +466,31 @@ check('provider VOD titles drop the language prefix', () => {
   assert.equal(labelled.year, '2026')
 })
 
+check('provider VOD titles drop a trailing year and quality, the way panels write them', () => {
+  // Seen in a real catalogue: TMDB matches none of these with the tail on.
+  assert.deepEqual(vodDisplayName('Cold Storage - 2026'), { name: 'Cold Storage', year: '2026', quality: '' })
+  assert.deepEqual(vodDisplayName('Project Hail Mary - 2026 | 4K'), { name: 'Project Hail Mary', year: '2026', quality: '4K' })
+  assert.deepEqual(vodDisplayName('F1 - 2025 | 4K'), { name: 'F1', year: '2025', quality: '4K' })
+  assert.deepEqual(vodDisplayName('PK | Film [4K]'), { name: 'Film', year: '', quality: '4K' })
+  // A title that is a year keeps it: only a year after a separator is a tail.
+  assert.equal(vodDisplayName('1917 - 2019').name, '1917')
+  assert.equal(vodDisplayName('2012').name, '2012')
+})
+
+check('a paused Premium film or episode says what it is, and that it is Premium', () => {
+  const player = readFileSync(`${ROOT}app/components/MpvPlayer.vue`, 'utf8')
+  assert.ok(/props\.badge/.test(player), 'the pause screen can carry a badge')
+  assert.ok(/props\.overview/.test(player), 'and a synopsis that is not a library title')
+  const watch = readFileSync(`${ROOT}app/pages/live-tv/premium/watch.vue`, 'utf8')
+  for (const prop of [':logo=', ':overview=', ':badge=', ':episode-title='])
+    assert.ok(watch.includes(prop), `the Premium player passes ${prop}`)
+  // Not :media — that is the library's watch history, and an entry there
+  // would resume through the user's sources, not their provider.
+  assert.ok(!/<mpv-player[^>]*:media=/.test(watch.slice(watch.indexOf('<mpv-player'), watch.indexOf('/>', watch.indexOf('<mpv-player')))), 'no library media')
+  for (const page of [MOVIE_PAGE, SERIES_PAGE])
+    assert.ok(/tmdb: tmdbId\.value/.test(read(page)), `${page} hands the player its TMDB id`)
+})
+
 check('a live channel shows a loader until the first frame', () => {
   const player = readFileSync(`${ROOT}app/components/MpvPlayer.vue`, 'utf8')
   assert.ok(
