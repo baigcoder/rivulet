@@ -8,9 +8,15 @@
  * link on the index page keep working.
  */
 import type { GuideReport } from '~/utils/iptv'
-import { mdiCheck, mdiChevronLeft, mdiClose, mdiMinus, mdiPlus, mdiRefresh, mdiTelevision } from '@mdi/js'
+import { mdiBellOutline, mdiCheck, mdiChevronLeft, mdiClose, mdiMinus, mdiPlus, mdiRefresh, mdiTelevision } from '@mdi/js'
 import { guideOffset, guideUrls, importGuides, liveRemoveSource, liveSetActive, setGuideOffset, setGuideUrls } from '~/utils/iptv'
 import { mapIptvError } from '~/utils/iptvErrors'
+
+const reminders = useReminders()
+
+function reminderTime(ms: number): string {
+  return new Date(ms).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })
+}
 
 definePageMeta({ layout: 'default' })
 
@@ -339,6 +345,40 @@ function statusLabel(status: string): string {
           <p v-if="guideError" class="mt-2 text-body-small text-error" role="alert">
             {{ guideError }}
           </p>
+        </section>
+
+        <section class="mt-4 rounded-2xl border border-white/10 bg-surface-container-high p-4" aria-labelledby="reminders-heading">
+          <h2 id="reminders-heading" class="text-title-large font-semibold">
+            {{ $t('Reminders') }}
+          </h2>
+          <p class="mt-1 text-body-medium opacity-70">
+            {{ $t('Set one with the bell beside a programme that has not started. Reminders ring only while Rivulet is open.') }}
+          </p>
+          <ul v-if="reminders.list.value.length" class="m-0 mt-3 flex list-none flex-col gap-1 p-0">
+            <li
+              v-for="r in reminders.list.value"
+              :key="r.key"
+              class="flex items-center gap-3 rounded-xl px-2 py-1.5"
+            >
+              <v-icon :icon="mdiBellOutline" size="20" class="shrink-0 opacity-60" />
+              <div class="min-w-0 flex-1">
+                <p class="truncate text-body-medium font-medium">
+                  {{ r.title }}
+                </p>
+                <p class="truncate text-body-small opacity-60">
+                  {{ reminderTime(r.start) }} · {{ r.channelName }}
+                </p>
+              </div>
+              <v-btn
+                variant="text"
+                size="small"
+                :aria-label="$t('Remove reminder: {title}', { title: r.title })"
+                @click="reminders.remove(r.key)"
+              >
+                {{ $t('Remove') }}
+              </v-btn>
+            </li>
+          </ul>
         </section>
       </div>
     </div>

@@ -3,6 +3,8 @@
  * One program block in the TV guide grid. Positioned absolutely by
  * the parent row, colored by category, shows program title and time.
  */
+import { mdiBell } from '@mdi/js'
+
 const props = defineProps<{
   title: string
   start: number // Unix timestamp (seconds)
@@ -10,6 +12,9 @@ const props = defineProps<{
   /** Category id, for color. Falls back to a default gray. */
   category?: string
   now?: number // Current time, for "live" indicator
+  /** Still to come: pressing it sets or clears a reminder instead of playing. */
+  upcoming?: boolean
+  reminded?: boolean
 }>()
 
 defineEmits<{
@@ -59,6 +64,8 @@ const duration = computed(() => Math.max(15, Math.round((props.stop - props.star
     :class="colorClass"
     :style="{ width: `${duration}px` }"
     :title="`${title}\n${timeRange}`"
+    :aria-pressed="upcoming ? (reminded ? 'true' : 'false') : undefined"
+    :aria-label="upcoming ? $t('Remind me: {title}', { title }) : undefined"
     @click.stop="$emit('click')"
   >
     <div class="line-clamp-2 text-body-small font-medium leading-tight">
@@ -71,6 +78,7 @@ const duration = computed(() => Math.max(15, Math.round((props.stop - props.star
       >
         {{ $t('LIVE') }}
       </span>
+      <v-icon v-if="reminded" :icon="mdiBell" size="12" class="shrink-0" />
       <span class="truncate">{{ timeRange }}</span>
     </div>
   </button>

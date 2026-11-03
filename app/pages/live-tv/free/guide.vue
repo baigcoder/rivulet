@@ -115,6 +115,7 @@ function onProgram(ch: LiveChannel) {
         :epg-by-channel="_epgEmptyMap"
         :get-epg="liveTv.getEpg"
         @channel="onProgram"
+        @program="(ch: LiveChannel) => onProgram(ch)"
       />
     </div>
   </div>

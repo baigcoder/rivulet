@@ -14,6 +14,7 @@ import { MAX_AUTO_SKIPS, nextPlayable, pool, probeVerdict } from '../app/utils/l
 import { liveTvBackPath, liveTvFrom, readLivePlay, saveLivePlay } from '../app/utils/liveNav'
 import { nextLiveAction } from '../app/utils/liveRecovery'
 import { connectionLimitMessage, fmtHudTime, friendlyPlaybackError, isProviderConnectionLimit, isProviderVodSlateDuration } from '../app/utils/playbackError'
+import { dueReminders, pruneReminders, reminderKey } from '../app/utils/reminders'
 import '../scripts/i18n-stub.ts'
 
 // --- The verdict ------------------------------------------------------------
@@ -754,6 +755,24 @@ for (const gone of ['LiveEpgDrawer', 'LiveEpgSheet', 'LiveTvSearch', 'LiveFilter
   assert.match(hub, /useFeaturedChannel\(/, 'and it follows the rows')
   assert.match(hub, /categoryPreviews/, 'rows come from each service\'s top categories')
   assert.doesNotMatch(hub, /recentChannels|Recently watched/, 'no recently watched row on the TV page')
+}
+
+// Reminders ring a minute ahead, and are forgotten once well past.
+{
+  const r = (start: number) => ({ key: reminderKey('free', 'c', start), kind: 'free' as const, channelId: 'c', channelName: 'C', title: 'T', start })
+  assert.equal(dueReminders([r(100_000)], 40_000).length, 1, 'due a minute ahead')
+  assert.equal(dueReminders([r(100_000)], 30_000).length, 0, 'not before')
+  assert.equal(dueReminders([r(100_000)], 100_000 + 4 * 60_000).length, 1, 'still rings a little late (the app was busy)')
+  assert.equal(pruneReminders([r(100_000)], 100_000 + 6 * 60_000).length, 0, 'gone once well past')
+  assert.equal(pruneReminders([r(100_000)], 100_000).length, 1)
+  assert.equal(reminderKey('premium', '42', 7), 'premium:42:7')
+  const read = (f: string) => readFileSync(new URL(`../app/${f}`, import.meta.url), 'utf8')
+  for (const f of ['components/premium-tv/PremiumEpgPanel.vue', 'components/live-tv/LiveGuideProgram.vue'])
+    assert.match(read(f), /aria-pressed/, `${f}: a reminder is a real toggle`)
+  // Premium reminders carry an id and nothing the provider issued.
+  assert.doesNotMatch(read('components/premium-tv/PremiumEpgPanel.vue'), /streamUrl/, 'no Premium URL is stored')
+  assert.match(read('plugins/reminders.client.ts'), /sendNotification\(/, 'a due reminder notifies the OS')
+  assert.match(read('pages/live-tv/settings.vue'), /Reminders ring only while Rivulet is open\./, 'and says when it cannot')
 }
 
 // eslint-disable-next-line no-console

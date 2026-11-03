@@ -220,5 +220,6 @@ onMounted(() => {
   </div>
   <nuxt-layout>
     <nuxt-page />
+    <live-tv-live-reminder-toast />
   </nuxt-layout>
 </template>

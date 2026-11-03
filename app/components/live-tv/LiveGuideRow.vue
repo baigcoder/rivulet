@@ -7,6 +7,7 @@ import type { EpgProgram, LiveChannel } from '~/utils/iptv'
  */
 import { mdiPlay } from '@mdi/js'
 import { proxyLogo } from '~/utils/premiumTv'
+import { reminderKey } from '~/utils/reminders'
 
 const props = defineProps<{
   channel: LiveChannel
@@ -23,12 +24,34 @@ const props = defineProps<{
   rowHeight: number
 }>()
 
-defineEmits<{
-  /** Click on a program block. */
+const emit = defineEmits<{
+  /** Click on a programme that is on: play it. One still to come is a reminder instead. */
   program: [program: EpgProgram]
   /** Click on the channel name (not a program). */
   channel: [channel: LiveChannel]
 }>()
+
+const reminders = useReminders()
+const startMs = (p: EpgProgram) => new Date(p.start).getTime()
+const remindKey = (p: EpgProgram) => reminderKey('free', props.channel.id, startMs(p))
+const upcoming = (p: EpgProgram) => startMs(p) > props.now * 1000
+
+function onProgram(p: EpgProgram): void {
+  if (!upcoming(p)) {
+    emit('program', p)
+    return
+  }
+  const ch = props.channel
+  reminders.toggle({
+    key: remindKey(p),
+    kind: 'free',
+    channelId: ch.id,
+    channelName: ch.name,
+    title: p.title,
+    start: startMs(p),
+    stream: ch.streamUrl ? { url: ch.streamUrl, userAgent: ch.userAgent, referer: ch.referer, logoUrl: ch.logoUrl } : undefined,
+  })
+}
 
 /** Position a program on the strip. `left` is pixels from the strip's left edge. */
 function programStyle(p: EpgProgram) {
@@ -86,8 +109,10 @@ function programStyle(p: EpgProgram) {
         :stop="p.stop ? new Date(p.stop).getTime() / 1000 : new Date(p.start).getTime() / 1000 + 1800"
         :category="channel.categoryName ?? ''"
         :now="now"
+        :upcoming="upcoming(p)"
+        :reminded="reminders.has(remindKey(p))"
         :style="programStyle(p)"
-        @click="$emit('program', p)"
+        @click="onProgram(p)"
       />
     </div>
   </div>

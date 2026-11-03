@@ -10,7 +10,9 @@
  * "do not show broken or empty guide containers" is that, literally.
  */
 import type { EpgProgram } from '~/types/premium'
+import { mdiBell, mdiBellOutline } from '@mdi/js'
 import { computed, onUnmounted, ref } from 'vue'
+import { reminderKey } from '~/utils/reminders'
 
 const props = defineProps<{
   programs: EpgProgram[]
@@ -22,6 +24,8 @@ const props = defineProps<{
   past?: EpgProgram[]
   /** Days of catch-up the provider keeps; absent means none. */
   archiveDays?: number | null
+  /** What a reminder calls the channel when it rings. */
+  channelName?: string
 }>()
 
 const emit = defineEmits<{ watchFromStart: [span: { start: number, end: number }] }>()
@@ -32,6 +36,20 @@ const timer = setInterval(() => {
   nowSecs.value = Math.floor(Date.now() / 1000)
 }, 60_000)
 onUnmounted(() => clearInterval(timer))
+
+const reminders = useReminders()
+const remindKey = (p: EpgProgram) => reminderKey('premium', p.channelId, p.start * 1000)
+
+function toggleReminder(p: EpgProgram): void {
+  reminders.toggle({
+    key: remindKey(p),
+    kind: 'premium',
+    channelId: p.channelId,
+    channelName: props.channelName ?? '',
+    title: p.title,
+    start: p.start * 1000,
+  })
+}
 
 /** Assumed length of a programme the provider gave no end time for. */
 const DEFAULT_DURATION_SECS = 3600
@@ -135,10 +153,20 @@ const empty = computed(() => !props.loading && !current.value && upcoming.value.
         <li
           v-for="p in upcoming"
           :key="`${p.channelId}-${p.start}`"
-          class="flex items-baseline gap-2 text-body-small"
+          class="flex items-center gap-2 text-body-small"
         >
           <span class="shrink-0 tabular-nums opacity-50">{{ clock(p.start) }}</span>
-          <span class="line-clamp-1 opacity-80">{{ p.title }}</span>
+          <span class="line-clamp-1 min-w-0 flex-1 opacity-80">{{ p.title }}</span>
+          <button
+            type="button"
+            class="grid size-10 shrink-0 place-items-center rounded-lg transition-colors hover:bg-white/10 focus-visible:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            :class="reminders.has(remindKey(p)) ? 'text-primary' : 'opacity-60'"
+            :aria-pressed="reminders.has(remindKey(p)) ? 'true' : 'false'"
+            :aria-label="$t('Remind me: {title}', { title: p.title })"
+            @click="toggleReminder(p)"
+          >
+            <v-icon :icon="reminders.has(remindKey(p)) ? mdiBell : mdiBellOutline" size="20" />
+          </button>
         </li>
       </ul>
     </div>

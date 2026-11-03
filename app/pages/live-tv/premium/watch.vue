@@ -793,6 +793,7 @@ onUnmounted(() => {
         :up-next="3"
         :past="pastGuide"
         :archive-days="channel?.archiveDays"
+        :channel-name="channelName"
         @watch-from-start="watchFromStart"
       />
     </div>
