@@ -265,7 +265,7 @@ pub async fn connect(
         match sync::connect(state.premium.clone(), &id).await {
             Ok((account, report)) => {
                 if let Ok(conn) = lock(&state) {
-                    let _ = storage::drop_duplicate_connections(&conn, &id);
+                    let _ = storage::drop_duplicate_connections(&conn, &id, &state.premium.vault);
                 }
                 return Ok(Json(ConnectResponse { account, report }));
             }

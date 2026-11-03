@@ -231,7 +231,7 @@ impl PremiumState {
 
 /// The shape of the encrypted config blob. Xtream stores the
 /// server URL, username, and password; M3U stores the URL.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum ProviderConfig {
     Xtream {
@@ -458,17 +458,35 @@ pub fn activate_connection(conn: &Connection, id: &str) -> Result<(), PremiumErr
 /// Delete the other rows for the same login. Signing in again with the
 /// same account inserts a fresh row, and without this every reconnect
 /// would add another identical entry to the switcher.
-pub fn drop_duplicate_connections(conn: &Connection, keep_id: &str) -> Result<usize, PremiumError> {
-    Ok(conn.execute(
-        "DELETE FROM iptv_premium_connections
-         WHERE id <> ?1 AND EXISTS (
-           SELECT 1 FROM iptv_premium_connections k
-           WHERE k.id = ?1
-             AND k.provider_type = iptv_premium_connections.provider_type
-             AND k.display_name = iptv_premium_connections.display_name
-             AND k.account_name IS iptv_premium_connections.account_name)",
-        [keep_id],
-    )?)
+///
+/// "The same login" is the decrypted provider config — server, username
+/// and password, or the playlist URL — and never the display name: two
+/// playlists added without a name are both "Premium TV", and matching on
+/// that would delete one of them with its saved login.
+pub fn drop_duplicate_connections(
+    conn: &Connection,
+    keep_id: &str,
+    vault: &CredentialVault,
+) -> Result<usize, PremiumError> {
+    let Some(kept) = get_secret(conn, keep_id)? else {
+        return Ok(0);
+    };
+    let kept = ProviderConfig::decrypt(&kept, vault)?;
+    let others: Vec<String> = conn
+        .prepare("SELECT id FROM iptv_premium_connections WHERE id <> ?1")?
+        .query_map([keep_id], |row| row.get(0))?
+        .collect::<Result<_, _>>()?;
+    let mut dropped = 0;
+    for id in others {
+        let same = get_secret(conn, &id)?
+            .and_then(|blob| ProviderConfig::decrypt(&blob, vault).ok())
+            .is_some_and(|cfg| cfg == kept);
+        if same {
+            delete_connection(conn, &id)?;
+            dropped += 1;
+        }
+    }
+    Ok(dropped)
 }
 
 /// One stored provider connection, as `/status` reports it.
@@ -713,15 +731,40 @@ mod tests {
         assert_eq!(active_connection(&conn).unwrap().as_deref(), Some("a"));
     }
 
+    fn save(conn: &Connection, vault: &CredentialVault, id: &str, display: &str, cfg: &ProviderConfig) {
+        insert_connection(conn, id, "xtream", display).unwrap();
+        set_secret(conn, id, &cfg.encrypt(vault).unwrap()).unwrap();
+    }
+
+    fn xtream(user: &str) -> ProviderConfig {
+        ProviderConfig::Xtream {
+            server_url: "http://panel.example".into(),
+            username: user.into(),
+            password: "pw".into(),
+        }
+    }
+
     #[test]
     fn duplicates_are_dropped_on_reconnect() {
         let conn = db();
-        insert_connection(&conn, "old", "xtream", "Alpha").unwrap();
-        update_account(&conn, "old", Some("alpha1"), None, None, None, None).unwrap();
-        insert_connection(&conn, "other", "xtream", "Beta").unwrap();
-        insert_connection(&conn, "new", "xtream", "Alpha").unwrap();
-        update_account(&conn, "new", Some("alpha1"), None, None, None, None).unwrap();
-        assert_eq!(drop_duplicate_connections(&conn, "new").unwrap(), 1);
+        let vault = CredentialVault::for_tests();
+        save(&conn, &vault, "old", "Alpha", &xtream("alpha1"));
+        save(&conn, &vault, "other", "Beta", &xtream("beta1"));
+        save(&conn, &vault, "new", "Alpha", &xtream("alpha1"));
+        assert_eq!(drop_duplicate_connections(&conn, "new", &vault).unwrap(), 1);
         assert_eq!(ids(&conn), vec![("new".into(), true), ("other".into(), false)]);
+    }
+
+    #[test]
+    fn different_logins_with_the_same_name_are_kept() {
+        // Two playlists added without a name are both called "Premium TV";
+        // a name match alone would delete the first one's saved login.
+        let conn = db();
+        let vault = CredentialVault::for_tests();
+        let m3u = |url: &str| ProviderConfig::M3u { url: url.into() };
+        save(&conn, &vault, "first", "Premium TV", &m3u("http://a.example/list.m3u"));
+        save(&conn, &vault, "second", "Premium TV", &m3u("http://b.example/list.m3u"));
+        assert_eq!(drop_duplicate_connections(&conn, "second", &vault).unwrap(), 0);
+        assert_eq!(ids(&conn).len(), 2);
     }
 }
