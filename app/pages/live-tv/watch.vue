@@ -368,6 +368,19 @@ function zap(direction: 1 | -1) {
  * with the new URL. The query is only identity (id/url/title) — the
  * lineup already lives on the store.
  */
+/** The channel before this one, for the remote's "previous channel" (a lone 0). */
+const previousChannelId = ref('')
+watch(channelId, (now, before) => {
+  if (before && before !== now)
+    previousChannelId.value = before
+})
+
+function recall() {
+  const index = channelList.value.findIndex(c => c.id === previousChannelId.value)
+  if (index >= 0)
+    zapTo(index)
+}
+
 function zapTo(index: number) {
   if (index < 0 || index >= channelList.value.length)
     return
@@ -722,6 +735,7 @@ onUnmounted(() => {
       @prev="zap(-1)"
       @next="zap(1)"
       @zap-to="zapTo"
+      @recall="recall"
       @retry="() => void onRetry()"
       @toggle-play="onTogglePlay"
       @go-live="onGoLive"

@@ -562,6 +562,19 @@ function goBack(): void {
  * `channelId` watcher below is what actually loads the new channel —
  * one path in, whether the zap came from a key, the arrows or the list.
  */
+/** The channel before this one, for the remote's "previous channel" (a lone 0). */
+const previousChannelId = ref('')
+watch(channelId, (now, before) => {
+  if (before && before !== now)
+    previousChannelId.value = before
+})
+
+function recall(): void {
+  const index = zapList.value.findIndex(c => c.id === previousChannelId.value)
+  if (index >= 0)
+    zapTo(index)
+}
+
 function zapTo(index: number): void {
   const target = zapList.value[index]
   if (!target || target.id === channelId.value)
@@ -718,6 +731,7 @@ onUnmounted(() => {
       @prev="zap(-1)"
       @next="zap(1)"
       @zap-to="zapTo"
+      @recall="recall"
       @retry="() => void load({ fresh: true })"
       @toggle-play="onTogglePlay"
       @go-live="onGoLive"

@@ -7,6 +7,7 @@
 // it is not), and both are pure, so both are checkable without a network.
 import assert from 'node:assert'
 import { existsSync, readFileSync } from 'node:fs'
+import { appendDigit, channelDigitKey, channelIndexFor } from '../app/utils/channelDigits'
 import { MAX_AUTO_SKIPS, nextPlayable, pool, probeVerdict } from '../app/utils/livehealth'
 import { liveTvBackPath, liveTvFrom, readLivePlay, saveLivePlay } from '../app/utils/liveNav'
 import { connectionLimitMessage, fmtHudTime, friendlyPlaybackError, isProviderConnectionLimit, isProviderVodSlateDuration } from '../app/utils/playbackError'
@@ -639,6 +640,26 @@ const shortcuts = readFileSync(new URL('../app/plugins/keyboard-shortcuts.client
 assert.match(shortcuts, /\[data-live-search\] input/, 'Ctrl+K focuses the input inside the field, not its wrapper')
 for (const gone of ['LiveEpgDrawer', 'LiveEpgSheet', 'LiveTvSearch', 'LiveFilterDrawer'])
   assert.ok(!existsSync(new URL(`../app/components/live-tv/${gone}.vue`, import.meta.url)), `${gone} was never mounted`)
+
+// Number tuning: the set shows "105", so a remote can type it.
+{
+  const ev = (key: string, code = '', target: unknown = null) => ({ key, code, target }) as never
+  assert.equal(channelDigitKey(ev('7', 'Digit7')), '7')
+  assert.equal(channelDigitKey(ev('3', 'Numpad3')), '3')
+  assert.equal(channelDigitKey(ev('a', 'KeyA')), null)
+  assert.equal(channelDigitKey(ev('5', 'Digit5', { tagName: 'INPUT' })), null, 'typing in search never tunes')
+  assert.equal(appendDigit('1234', '5'), '2345')
+  assert.equal(channelIndexFor('105', 200), 104)
+  assert.equal(channelIndexFor('0005', 200), 4)
+  assert.equal(channelIndexFor('201', 200), null)
+  assert.equal(channelIndexFor('0', 200), null)
+  assert.equal(channelIndexFor('', 200), null)
+  const overlay = readFileSync(new URL('../app/components/live-tv/LivePlayerOverlay.vue', import.meta.url), 'utf8')
+  assert.match(overlay, /channelDigitKey\(/, 'the overlay reads digits')
+  assert.match(overlay, /emit\('recall'\)/, 'a lone 0 recalls the previous channel')
+  for (const page of ['watch.vue', 'premium/watch.vue'])
+    assert.match(readFileSync(new URL(`../app/pages/live-tv/${page}`, import.meta.url), 'utf8'), /@recall=/, `${page} wires recall`)
+}
 
 // eslint-disable-next-line no-console
 console.info('free tv health: ok')
