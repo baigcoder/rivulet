@@ -309,20 +309,5 @@ export const useSettingsStore = defineStore('settings', () => {
   /** Hide adult (18+) channels from the Premium TV channel list. */
   const hideAdultChannels = useLocalStorage(key('hideAdultChannels'), false)
 
-  // --- Subscription ---
-  /**
-   * Local-only feature flag. The app has no user auth, no account model, no
-   * server: who has Premium is a single localStorage value the user (or an
-   * installer) sets. The Rust Premium API server reads the same two fields
-   * on startup to decide whether the :3032 API comes up at all.
-   */
-  const subscriptionTier = useLocalStorage(key('subscriptionTier'), 'free')
-  /** Unix epoch milliseconds. 0 = no expiry (treated as expired). */
-  const subscriptionExpiresAt = useLocalStorage(key('subscriptionExpiresAt'), 0)
-  const isPremium = computed(() =>
-    subscriptionTier.value === 'premium'
-    && subscriptionExpiresAt.value > Date.now(),
-  )
-
-  return { locale, theme, source, themeFromArt, colourFromPicture, customCss, uiScale, reduceEffects, motion, effectiveMotion, sources, sourceMeta, activeSources, patchSource, noteSourceReport, torrentOnly, hasInstantSource, askBeforeTorrentStream, allowTorrents, keepDownloading, watchRegion, tmdbKey, downLimit, upLimit, wifiOnly, downloadDir, subs, resetSubs, notifyComplete, notifyError, notifyUpdates, parentalEnabled, parentalMaxRating, parentalPin, hideAdultChannels, subscriptionTier, subscriptionExpiresAt, isPremium }
+  return { locale, theme, source, themeFromArt, colourFromPicture, customCss, uiScale, reduceEffects, motion, effectiveMotion, sources, sourceMeta, activeSources, patchSource, noteSourceReport, torrentOnly, hasInstantSource, askBeforeTorrentStream, allowTorrents, keepDownloading, watchRegion, tmdbKey, downLimit, upLimit, wifiOnly, downloadDir, subs, resetSubs, notifyComplete, notifyError, notifyUpdates, parentalEnabled, parentalMaxRating, parentalPin, hideAdultChannels }
 })

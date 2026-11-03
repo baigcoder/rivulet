@@ -4,7 +4,7 @@ import { mdiArrowRight, mdiCastConnected, mdiTelevisionClassic } from '@mdi/js'
 
 definePageMeta({ layout: 'default' })
 
-const settings = useSettingsStore()
+const premium = usePremiumTvStore()
 const liveTv = useLiveTvStore()
 const { play } = useFreeChannelPlayer()
 
@@ -17,6 +17,11 @@ onMounted(async () => {
     await liveTv.loadDashboard()
   }
   catch { /* no Tauri: nothing to show */ }
+})
+
+// "Active" means a paid provider account is signed in — nothing else turns it on.
+onMounted(() => {
+  void premium.loadStatus().catch(() => {})
 })
 
 const rows = computed(() => [
@@ -42,12 +47,12 @@ const tiles = computed(() => [
     to: localePath('/live-tv/premium'),
     icon: mdiCastConnected,
     title: $t('Premium TV'),
-    body: settings.isPremium
+    body: premium.connected
       ? $t('Your IPTV provider — live, movies and shows.')
-      : $t('Requires subscription'),
+      : $t('Sign in with your paid IPTV account.'),
     tags: [$t('Xtream & M3U'), $t('Movies & series')],
-    status: settings.isPremium ? $t('Active') : $t('Not set up'),
-    ready: settings.isPremium,
+    status: premium.connected ? $t('Active') : $t('Not signed in'),
+    ready: premium.connected,
     tint: 'from-tertiary/25',
   },
 ])

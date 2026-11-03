@@ -580,6 +580,17 @@ check('the VOD grid draws the section it was told to draw', () => {
   )
 })
 
+check('Premium TV is active when a paid provider is signed in, and only then', () => {
+  const app = read(`${ROOT}app/app.vue`)
+  assert.ok(/pushEntitlement\('premium', null\)/.test(app), 'the local entitlement is the app\'s own, not a switch the user flips')
+  const settingsStore = read(`${ROOT}app/stores/settings.ts`)
+  assert.ok(!/isPremium|subscriptionTier/.test(settingsStore), 'no local "subscription" flag left to claim premium without a provider')
+  const hub = read(`${ROOT}app/pages/live-tv/index.vue`)
+  assert.ok(/premium\.connected/.test(hub), 'the hub says Active from the signed-in provider')
+  const page = read(`${ROOT}app/pages/settings/premium-tv.vue`)
+  assert.ok(!/Subscription active|activateUnlimited|Activate unlimited/.test(page), 'no activation button and no "subscription active" without an account')
+})
+
 check('Premium TV offers no free trial', () => {
   const page = read(`${ROOT}app/pages/settings/premium-tv.vue`)
   assert.ok(!/trial/i.test(page), 'Premium TV is for paid accounts only — no trial button, wording or timer')

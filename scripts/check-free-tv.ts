@@ -519,11 +519,10 @@ const premiumUtil = readFileSync(new URL('../app/utils/premiumTv.ts', import.met
 assert.match(premiumUtil, /const LOGO_BASE = 'http:\/\/127\.0\.0\.1:3033'/, 'the page asks that origin')
 assert.match(premiumUtil, /return `\$\{LOGO_BASE\}\/api\/premium-tv\/proxy\/image/, 'for every channel logo')
 
-// The subscription card asks about the subscription. `premium.connected` means
-// an account is loaded, so an active subscription with no provider yet drew
-// "No active subscription" directly above a banner saying it was active.
+// There is no subscription apart from the provider: the account card, and the
+// word "active", appear only once a paid provider account is signed in.
 const premiumSettings = readFileSync(new URL('../app/pages/settings/premium-tv.vue', import.meta.url), 'utf8')
-assert.match(premiumSettings, /v-if="settings\.isPremium"\s/, 'the subscription card reads the subscription')
+assert.match(premiumSettings, /v-if="premium\.connected && premium\.account"/, 'account details only for a signed-in account')
 
 // --- A port already taken must say so ----------------------------------------
 // All three local servers bind fixed loopback ports. When one cannot, the spawn
