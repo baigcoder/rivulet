@@ -1341,6 +1341,9 @@ pub fn run() {
             iptv::commands::live_clear_recent,
             iptv::commands::live_get_live_epg,
             iptv::commands::live_channel_epg_batch,
+            iptv::commands::live_guide_urls,
+            iptv::commands::live_set_guide_urls,
+            iptv::commands::live_import_guides,
             iptv::commands::live_cancel_import,
             iptv::commands::live_refresh_free_tv,
             iptv::commands::get_iptv_countries,
@@ -1630,6 +1633,35 @@ pub fn run() {
                          unavailable until this is fixed."
                     ));
                 }
+            }
+
+            // The user's guide addresses, re-read when the stored guide has
+            // aged out — it covers a day and a half, so a twice-daily refresh
+            // keeps "what's on" true without a fetch on every launch.
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    // Absent when the database failed to open; nothing to refresh then.
+                    let Some(state) = handle.try_state::<iptv::commands::IptvState>() else {
+                        return;
+                    };
+                    let due = state.db.lock().ok().is_some_and(|conn| {
+                        let stale = iptv::guides::imported_at(&conn).map_or(true, |at| {
+                            chrono::Utc::now().timestamp() - at > iptv::guides::GUIDE_TTL_SECS
+                        });
+                        stale && iptv::guides::guide_urls(&conn).is_ok_and(|u| !u.is_empty())
+                    });
+                    if due {
+                        match iptv::guides::import_guides(&state, iptv::sources::FREE_TV_SOURCE_ID, 0).await {
+                            // A page already open cached the old guide; tell it to re-read.
+                            Ok(_) => {
+                                use tauri::Emitter;
+                                let _ = handle.emit("live_guide_imported", ());
+                            }
+                            Err(e) => eprintln!("[guides] start-up import failed: {e}"),
+                        }
+                    }
+                });
             }
 
             // Kick off the free-TV import in the background. Streams the

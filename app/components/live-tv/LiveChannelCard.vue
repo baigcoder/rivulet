@@ -8,6 +8,7 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import { categoryLabel } from '~/utils/categoryLabel'
 import { channelTileStyle, isPlaceholderLogoUrl, isTinyLogo } from '~/utils/channelLogo'
 import { channelInitials, parseChannelName } from '~/utils/channelName'
+import { currentProgram } from '~/utils/epgNow'
 import { proxyLogo } from '~/utils/premiumTv'
 
 const props = defineProps<{
@@ -24,7 +25,9 @@ const emit = defineEmits<{
 }>()
 
 const epg = computed(() => props.getEpg(props.channel.id))
-const nowProgram = computed(() => epg.value[0] ?? null)
+/** Ticks each minute while a programme is on (below), so one that ends hands over. */
+const nowMs = ref(Date.now())
+const nowProgram = computed(() => currentProgram(epg.value, nowMs.value))
 const fav = computed(() => props.isFavorite(props.channel))
 const offline = computed(() => props.isOffline?.(props.channel) === true)
 const imgError = ref(false)
@@ -38,7 +41,6 @@ const hasStream = computed(() => {
 /** No URL, or the player already found the stream dead. Advisory: click still works. */
 const dead = computed(() => offline.value || !hasStream.value)
 
-const nowMs = ref(Date.now())
 let progressTimer: ReturnType<typeof setInterval> | undefined
 watch(nowProgram, prog => {
   if (prog && !progressTimer) {

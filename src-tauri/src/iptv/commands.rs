@@ -427,18 +427,44 @@ pub async fn live_clear_recent(
 /// HTTP API.
 #[tauri::command]
 pub async fn live_get_live_epg(
-    _state: State<'_, IptvState>,
-    _channel_id: String,
+    state: State<'_, IptvState>,
+    channel_id: String,
 ) -> Result<Vec<EpgProgram>, String> {
-    Ok(Vec::new())
+    live_channel_epg_batch(state, vec![channel_id]).await
 }
 
 #[tauri::command]
 pub async fn live_channel_epg_batch(
-    _state: State<'_, IptvState>,
-    _channel_ids: Vec<String>,
+    state: State<'_, IptvState>,
+    channel_ids: Vec<String>,
 ) -> Result<Vec<EpgProgram>, String> {
-    Ok(Vec::new())
+    let conn = state.db.lock().map_err(map_err)?;
+    let now = chrono::Utc::now().timestamp();
+    super::guides::programs_for(&conn, sources::FREE_TV_SOURCE_ID, &channel_ids, now).map_err(map_err)
+}
+
+// ── Guide addresses (Free TV) ──────────────────────────────────────
+
+#[tauri::command]
+pub async fn live_guide_urls(state: State<'_, IptvState>) -> Result<Vec<String>, String> {
+    let conn = state.db.lock().map_err(map_err)?;
+    super::guides::guide_urls(&conn).map_err(map_err)
+}
+
+#[tauri::command]
+pub async fn live_set_guide_urls(
+    state: State<'_, IptvState>,
+    urls: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let conn = state.db.lock().map_err(map_err)?;
+    super::guides::set_guide_urls(&conn, &urls).map_err(map_err)
+}
+
+#[tauri::command]
+pub async fn live_import_guides(state: State<'_, IptvState>) -> Result<super::guides::GuideReport, String> {
+    super::guides::import_guides(&state, sources::FREE_TV_SOURCE_ID, 0)
+        .await
+        .map_err(map_err)
 }
 
 // ── Imports (Free TV only) ─────────────────────────────────────────

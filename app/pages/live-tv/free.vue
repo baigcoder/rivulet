@@ -24,7 +24,7 @@
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import type { LiveView } from '~/stores/liveTv'
 import type { LiveChannel } from '~/utils/iptv'
-import { mdiClose, mdiDeleteSweepOutline, mdiTelevisionOff, mdiViewGridOutline, mdiViewList } from '@mdi/js'
+import { mdiCalendarClock, mdiClose, mdiDeleteSweepOutline, mdiTelevisionOff, mdiViewGridOutline, mdiViewList } from '@mdi/js'
 import { listen } from '@tauri-apps/api/event'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { liveOfflineCount } from '~/utils/iptv'
@@ -171,6 +171,7 @@ function playChannel(ch: LiveChannel): void {
  */
 let unlisten: UnlistenFn | undefined
 let unlistenHealth: UnlistenFn | undefined
+let unlistenGuide: UnlistenFn | undefined
 
 onMounted(async () => {
   try {
@@ -214,6 +215,15 @@ onMounted(async () => {
   }
   catch { /* browser dev server: no Tauri, no sweep */ }
 
+  // The start-up guide import can land after this page cached "no guide".
+  try {
+    unlistenGuide = await listen('live_guide_imported', () => {
+      liveTv.resetEpg()
+      void liveTv.loadEpgBatch(channels.value.map(c => c.id))
+    })
+  }
+  catch { /* browser dev server: no Tauri, no import */ }
+
   // Free TV must never inherit the premium source: the two entry points
   // are separate libraries, not two views of one list.
   await liveTv.useFreeSource()
@@ -243,6 +253,7 @@ function onKey(e: KeyboardEvent) {
 onUnmounted(() => {
   unlisten?.()
   unlistenHealth?.()
+  unlistenGuide?.()
   window.removeEventListener('keydown', onKey)
 })
 
@@ -273,6 +284,15 @@ watch(liveCategory, name => {
       @refresh="liveTv.refreshFreeTv()"
       @tune="sheetOpen = true"
     >
+      <!-- The guide's addresses live on Live TV settings, which nothing else links to. -->
+      <nuxt-link
+        :to="localePath('/live-tv/settings')"
+        class="grid size-11 shrink-0 place-items-center rounded-lg text-on-surface/70 transition-colors hover:bg-surface-container-highest hover:text-on-surface focus-visible:bg-surface-container-highest focus-visible:text-on-surface"
+        :aria-label="$t('Programme guide settings')"
+        :title="$t('Programme guide settings')"
+      >
+        <v-icon :icon="mdiCalendarClock" size="22" />
+      </nuxt-link>
       <button
         type="button"
         class="grid size-11 shrink-0 place-items-center rounded-lg text-on-surface/70 transition-colors hover:bg-surface-container-highest hover:text-on-surface focus-visible:bg-surface-container-highest focus-visible:text-on-surface"
@@ -396,6 +416,7 @@ watch(liveCategory, name => {
             class="min-h-0 flex-1"
             :channels="channels"
             :get-epg="liveTv.getEpg"
+            :load-epg="liveTv.loadEpgBatch"
             :is-favorite="liveTv.isFavorite"
             :is-offline="liveTv.isOffline"
             :density="density"

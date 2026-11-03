@@ -8,6 +8,7 @@
 import assert from 'node:assert'
 import { existsSync, readFileSync } from 'node:fs'
 import { appendDigit, channelDigitKey, channelIndexFor } from '../app/utils/channelDigits'
+import { currentProgram } from '../app/utils/epgNow'
 import { MAX_AUTO_SKIPS, nextPlayable, pool, probeVerdict } from '../app/utils/livehealth'
 import { liveTvBackPath, liveTvFrom, readLivePlay, saveLivePlay } from '../app/utils/liveNav'
 import { connectionLimitMessage, fmtHudTime, friendlyPlaybackError, isProviderConnectionLimit, isProviderVodSlateDuration } from '../app/utils/playbackError'
@@ -640,6 +641,27 @@ const shortcuts = readFileSync(new URL('../app/plugins/keyboard-shortcuts.client
 assert.match(shortcuts, /\[data-live-search\] input/, 'Ctrl+K focuses the input inside the field, not its wrapper')
 for (const gone of ['LiveEpgDrawer', 'LiveEpgSheet', 'LiveTvSearch', 'LiveFilterDrawer'])
   assert.ok(!existsSync(new URL(`../app/components/live-tv/${gone}.vue`, import.meta.url)), `${gone} was never mounted`)
+
+// The guide is the user's own XMLTV address: the page sets and imports it,
+// and ships no address of its own.
+{
+  const liveSettings = readFileSync(new URL('../app/pages/live-tv/settings.vue', import.meta.url), 'utf8')
+  assert.match(liveSettings, /setGuideUrls\(/, 'the guide addresses are saved through Rust')
+  assert.match(liveSettings, /importGuides\(/, 'and Update guide now imports them')
+  assert.doesNotMatch(liveSettings, /https?:\/\//, 'no guide address is suggested, bundled or shown as an example')
+}
+
+// "Now" is the programme on at this moment, not the first in a guide that
+// keeps the last few hours.
+{
+  const at = (h: number) => `2026-11-03T${String(h).padStart(2, '0')}:00:00+00:00`
+  const list = [{ start: at(14), stop: at(15) }, { start: at(15), stop: at(16) }]
+  assert.equal(currentProgram(list, Date.parse('2026-11-03T15:37:00Z')), list[1])
+  assert.equal(currentProgram(list, Date.parse('2026-11-03T13:00:00Z')), list[0], 'before the guide starts: what is next')
+  assert.equal(currentProgram(list, Date.parse('2026-11-03T17:00:00Z')), null, 'past the guide: nothing on')
+  for (const f of ['LiveChannelCard.vue', 'LiveChannelRow.vue'])
+    assert.match(readFileSync(new URL(`../app/components/live-tv/${f}`, import.meta.url), 'utf8'), /currentProgram\(/, `${f} picks the current programme`)
+}
 
 // Number tuning: the set shows "105", so a remote can type it.
 {

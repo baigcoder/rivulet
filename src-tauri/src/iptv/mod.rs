@@ -5,6 +5,7 @@ pub mod countries;
 pub mod db;
 pub mod epg;
 pub mod errors;
+pub mod guides;
 pub mod health;
 pub mod m3u;
 pub mod models;

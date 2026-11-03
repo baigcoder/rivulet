@@ -39,19 +39,14 @@ onMounted(async () => {
   if (liveTv.visibleChannels.length === 0) {
     await liveTv.loadVisible({ reset: true })
   }
-  // Load EPG for each channel (deduplicated, in-flight tracked inside the store).
-  for (const ch of guideChannels.value) {
-    if (ch.epgId)
-      liveTv.loadFreeEpg(ch.epgId)
-  }
+  // Keyed by channel id, which is what `getEpg` reads. It used to load by
+  // `epgId` into a cache read by channel id, so this page was always empty.
+  void liveTv.loadEpgBatch(guideChannels.value.map(ch => ch.id))
 })
 
 /** Re-load EPG when the filtered set changes. */
 watch(guideChannels, channels => {
-  for (const ch of channels) {
-    if (ch.epgId)
-      liveTv.loadFreeEpg(ch.epgId)
-  }
+  void liveTv.loadEpgBatch(channels.map(ch => ch.id))
 })
 
 function goBack() {
