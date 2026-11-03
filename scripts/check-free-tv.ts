@@ -8,7 +8,7 @@
 import assert from 'node:assert'
 import { existsSync, readFileSync } from 'node:fs'
 import { appendDigit, channelDigitKey, channelIndexFor } from '../app/utils/channelDigits'
-import { currentProgram } from '../app/utils/epgNow'
+import { currentProgram, minutesLeft } from '../app/utils/epgNow'
 import { MAX_AUTO_SKIPS, nextPlayable, pool, probeVerdict } from '../app/utils/livehealth'
 import { liveTvBackPath, liveTvFrom, readLivePlay, saveLivePlay } from '../app/utils/liveNav'
 import { nextLiveAction } from '../app/utils/liveRecovery'
@@ -105,8 +105,7 @@ const freePage = readFileSync(new URL('../app/pages/live-tv/free.vue', import.me
 assert.doesNotMatch(freePage, /probeIds/, 'the Free TV grid must not probe streams while browsing')
 
 const liveCard = readFileSync(new URL('../app/components/live-tv/LiveChannelCard.vue', import.meta.url), 'utf8')
-assert.match(liveCard, /\$t\('LIVE'\)/, 'each Free TV card shows a LIVE tag')
-assert.match(liveCard, /\$t\('Offline'\)/, 'and flips it to Offline when the stream is dead')
+assert.match(liveCard, /\$t\('Offline'\)/, 'a card whose stream is dead says Offline')
 assert.match(liveCard, /absolute start-1\.5 top-1\.5/, 'the health tag sits on the artwork, top start')
 assert.match(freePage, /goHub|liveTvBackPath/, 'Free TV needs an explicit way back to the hub')
 
@@ -661,6 +660,18 @@ for (const gone of ['LiveEpgDrawer', 'LiveEpgSheet', 'LiveTvSearch', 'LiveFilter
   assert.equal(currentProgram(list, Date.parse('2026-11-03T17:00:00Z')), null, 'past the guide: nothing on')
   for (const f of ['LiveChannelCard.vue', 'LiveChannelRow.vue'])
     assert.match(readFileSync(new URL(`../app/components/live-tv/${f}`, import.meta.url), 'utf8'), /currentProgram\(/, `${f} picks the current programme`)
+  const end = Date.parse('2026-11-03T16:00:00Z')
+  assert.equal(minutesLeft(end, Date.parse('2026-11-03T15:37:00Z')), 23)
+  assert.equal(minutesLeft(end, end - 10_000), 1, 'seconds left still reads as a minute')
+  assert.equal(minutesLeft(end, end), null, 'over is over')
+  // Every channel in these grids is live, so a LIVE badge on each one says
+  // nothing; what is on says something.
+  for (const card of ['live-tv/LiveChannelCard.vue', 'premium-tv/PremiumChannelCard.vue', 'live-tv/LiveChannelTileRow.vue']) {
+    const src = readFileSync(new URL(`../app/components/${card}`, import.meta.url), 'utf8')
+    assert.doesNotMatch(src, /\$t\('LIVE'\)/, `${card} drops the LIVE badge`)
+  }
+  for (const card of ['live-tv/LiveChannelCard.vue', 'premium-tv/PremiumChannelCard.vue'])
+    assert.match(readFileSync(new URL(`../app/components/${card}`, import.meta.url), 'utf8'), /minutesLeft\(/, `${card} says how long is left`)
 }
 
 // A free stream that was playing and dropped comes back; one that never

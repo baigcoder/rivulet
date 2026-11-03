@@ -37,9 +37,6 @@ const emit = defineEmits<{ play: [channel: LiveChannel] }>()
           class="size-full object-contain p-5"
         >
         <v-icon v-else :icon="mdiTelevisionClassic" size="32" class="opacity-25" />
-        <span class="absolute start-1.5 top-1.5 flex items-center gap-1 rounded bg-red-600 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
-          <span class="size-1.5 rounded-full bg-white" />{{ $t('LIVE') }}
-        </span>
         <v-icon v-if="starred" :icon="mdiStar" size="16" class="absolute end-2 top-2 text-amber-300" />
       </span>
       <span class="truncate text-body-medium font-semibold group-hover:text-primary group-focus-visible:text-primary">{{ ch.name }}</span>

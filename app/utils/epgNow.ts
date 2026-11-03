@@ -12,3 +12,8 @@ export function currentProgram<T extends Timed>(list: T[], now: number): T | nul
     return end > now
   }) ?? null
 }
+
+/** Whole minutes until `endMs`, at least 1 while it is still on; `null` once over. */
+export function minutesLeft(endMs: number, now: number): number | null {
+  return endMs > now ? Math.max(1, Math.round((endMs - now) / 60_000)) : null
+}
