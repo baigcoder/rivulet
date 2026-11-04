@@ -128,14 +128,26 @@ pub struct PremiumAccount {
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub account_name: Option<String>,
+    /// Unix seconds, as text. `None` when the provider gives no end date.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
+    /// When the provider opened the account. Unix seconds, as text.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_trial: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active_connections: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_connections: Option<i64>,
+}
+
+/// Whether a stored `expires_at` has gone by. Only the Unix-seconds form
+/// the adapters write is read; anything else is "no known end".
+pub fn has_expired(expires_at: Option<&str>, now_secs: i64) -> bool {
+    expires_at
+        .and_then(|s| s.trim().parse::<i64>().ok())
+        .is_some_and(|at| at > 0 && at <= now_secs)
 }
 
 /// A page of channels for the dashboard. Xtream and M3U providers

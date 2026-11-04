@@ -124,7 +124,7 @@ const currentStep = computed(() => steps.value.findIndex(s => !s.done))
     >
       <div class="flex flex-col gap-4">
         <premium-tv-premium-account-card
-          v-if="premium.connected && premium.account"
+          v-if="premium.account"
           :account="premium.account"
           :catalog="premium.catalog"
           :busy="busy"

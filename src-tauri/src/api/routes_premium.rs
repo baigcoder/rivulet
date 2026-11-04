@@ -192,13 +192,20 @@ fn scrub(mut account: PremiumAccount) -> PremiumAccount {
 /// vault, the client has no use for them, and a status response is
 /// exactly the sort of body that gets pasted into a bug report.
 fn account_from_row(row: storage::ConnectionRow) -> PremiumAccount {
+    // Read off the stored date, so an account that ran out since its last
+    // sign-in says so without a round trip to the provider.
+    let expired = crate::premium::models::has_expired(
+        row.expires_at.as_deref(),
+        chrono::Utc::now().timestamp(),
+    );
     PremiumAccount {
         provider_type: row.provider_type,
         server_url: String::new(),
         username: String::new(),
-        status: row.status,
+        status: if expired { "expired".to_string() } else { row.status },
         account_name: row.account_name.or(Some(row.display_name)),
         expires_at: row.expires_at,
+        created_at: row.created_at,
         is_trial: row.is_trial,
         active_connections: row.active_connections,
         max_connections: row.max_connections,

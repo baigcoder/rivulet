@@ -97,7 +97,13 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
   const catalog = shallowRef<CatalogState | null>(null)
   const connection = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const error = ref('')
-  const connected = computed(() => account.value !== null)
+  /**
+   * A saved account whose paid period is over. `/status` works this out from
+   * the stored end date, so it needs no trip to the provider; a refresh the
+   * provider refuses says it too. Not `connected`: nothing plays on it.
+   */
+  const expired = computed(() => account.value?.status === 'expired')
+  const connected = computed(() => account.value !== null && !expired.value)
 
   /**
    * True while the catalog is importing and there is nothing to show yet.
@@ -265,9 +271,16 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
       account.value = merged
       return merged
     }
-    catch {
+    catch (e) {
+      markIfExpired(e)
       return null
     }
+  }
+
+  /** The provider just refused the account as expired, whatever `/status` last read. */
+  function markIfExpired(e: unknown): void {
+    if (e instanceof PremiumApiError && e.code === 'SUBSCRIPTION_EXPIRED' && account.value)
+      account.value = { ...account.value, status: 'expired' }
   }
 
   /**
@@ -465,6 +478,7 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
       // `AlreadySyncing` is a 409 and is not a failure: an import the user
       // double-clicked is still running, and saying so is the answer.
       error.value = message(e)
+      markIfExpired(e)
     }
   }
 
@@ -1001,6 +1015,7 @@ export const usePremiumTvStore = defineStore('premiumTv', () => {
     catalog,
     connection,
     connected,
+    expired,
     importing,
     error,
     lastReport,

@@ -10,7 +10,7 @@
  * `skip_serializing`).
  */
 import type { CatalogState, PremiumAccount } from '~/types/premium'
-import { mdiAccountCircle, mdiLogout, mdiRefresh } from '@mdi/js'
+import { mdiAccountCircle, mdiAlertCircleOutline, mdiLogout, mdiRefresh } from '@mdi/js'
 import { computed } from 'vue'
 
 const props = defineProps<{
@@ -49,16 +49,20 @@ const serverHost = computed(() => {
  * one. Anything that does not parse is dropped rather than shown raw —
  * "Expires 1735689600" is worse than no line.
  */
-const expiry = computed(() => {
-  const raw = props.account.expiresAt?.trim()
-  if (!raw)
+function day(raw?: string | null): string {
+  const text = raw?.trim()
+  if (!text)
     return ''
-  const secs = Number(raw)
-  const date = Number.isFinite(secs) && secs > 0 ? new Date(secs * 1000) : new Date(raw)
+  const secs = Number(text)
+  const date = Number.isFinite(secs) && secs > 0 ? new Date(secs * 1000) : new Date(text)
   if (Number.isNaN(date.getTime()))
     return ''
   return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
-})
+}
+
+const expiry = computed(() => day(props.account.expiresAt))
+const activated = computed(() => day(props.account.createdAt))
+const expired = computed(() => props.account.status === 'expired')
 
 const connections = computed(() => {
   const max = props.account.maxConnections
@@ -104,6 +108,17 @@ const syncing = computed(() => props.catalog?.syncing === true)
       </div>
     </div>
 
+    <v-alert
+      v-if="expired"
+      type="error"
+      variant="tonal"
+      density="compact"
+      :icon="mdiAlertCircleOutline"
+      :text="expiry
+        ? $t('Your subscription expired on {date}. Renew it with your provider, then press Refresh.', { date: expiry })
+        : $t('Your subscription has expired. Please renew with your provider.')"
+    />
+
     <dl class="grid gap-2 text-body-small sm:grid-cols-2">
       <div v-if="serverHost" class="rounded-xl bg-surface-container px-3 py-2">
         <dt class="text-label-small opacity-45">
@@ -121,9 +136,17 @@ const syncing = computed(() => props.catalog?.syncing === true)
           {{ account.username }}
         </dd>
       </div>
+      <div v-if="activated" class="rounded-xl bg-surface-container px-3 py-2">
+        <dt class="text-label-small opacity-45">
+          {{ $t('Activated') }}
+        </dt>
+        <dd class="font-medium">
+          {{ activated }}
+        </dd>
+      </div>
       <div v-if="expiry" class="rounded-xl bg-surface-container px-3 py-2">
         <dt class="text-label-small opacity-45">
-          {{ $t('Expires') }}
+          {{ expired ? $t('Expired') : $t('Expires') }}
         </dt>
         <dd class="font-medium">
           {{ expiry }}
@@ -141,8 +164,8 @@ const syncing = computed(() => props.catalog?.syncing === true)
         <dt class="text-label-small opacity-45">
           {{ $t('Status') }}
         </dt>
-        <dd class="font-medium capitalize">
-          {{ account.status || $t('Connected') }}
+        <dd class="font-medium" :class="expired ? 'text-error' : undefined">
+          {{ expired ? $t('Expired') : $t('Active') }}
         </dd>
       </div>
     </dl>

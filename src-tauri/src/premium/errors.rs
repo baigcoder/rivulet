@@ -31,6 +31,10 @@ pub enum PremiumError {
     CredentialError(String),
     /// The provider returned 401 mid-session — token expired.
     SessionExpired,
+    /// The provider says the account's paid period is over, or its
+    /// expiry date has passed. Not `AuthFailed`: the password is right,
+    /// and telling the user to re-type it would send them the wrong way.
+    SubscriptionExpired,
     /// The premium API was hit but the local subscription is not
     /// `tier === 'premium'` or `expiresAt <= now`.
     PremiumRequired,
@@ -82,6 +86,11 @@ impl fmt::Display for PremiumError {
             PremiumError::SessionExpired => write!(
                 f,
                 "Your session has expired. Please reconnect."
+            ),
+            // `mapIptvError` keys on "subscription has expired".
+            PremiumError::SubscriptionExpired => write!(
+                f,
+                "Your subscription has expired. Please renew with your provider."
             ),
             PremiumError::PremiumRequired => write!(
                 f,
