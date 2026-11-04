@@ -785,6 +785,22 @@ const mixedOff = await startTorrent({ imdbId: 'tt0000001', allowTorrents: false 
 assert.equal(mixedOff.url, 'https://debrid.example/dl/abc/Sintel.mkv', 'engine off: Play opens the Direct URL')
 assert.equal(mixedOff.id, -1)
 
+// A quality chosen before Play is the copy that plays — and a tier the sources
+// do not have falls back to the usual pick instead of to nothing.
+{
+  const restore = globalThis.fetch
+  const tiered = (q: string, id: string) => ({ name: `Example\n${q}`, title: `Sintel.2010.${q}.WEB-DL\n💾 2 GB`, url: `https://debrid.example/dl/${id}/Sintel.mkv` })
+  globalThis.fetch = (async (input: string | URL | Request) => String(input).startsWith(ENGINE)
+    ? Response.json({ torrents: [] })
+    : Response.json({ streams: [tiered('2160p', 'uhd'), tiered('1080p', 'fhd'), tiered('480p', 'sd')] })) as typeof fetch
+  const sd = await startTorrent({ imdbId: 'tt0000099', allowTorrents: false, quality: '480' })
+  assert.match(sd.url, /\/sd\//, 'asked for 480p, plays the 480p link')
+  assert.ok(sd.alternatives?.some(r => r.url.includes('/uhd/')), 'the other tiers stay in the Quality menu')
+  const missing = await startTorrent({ imdbId: 'tt0000099', allowTorrents: false, quality: '720' })
+  assert.match(missing.url, /\/fhd\//, 'no 720p copy: the usual pick, not an error')
+  globalThis.fetch = restore
+}
+
 engine.held = false
 requests = []
 globalThis.fetch = (async (input: string | URL | Request) => {

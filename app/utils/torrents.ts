@@ -12,6 +12,7 @@
  * ours — the fan-out below is the entire "plugin system".
  */
 import { deviceCodecs, hasNativePlayer } from './htmlvideo'
+import { atTier, tierOf } from './quality'
 
 /**
  * Sources to search, in the order they were added. Empty until the user adds
@@ -87,7 +88,9 @@ const TRACKERS = [
  * Streaming preference. 1080p is the sweet spot; 4k needs more bandwidth than
  * most connections give a torrent, so it sits below 720p.
  */
-const QUALITY_ORDER = ['1080p', '720p', '4k', '2160p', '480p']
+const TIER_RANK: Record<string, number> = { 1080: 0, 720: 1, 1440: 1, 2160: 2, 480: 3 }
+/** A name with no resolution in it — ranked last, since it may be anything. */
+const UNRANKED = 4
 
 /**
  * Past this a release is a remux or a needlessly fat encode: the same picture
@@ -96,11 +99,11 @@ const QUALITY_ORDER = ['1080p', '720p', '4k', '2160p', '480p']
  * outranking the small one just because it has more seeders.
  */
 const SWEET_BYTES: Record<string, number> = {
-  '1080p': 6 * 1024 ** 3,
-  '720p': 3 * 1024 ** 3,
-  '4k': 20 * 1024 ** 3,
-  '2160p': 20 * 1024 ** 3,
-  '480p': 2 * 1024 ** 3,
+  2160: 20 * 1024 ** 3,
+  1440: 10 * 1024 ** 3,
+  1080: 6 * 1024 ** 3,
+  720: 3 * 1024 ** 3,
+  480: 2 * 1024 ** 3,
 }
 
 /** Remuxes stream badly on anything but a LAN — a 60 GB movie never keeps up. */
@@ -450,8 +453,9 @@ export function releaseFileName(t: { name: string, file?: string | null, url?: s
 }
 
 function rank(t: Release) {
-  const i = QUALITY_ORDER.findIndex(q => t.quality.toLowerCase().startsWith(q))
-  return i === -1 ? QUALITY_ORDER.length : i
+  // `tierOf` reads the name and file too, so an addon that leaves its label
+  // blank, or spells 1080p "FHD", still ranks as what it is.
+  return TIER_RANK[tierOf(t)] ?? UNRANKED
 }
 
 /**
@@ -488,7 +492,7 @@ export function isWeakSwarm(t: Release) {
 
 /** More bytes than this tier needs to look good — a bigger bill for the same picture. */
 export function isBloated(t: Release) {
-  const cap = SWEET_BYTES[QUALITY_ORDER[rank(t)] ?? ''] ?? MAX_BYTES
+  const cap = SWEET_BYTES[tierOf(t)] ?? MAX_BYTES
   return t.bytes > cap
 }
 
@@ -2221,6 +2225,12 @@ export async function startTorrent(options: {
    * `onAlternativesLate` afterwards.
    */
   fast?: boolean
+  /**
+   * A tier from `utils/quality` (`'1080'`, `'480'`, …) the viewer chose before
+   * Play. Ignored by a hand-picked `magnet`/`url` and by the copy already on
+   * the disk — both are a release, not a search.
+   */
+  quality?: string
   /** Late server answers from a `fast` search, ranked, ready to join the candidates. */
   onAlternativesLate?: (releases: Release[]) => void
   onStep?: (step: string) => void
@@ -2351,21 +2361,31 @@ export async function startTorrent(options: {
       // Stream-only mode narrows before ranking: a torrent release is not a
       // worse pick, it is no pick at all. A save is the opposite — a link
       // keeps nothing, so only magnets count.
+      // The quality chosen before Play narrows the pool to that tier — the
+      // copy that streams, and with the engine on the one that lands on the
+      // disk. Picked under the same seeder and disk rules; where no copy at
+      // that tier passes them, every tier is back in play rather than nothing.
+      const choose = (list: Release[], torrents: boolean) => {
+        const pick = (l: Release[]) => options.save
+          ? pickBest(l, options.maxBytes, options.compatible ?? !hasNativePlayer(), true)
+          : pickPlay(l, options.maxBytes, options.compatible ?? !hasNativePlayer(), torrents)
+        const tier = atTier(list, options.quality)
+        const hit = tier !== list ? pick(tier) : null
+        return hit ? { hit, list: tier } : { hit: pick(list), list }
+      }
       let pool = options.save
         ? found.filter(t => t.magnet)
         : allowTorrents ? found : found.filter(t => !!t.url)
-      picked = options.save
-        ? pickBest(pool, options.maxBytes, options.compatible ?? !hasNativePlayer(), true)
-        : pickPlay(pool, options.maxBytes, options.compatible ?? !hasNativePlayer(), allowTorrents)
+      ;({ hit: picked, list: pool } = choose(pool, allowTorrents))
       // Stream-only, and the sources answered with torrents alone — the free
       // kind. Rather than send the viewer off to find a paid source, stream the
       // torrent and keep nothing: the copy is marked `ephemeral` and deleted the
       // moment the player closes (see `release` in the downloads store).
       if (!picked && !allowTorrents && !options.save) {
-        const magnets = found.filter(t => t.magnet)
-        picked = pickPlay(magnets, options.maxBytes, options.compatible ?? !hasNativePlayer(), true)
+        const magnets = choose(found.filter(t => t.magnet), true)
+        picked = magnets.hit
         if (picked) {
-          pool = magnets
+          pool = magnets.list
           ephemeral = true
         }
       }

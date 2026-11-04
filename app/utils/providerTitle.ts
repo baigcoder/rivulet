@@ -1,3 +1,5 @@
+import { tierLabel, tierOfText } from './quality'
+
 /**
  * IPTV VOD names are a panel row, not a film title: `EN: Dune (2021)`,
  * `PK | Film [4K]`. TMDB has never heard of the prefix, so a search on
@@ -33,4 +35,34 @@ export function vodDisplayName(title: string): { name: string, year: string, qua
   const year = rest.match(YEAR)?.[1] ?? rest.match(YEAR_TAIL)?.[1] ?? ''
   const name = rest.replace(YEAR, '').replace(YEAR_TAIL, '').replace(/\s+/g, ' ').trim()
   return { name: name || title.trim(), year, quality }
+}
+
+/**
+ * Every listing of one title at a different quality — panels list `Dune | 4K`
+ * and `Dune | FHD` as two films, and those are the only qualities an Xtream
+ * VOD really has (each entry is one file, with no variants inside it). Highest
+ * first, one per resolution, and empty unless there are at least two to pick
+ * between. `label` is `''` for a listing with no stamp at all.
+ */
+export function vodVersions<T extends { id: string, name: string }>(items: readonly T[], title: string): { item: T, label: string }[] {
+  const me = vodDisplayName(title)
+  const want = me.name.toLowerCase()
+  if (!want)
+    return []
+  const byTier = new Map<string, { item: T, label: string, height: number }>()
+  for (const item of items) {
+    // Cheap test first: a panel can hold fifty thousand films.
+    if (!item.name.toLowerCase().includes(want))
+      continue
+    const it = vodDisplayName(item.name)
+    if (it.name.toLowerCase() !== want || (me.year && it.year && me.year !== it.year))
+      continue
+    const tier = tierOfText(it.quality) || tierOfText(item.name)
+    const key = tier || it.quality
+    if (!byTier.has(key))
+      byTier.set(key, { item, label: tierLabel(tier) || it.quality, height: Number(tier) || 0 })
+  }
+  return byTier.size > 1
+    ? [...byTier.values()].sort((a, b) => b.height - a.height).map(({ item, label }) => ({ item, label }))
+    : []
 }

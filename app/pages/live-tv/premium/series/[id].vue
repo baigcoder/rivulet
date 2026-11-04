@@ -56,6 +56,16 @@ const visibleEpisodes = computed(() => {
   return seasons.value.find(([n]) => n === activeSeason.value)?.[1] ?? []
 })
 
+/** The same show listed at its other qualities — each its own series on the panel. */
+const versions = computed(() => vodVersions(premium.vodSeries, rawTitle.value).map(({ item, label }) => ({
+  label: label || $t('Standard'),
+  current: item.id === seriesId.value,
+  to: {
+    path: localePath(`/live-tv/premium/series/${item.id}`),
+    query: { ...route.query, title: item.name, poster: item.posterUrl || undefined },
+  },
+})))
+
 watch(seriesId, id => {
   const hit = peekPremiumTmdb('tv', id)
   if (hit)
@@ -129,6 +139,7 @@ function pickSeason(n: number): void {
     :fallback-year="fallbackYear"
     :fallback-rating="fallbackRating"
     :provider-quality="labelled.quality"
+    :versions="versions"
     @play="play"
   >
     <template #below>

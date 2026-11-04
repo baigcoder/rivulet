@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { ReleaseSort } from '~/utils/quality'
 import type { MediaType } from '~/utils/tmdb'
 import type { Release } from '~/utils/torrents'
 import {
@@ -8,12 +9,13 @@ import {
   mdiDownload,
   mdiFlashOutline,
   mdiFormatListBulletedType,
-  mdiMagnify,
   mdiPlay,
   mdiPowerPlugOutline,
   mdiReload,
   mdiWeightLifter,
 } from '@mdi/js'
+import { sortReleases, tierLabel, tierOf, tiersIn } from '~/utils/quality'
+import { ranked } from '~/utils/torrents'
 
 /**
  * Every release the configured sources offer for a title, when the automatic
@@ -45,7 +47,16 @@ const added = ref<string[]>([])
 
 const tier = ref('all')
 const query = ref('')
-const sort = ref<'seeders' | 'size'>('seeders')
+const sort = ref<'best' | ReleaseSort>('best')
+
+const SORTS = computed(() => [
+  { value: 'best', title: $t('Best first') },
+  { value: 'quality-desc', title: $t('Highest quality') },
+  { value: 'quality-asc', title: $t('Lowest quality') },
+  { value: 'size-desc', title: $t('Largest') },
+  { value: 'size-asc', title: $t('Smallest') },
+  { value: 'seeders', title: $t('Most seeders') },
+] as const)
 
 /** Nothing to search until the user has added somewhere to search. */
 const configured = computed(() => settings.sources.length > 0)
@@ -79,12 +90,29 @@ watch(() => [props.imdbId, props.season, props.episode].join('|'), () => {
   added.value = []
 })
 
-/** "4k DV | HDR" and "4k HDR" are one tier as far as picking goes. */
-function tierOf(t: Release) {
-  return t.quality.split(' ')[0] || 'other'
-}
+/**
+ * One chip per resolution the sources returned, read by `tierOf` — so "4k DV |
+ * HDR", "UHD" and "2160p" are one chip, and a tier nobody has is never offered.
+ */
+const tiers = computed(() => {
+  const count = (tier: string) => torrents.value.filter(t => tierOf(t) === tier).length
+  const unknown = count('')
+  return [
+    { value: 'all', title: $t('All · {count}', { count: torrents.value.length }) },
+    ...tiersIn(torrents.value).map(t => ({ value: t, title: `${tierLabel(t)} · ${count(t)}` })),
+    ...unknown ? [{ value: 'unknown', title: $t('Unknown · {count}', { count: unknown }) }] : [],
+  ]
+})
 
-const tiers = computed(() => ['all', ...new Set(torrents.value.map(tierOf))])
+// A new search may not carry the tier that was being looked at.
+watch(tiers, list => {
+  if (!list.some(t => t.value === tier.value))
+    tier.value = 'all'
+})
+
+function shownQuality(t: Release) {
+  return t.quality || tierLabel(tierOf(t))
+}
 
 // Same pick the Play button would make, storage budget included — picking by
 // hand can still exceed it, and eviction will make room.
@@ -117,12 +145,21 @@ function isAdded(t: Release) {
   return added.value.includes(releaseKey(t)) || inEngine(t)
 }
 
+/**
+ * Every release, filtered and in the chosen order. "Best first" is Play's own
+ * ranking, with what Play would never pick (dead, too big) after it rather than
+ * hidden — this list is where you go to overrule that judgement.
+ */
 const list = computed(() => {
   const q = query.value.trim().toLowerCase()
-  return torrents.value
-    .filter(t => (tier.value === 'all' || tierOf(t) === tier.value)
-      && (!q || `${t.name} ${t.source}`.toLowerCase().includes(q)))
-    .sort((a, b) => sort.value === 'size' ? a.bytes - b.bytes : b.seeders - a.seeders)
+  const shown = torrents.value.filter(t =>
+    (tier.value === 'all' || (tier.value === 'unknown' ? !tierOf(t) : tierOf(t) === tier.value))
+    && (!q || `${t.name} ${t.source} ${t.file ?? ''}`.toLowerCase().includes(q)))
+  if (sort.value !== 'best')
+    return sortReleases(shown, sort.value)
+  const head = ranked(shown, downloads.budget, false, settings.allowTorrents)
+  const picked = new Set(head)
+  return [...head, ...sortReleases(shown.filter(t => !picked.has(t)), 'seeders')]
 })
 
 async function play(t: Release) {
@@ -224,34 +261,22 @@ defineExpose({
         {{ step }}
       </p>
 
-      <div class="flex flex-wrap items-center gap-2 px-4 pb-3">
-        <div class="min-w-0 w-full sm:w-auto sm:flex-1">
-          <v-chip-group v-model="tier" mandatory selected-class="bg-primary text-on-primary font-medium">
-            <v-chip v-for="value in tiers" :key="value" :value="value" :text="value" size="small" />
+      <!-- Chips rather than a dropdown: a remote walks them left and right and
+           OK picks one, where a select is one more overlay to open and close. -->
+      <div class="flex flex-col gap-1 px-4 pb-3">
+        <div class="flex flex-wrap items-center gap-x-3">
+          <span class="w-16 shrink-0 text-label-large opacity-60">{{ $t('Quality') }}</span>
+          <v-chip-group v-model="tier" mandatory selected-class="bg-primary text-on-primary font-medium" class="min-w-0 flex-1">
+            <v-chip v-for="t in tiers" :key="t.value" :value="t.value" :text="t.title" size="small" />
           </v-chip-group>
         </div>
-        <v-text-field
-          v-model="query"
-          :prepend-inner-icon="mdiMagnify"
-          :placeholder="$t('Release or origin')"
-          variant="solo-filled"
-          density="compact"
-          rounded="lg"
-          flat
-          hide-details
-          clearable
-          class="min-w-40 flex-1 shrink-0 sm:w-56 sm:flex-none sm:grow-0"
-        />
-        <v-select
-          v-model="sort"
-          :items="[
-            { value: 'seeders', title: $t('Most seeders') },
-            { value: 'size', title: $t('Smallest') },
-          ]"
-          density="compact"
-          hide-details
-          class="w-40 shrink-0 grow-0"
-        />
+        <div class="flex flex-wrap items-center gap-x-3">
+          <span class="w-16 shrink-0 text-label-large opacity-60">{{ $t('Sort') }}</span>
+          <v-chip-group v-model="sort" mandatory selected-class="bg-secondary-container text-on-secondary-container font-medium" class="min-w-0 flex-1">
+            <v-chip v-for="o in SORTS" :key="o.value" :value="o.value" :text="o.title" size="small" />
+          </v-chip-group>
+        </div>
+        <search-field v-model="query" :placeholder="$t('Release or origin')" density="compact" class="sm:max-w-80" />
       </div>
 
       <v-card-text class="max-h-[60vh] pt-0">
@@ -300,7 +325,7 @@ defineExpose({
               </div>
             </div>
 
-            <v-chip size="x-small" :text="t.quality || $t('unknown')" class="shrink-0" />
+            <v-chip size="x-small" :text="shownQuality(t) || $t('unknown')" class="shrink-0" />
 
             <!-- Amber is "costs more than it's worth", error is "will not fit
                    at all" — the second has to outrank the first, since a bloated
