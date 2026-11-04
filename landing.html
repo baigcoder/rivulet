@@ -405,6 +405,31 @@
     .mode .bars li::before, .mode.dl .bars li::before { background: currentColor; border-right-color: transparent; border-right-width: 0; }
     .mode .ui { color: var(--ink); }
 
+    /* ── Two ways: how each is set up ── */
+    .setup { margin-top: clamp(72px, 7vw, 120px); display: grid; gap: clamp(24px, 3vw, 40px); }
+    .setup-h { font-size: var(--step-head); letter-spacing: -0.04em; line-height: .95; }
+    .setup-cols { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(12px, 1.4vw, 20px); }
+    .setup-col { background: var(--surface); border-radius: 24px; padding: clamp(24px, 2.6vw, 40px); display: grid; gap: 1.25rem; align-content: start; }
+    .setup-col h4 { font-size: var(--step-lead); letter-spacing: -0.02em; line-height: 1.15; }
+    .setup-col.c-in h4 { color: var(--accent); }
+    .setup-col.c-dl h4 { color: var(--landed); }
+    .setup-col .steps li { background: none; padding: 0; }
+    .setup-col .steps { gap: 1.25rem; }
+    .setup-col.c-dl .steps li::before { background: var(--landed); border-right-color: var(--accent); }
+    .setup-col .steps b { font-weight: 700; }
+    .compare { width: 100%; border-collapse: separate; border-spacing: 0 6px; font-size: var(--step-body); }
+    .compare th, .compare td { text-align: left; padding: 14px 20px; background: var(--surface); vertical-align: top; }
+    .compare thead th { background: none; padding-block: 0 6px; font-size: var(--step-lead); letter-spacing: -0.02em; }
+    .compare thead th:nth-child(2) { color: var(--accent); }
+    .compare thead th:nth-child(3) { color: var(--landed); }
+    .compare tbody th { color: var(--muted); font-weight: 500; border-radius: 14px 0 0 14px; width: 22%; }
+    .compare tbody td:last-child { border-radius: 0 14px 14px 0; }
+    .setup-note { max-width: 70ch; }
+    @media (max-width: 900px) {
+      .setup-cols { grid-template-columns: 1fr; }
+      .compare th, .compare td { padding: 10px 12px; font-size: var(--step-small); }
+    }
+
     /* ── Switches: each band fills with colour when it's on ── */
     .switches { display: grid; }
     .sw { min-height: max(132px, 20vh); display: grid; grid-template-columns: auto 1fr 1fr; gap: .5rem 2rem; align-items: center; padding: 1.5rem var(--gutter); transition: background-color .35s var(--ease); }
@@ -624,6 +649,43 @@
           </div>
           <div><h3>downloads, with or without play</h3><p>Press Download to keep a film for later, or paste a magnet link: the engine is a full torrent client.</p></div>
         </div>
+      </div>
+      <div class="setup">
+        <h3 class="setup-h rise">how each one is set up</h3>
+        <div class="setup-cols">
+          <div class="setup-col c-in rise">
+            <h4>Direct play, through a debrid service</h4>
+            <ol class="steps">
+              <li><div><b>Get a debrid account.</b><p>A cloud (debrid) service such as TorBox or Real-Debrid fetches the film on its own servers. Copy your API key from its site.</p></div></li>
+              <li><div><b>Put the key in your addon.</b><p>Open your Stremio addon's own configure page, paste the key there, and copy the address it gives you. The key travels inside that address; Rivulet never asks for it.</p></div></li>
+              <li><div><b>Paste the address in Rivulet.</b><p>Settings → Sources → Add. Rivulet reads what the addon answers and labels it Instant (cloud).</p></div></li>
+              <li><div><b>Press Play.</b><p>The film streams straight from the debrid servers in a second or two, at full quality, with nothing written to your disk.</p></div></li>
+            </ol>
+          </div>
+          <div class="setup-col c-dl rise" style="--i:1">
+            <h4>Play while it downloads, through torrents</h4>
+            <ol class="steps">
+              <li><div><b>Add a Stremio addon as it is.</b><p>Paste the address of an addon with no debrid key. Rivulet labels it Torrents, and that's all the setup there is.</p></div></li>
+              <li><div><b>Press Play, pick a drive.</b><p>The first time, choose where films land (Rivulet shows the free space on each drive) or stream from a temporary cache. Tick "Always do this" to skip the question.</p></div></li>
+              <li><div><b>It starts in seconds.</b><p>The built-in engine fetches the pieces just ahead of you first, so the film plays while the rest arrives.</p></div></li>
+              <li><div><b>The rest lands in the background.</b><p>It keeps downloading after you pause or close the player, and on Android while you use another app. Once it's whole, it plays offline.</p></div></li>
+            </ol>
+          </div>
+        </div>
+        <table class="compare rise" data-ui>
+          <caption class="vh">Direct play compared with play while it downloads</caption>
+          <thead><tr><th scope="col"></th><th scope="col">Direct play (debrid)</th><th scope="col">Play while it downloads</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Starts</th><td>In a second or two</td><td>In seconds, once peers answer</td></tr>
+            <tr><th scope="row">You need</th><td>A debrid subscription</td><td>Nothing more</td></tr>
+            <tr><th scope="row">Disk used</th><td>None</td><td>The film's size, or a cache that's deleted</td></tr>
+            <tr><th scope="row">Shares with peers</th><td>No</td><td>Yes, while it downloads, like any torrent</td></tr>
+            <tr><th scope="row">Rare or old titles</th><td>When the service has them cached</td><td>Whenever anyone is sharing them</td></tr>
+            <tr><th scope="row">Plays offline later</th><td>No, it streams</td><td>Yes, once it has landed</td></tr>
+            <tr><th scope="row">Costs</th><td>Your debrid subscription</td><td>Free</td></tr>
+          </tbody>
+        </table>
+        <p class="setup-note rise">Both can be on at once: Rivulet searches every source and starts the best release, Instant first. Prefer never to use a paid service? Settings → Sources → Torrents only ignores debrid links.</p>
       </div>
     </section>
 
