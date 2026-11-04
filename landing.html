@@ -414,7 +414,8 @@
     .setup-col.c-in h4 { color: var(--accent); }
     .setup-col.c-dl h4 { color: var(--landed); }
     .setup-col .steps li { background: none; padding: 0; }
-    .setup-col .steps { gap: 1.25rem; }
+    .setup-col .steps { gap: 1rem; }
+    .setup-col .steps p { margin-top: 0; color: var(--ink); }
     .setup-col.c-dl .steps li::before { background: var(--landed); border-right-color: var(--accent); }
     .setup-col .steps b { font-weight: 700; }
     .compare { width: 100%; border-collapse: separate; border-spacing: 0 6px; font-size: var(--step-body); }
@@ -656,36 +657,30 @@
           <div class="setup-col c-in rise">
             <h4>Direct play, through a debrid service</h4>
             <ol class="steps">
-              <li><div><b>Get a debrid account.</b><p>A cloud (debrid) service such as TorBox or Real-Debrid fetches the film on its own servers. Copy your API key from its site.</p></div></li>
-              <li><div><b>Put the key in your addon.</b><p>Open your Stremio addon's own configure page, paste the key there, and copy the address it gives you. The key travels inside that address; Rivulet never asks for it.</p></div></li>
-              <li><div><b>Paste the address in Rivulet.</b><p>Settings → Sources → Add. Rivulet reads what the addon answers and labels it Instant (cloud).</p></div></li>
-              <li><div><b>Press Play.</b><p>The film streams straight from the debrid servers in a second or two, at full quality, with nothing written to your disk.</p></div></li>
+              <li><div><p>Put your debrid key (TorBox, Real-Debrid…) in your Stremio addon's configure page.</p></div></li>
+              <li><div><p>Paste the address it gives you in Settings → Sources.</p></div></li>
+              <li><div><p>Press Play: it streams from the service, nothing on your disk.</p></div></li>
             </ol>
           </div>
           <div class="setup-col c-dl rise" style="--i:1">
             <h4>Play while it downloads, through torrents</h4>
             <ol class="steps">
-              <li><div><b>Add a Stremio addon as it is.</b><p>Paste the address of an addon with no debrid key. Rivulet labels it Torrents, and that's all the setup there is.</p></div></li>
-              <li><div><b>Press Play, pick a drive.</b><p>The first time, choose where films land (Rivulet shows the free space on each drive) or stream from a temporary cache. Tick "Always do this" to skip the question.</p></div></li>
-              <li><div><b>It starts in seconds.</b><p>The built-in engine fetches the pieces just ahead of you first, so the film plays while the rest arrives.</p></div></li>
-              <li><div><b>The rest lands in the background.</b><p>It keeps downloading after you pause or close the player, and on Android while you use another app. Once it's whole, it plays offline.</p></div></li>
+              <li><div><p>Paste an addon's address with no debrid key.</p></div></li>
+              <li><div><p>Press Play and pick a drive, or a temporary cache.</p></div></li>
+              <li><div><p>It starts in seconds; the rest lands in the background.</p></div></li>
             </ol>
           </div>
         </div>
         <table class="compare rise" data-ui>
           <caption class="vh">Direct play compared with play while it downloads</caption>
-          <thead><tr><th scope="col"></th><th scope="col">Direct play (debrid)</th><th scope="col">Play while it downloads</th></tr></thead>
+          <thead><tr><th scope="col"></th><th scope="col">Direct play</th><th scope="col">Play while it downloads</th></tr></thead>
           <tbody>
-            <tr><th scope="row">Starts</th><td>In a second or two</td><td>In seconds, once peers answer</td></tr>
-            <tr><th scope="row">You need</th><td>A debrid subscription</td><td>Nothing more</td></tr>
-            <tr><th scope="row">Disk used</th><td>None</td><td>The film's size, or a cache that's deleted</td></tr>
-            <tr><th scope="row">Shares with peers</th><td>No</td><td>Yes, while it downloads, like any torrent</td></tr>
-            <tr><th scope="row">Rare or old titles</th><td>When the service has them cached</td><td>Whenever anyone is sharing them</td></tr>
-            <tr><th scope="row">Plays offline later</th><td>No, it streams</td><td>Yes, once it has landed</td></tr>
-            <tr><th scope="row">Costs</th><td>Your debrid subscription</td><td>Free</td></tr>
+            <tr><th scope="row">Starts</th><td>In a second or two</td><td>In seconds</td></tr>
+            <tr><th scope="row">Disk used</th><td>None</td><td>The film's size</td></tr>
+            <tr><th scope="row">Plays offline later</th><td>No</td><td>Yes</td></tr>
+            <tr><th scope="row">Costs</th><td>A debrid subscription</td><td>Free</td></tr>
           </tbody>
         </table>
-        <p class="setup-note rise">Both can be on at once: Rivulet searches every source and starts the best release, Instant first. Prefer never to use a paid service? Settings → Sources → Torrents only ignores debrid links.</p>
       </div>
     </section>
 
