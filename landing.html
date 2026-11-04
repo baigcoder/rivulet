@@ -442,23 +442,24 @@
       .st-bar { order: 0; }
     }
 
-    /* ── Android: phone screens dropped on the headline ── */
-    .prints { position: relative; min-height: 100svh; display: grid; place-items: center; overflow: hidden; padding: 64px var(--gutter); }
-    .prints h2 { display: grid; text-align: center; font-size: clamp(5rem, 1rem + 11vw, 12rem); line-height: .85; letter-spacing: -0.06em; }
-    .print { position: absolute; width: min(18vw, 260px); border-radius: 22px; background: var(--bg); padding: 8px; transition: transform .25s var(--ease); }
-    .print.p1 { left: 5%; top: 14%; transform: rotate(-8deg); }
-    .print.p2 { right: 4%; top: 8%; transform: rotate(5deg); }
-    .print.p3 { right: 19%; top: 52%; width: min(13vw, 190px); transform: rotate(-4deg); }
-    .print:hover { transform: rotate(0) scale(1.03); z-index: 2; }
-    .print-note { position: absolute; left: var(--gutter); bottom: 32px; max-width: 46ch; }
+    /* ── Android: the words beside three whole phone screens ── */
+    .sofa-grid { display: grid; grid-template-columns: 5fr 7fr; gap: clamp(32px, 5vw, 80px); align-items: center; }
+    .sofa h2 { font-size: var(--step-display); }
+    .sofa-t { display: grid; gap: 1.75rem; align-content: center; }
+    .keys { display: flex; flex-wrap: wrap; gap: .5rem; }
+    .keys span { min-width: 3.25rem; height: 3.25rem; padding: 0 .9rem; display: grid; place-items: center; border-radius: var(--round); background: var(--bg); font-weight: 700; transition: transform .15s var(--ease), background-color .15s; }
+    .keys span.ok { background: var(--landed); color: var(--landed-ink); }
+    .keys span:hover { transform: translateY(-3px); background: var(--raised); }
+    .keys span.ok:hover { background: var(--landed); }
+    .sofa-phones { display: grid; grid-template-columns: repeat(3, 1fr); gap: clamp(12px, 1.6vw, 24px); align-items: start; }
+    .sofa-phones .shot { border-radius: 30px; background: var(--bg); transition: transform .3s var(--ease); }
+    .sofa-phones .shot img { border-radius: 24px; }
+    .sofa-phones .shot:nth-child(2) { margin-top: clamp(32px, 5vw, 80px); }
+    .sofa-phones .shot:hover { transform: translateY(-8px); }
     @media (max-width: 900px) {
-      .prints { min-height: 0; display: block; }
-      .prints h2 { font-size: 30vw; }
-      .print { position: static; display: inline-block; width: 44%; margin: 24px 2% 0; }
-      .print.p1 { transform: rotate(-6deg); }
-      .print.p2 { transform: rotate(5deg); }
-      .print.p3 { display: none; }
-      .print-note { position: static; margin-top: 24px; }
+      .sofa-grid { grid-template-columns: 1fr; }
+      .sofa h2 { font-size: 18vw; }
+      .sofa-phones .shot:nth-child(2) { margin-top: 24px; }
     }
 
     /* ── Questions: a wide heading, the questions indented under it ── */
@@ -475,8 +476,7 @@
     @media (max-width: 900px) { .qs { margin-inline-start: 0; } }
 
     @media (prefers-reduced-motion: reduce) {
-      .js .shutter, .js .shutter video, .sw, .sw p span { transition: none; clip-path: none; transform: none; }
-      .print { transition: none; }
+      .js .shutter, .js .shutter video, .sw, .sw .cons, .sofa-phones .shot { transition: none; clip-path: none; transform: none; }
     }
 
     /* ── Entrances: content is visible without script; with it, parts rise in. ── */
@@ -771,13 +771,28 @@
       </div>
     </section>
 
-    <!-- Android: the phone screens laid round the headline like prints. -->
-    <section id="android" class="chapter prints f2" aria-labelledby="android-h">
-      <h2 id="android-h"><span>on the</span><span>sofa</span></h2>
-      <img class="print p1" src="phone-home.jpg" alt="Rivulet on a phone: the home screen" width="824" height="1830" loading="lazy" />
-      <img class="print p2" src="phone-search.jpg" alt="Rivulet on a phone: search" width="824" height="1830" loading="lazy" />
-      <img class="print p3" src="phone-streaming.jpg" alt="Rivulet on a phone: browsing by streaming service" width="824" height="1830" loading="lazy" />
-      <p class="print-note">One APK for phones, tablets and Android TV. Every screen works with the remote's arrows, OK and back, and downloads keep going while you use another app.</p>
+    <!-- Android: what it is on a sofa, beside three whole phone screens. -->
+    <section id="android" class="chapter band-field f2 sofa" aria-labelledby="android-h">
+      <div class="wrap sofa-grid">
+        <div class="sofa-t">
+          <h2 id="android-h" class="rise">on the sofa</h2>
+          <p class="lead rise" style="--i:1">One APK for phones, tablets and Android TV, with a tile on the TV's launcher.</p>
+          <div class="keys rise" style="--i:2" data-ui aria-label="The remote's keys: up, down, left, right, OK and back">
+            <span>&larr;</span><span>&uarr;</span><span>&darr;</span><span>&rarr;</span><span class="ok">OK</span><span>Back</span>
+          </div>
+          <ul class="bars rise" style="--i:3">
+            <li>Every screen works with those six keys, with a clear ring on whatever has focus.</li>
+            <li>Touch and swipe on a phone; the same library on both.</li>
+            <li>Downloads keep going while you use another app.</li>
+            <li>Your library stays on the device; a backup file moves it.</li>
+          </ul>
+        </div>
+        <div class="sofa-phones">
+          <figure class="shot rise"><img src="phone-home.jpg" alt="Rivulet on a phone: the home screen" width="824" height="1830" loading="lazy" /></figure>
+          <figure class="shot rise" style="--i:1"><img src="phone-search.jpg" alt="Rivulet on a phone: search" width="824" height="1830" loading="lazy" /></figure>
+          <figure class="shot rise" style="--i:2"><img src="phone-streaming.jpg" alt="Rivulet on a phone: browsing by streaming service" width="824" height="1830" loading="lazy" /></figure>
+        </div>
+      </div>
     </section>
 
     <section id="download" class="chapter wrap">
