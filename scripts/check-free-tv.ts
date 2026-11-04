@@ -779,5 +779,22 @@ for (const gone of ['LiveEpgDrawer', 'LiveEpgSheet', 'LiveTvSearch', 'LiveFilter
   assert.match(read('pages/live-tv/settings.vue'), /Reminders ring only while Rivulet is open\./, 'and says when it cannot')
 }
 
+// A remote in the channel drawer: Back closes the drawer and stays on the
+// channel, the arrows walk the list instead of zapping, and nothing on the way
+// raises the TV's keyboard.
+{
+  const src = (f: string) => readFileSync(new URL(`../app/${f}`, import.meta.url), 'utf8')
+  const overlay = src('components/live-tv/LivePlayerOverlay.vue')
+  assert.match(overlay, /addEventListener\('keydown', onKeyDown, true\)/, 'the overlay hears Back before the page does')
+  assert.match(overlay, /showQuickZap\.value && \(e\.key === 'Escape'[\s\S]{0,120}e\.stopPropagation\(\)/, 'and keeps it from leaving the player')
+  assert.ok(!/<input[^>]*drawerSearch/.test(overlay), 'the drawer search is a field a d-pad can pass')
+  for (const page of ['pages/live-tv/watch.vue', 'pages/live-tv/premium/watch.vue']) {
+    const text = src(page)
+    assert.match(text, /closest\?\.\('\[data-live-panel\]'\)/, `${page}: arrows inside a panel are not channel changes`)
+    assert.equal((text.match(/&& !inPanel\)/g) ?? []).length, 2, `${page}: both zap directions respect it`)
+  }
+  assert.match(src('pages/live-tv/premium/watch.vue'), /data-live-panel/, 'the Premium quality card is a panel too')
+}
+
 // eslint-disable-next-line no-console
 console.info('free tv health: ok')

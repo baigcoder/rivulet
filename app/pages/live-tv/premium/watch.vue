@@ -170,6 +170,11 @@ const guideLoading = ref(false)
 const qualityVariants = ref<IPTVChannel[]>([])
 const qualityLoading = ref(false)
 const showQualityPicker = ref(false)
+const qualityPanel = ref<HTMLElement | null>(null)
+
+// Focus into the card on open, so a remote is already in the list it opened.
+watch(showQualityPicker, open => open && nextTick(() =>
+  qualityPanel.value?.querySelector<HTMLElement>('button[data-variant]')?.focus({ preventScroll: true })))
 
 let pollHandle: ReturnType<typeof setInterval> | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -677,6 +682,12 @@ function zap(direction: 1 | -1): void {
 }
 
 function onKey(e: KeyboardEvent): void {
+  // The overlay already took this key (Back closing its drawer, a digit).
+  if (e.defaultPrevented)
+    return
+  // Inside a panel the arrows walk its list — zapping there changed channel on
+  // every press and left the list unreachable from a remote.
+  const inPanel = !!(e.target as Element | null)?.closest?.('[data-live-panel]')
   if (e.key === 'Escape' || e.key === 'Backspace' || e.key === 'GoBack') {
     e.preventDefault()
     if (showQualityPicker.value) {
@@ -685,11 +696,11 @@ function onKey(e: KeyboardEvent): void {
     }
     goBack()
   }
-  else if ((e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === 'ChannelUp') && hasNext.value) {
+  else if ((e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === 'ChannelUp') && hasNext.value && !inPanel) {
     e.preventDefault()
     zap(1)
   }
-  else if ((e.key === 'ArrowLeft' || e.key === 'ArrowUp' || e.key === 'PageUp' || e.key === 'ChannelDown') && hasPrev.value) {
+  else if ((e.key === 'ArrowLeft' || e.key === 'ArrowUp' || e.key === 'PageUp' || e.key === 'ChannelDown') && hasPrev.value && !inPanel) {
     e.preventDefault()
     zap(-1)
   }
@@ -868,7 +879,9 @@ onUnmounted(() => {
       @click.self="showQualityPicker = false"
     >
       <div
+        ref="qualityPanel"
         data-cut
+        data-live-panel
         class="absolute end-4 top-24 flex w-80 max-w-[calc(100vw-2rem)] max-h-[min(70vh,24rem)] flex-col overflow-hidden rounded-2xl border border-white/15 bg-neutral-950 text-white shadow-2xl"
         @click.stop
       >
@@ -904,6 +917,7 @@ onUnmounted(() => {
             v-for="variant in qualityVariants"
             :key="variant.id"
             type="button"
+            data-variant
             class="flex w-full items-center gap-3 rounded-xl p-2.5 text-start text-white/80 transition-colors hover:bg-white/10 hover:text-white focus-visible:bg-white/10 focus-visible:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             @click="switchQuality(variant)"
           >
