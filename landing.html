@@ -465,8 +465,9 @@
     .st-bar { grid-column: 1 / -1; background: var(--raised); padding: 24px var(--gutter) 28px; }
     .st-bar input { width: 100%; accent-color: var(--accent); height: 32px; cursor: pointer; }
     .st-names { list-style: none; display: grid; grid-template-columns: repeat(4, 1fr); margin-top: .75rem; color: var(--muted); font-size: var(--step-lead); }
-    .st-names li { cursor: pointer; transition: color .15s; }
-    .st-names li:hover { color: var(--ink); }
+    .st-names button { all: unset; cursor: pointer; transition: color .15s; }
+    .st-names button:hover, .st-names button:focus-visible { color: var(--ink); }
+    .st-names button:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
     .st-names li:nth-child(2), .st-names li:nth-child(3) { text-align: center; }
     .st-names li:last-child { text-align: right; }
     .st-names li.on { color: var(--ink); font-weight: 700; }
@@ -475,6 +476,19 @@
       .st-r { order: -1; min-height: 46svh; }
       .st-bar { order: 0; }
     }
+
+    /* ── Live TV: one switch between the two services ── */
+    .live { transition: background-color .4s var(--ease); }
+    .live.prem { background: var(--field-4); }
+    .live-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: end; gap: 1.5rem; margin-bottom: clamp(40px, 4vw, 64px); }
+    .seg { display: inline-flex; gap: 4px; padding: 5px; border-radius: var(--round); background: var(--bg); }
+    .seg button { border: 0; cursor: pointer; padding: .8rem 1.5rem; border-radius: var(--round); background: none; font-weight: 700; font-size: var(--step-body); color: var(--muted); transition: background-color .2s, color .2s; }
+    .seg button:hover, .seg button:focus-visible { color: var(--ink); }
+    .seg button[aria-selected="true"] { background: var(--accent); color: var(--accent-ink); }
+    .live.prem .seg button[aria-selected="true"] { background: var(--landed); color: var(--landed-ink); }
+    .pane-h { font-size: var(--step-head); letter-spacing: -0.04em; line-height: .95; margin-bottom: 1.25rem; }
+    .live-pane[hidden] { display: none; }
+    .live-pane { animation: flash .35s var(--ease); }
 
     /* ── Android: the words beside three whole phone screens ── */
     .sofa-grid { display: grid; grid-template-columns: 5fr 7fr; gap: clamp(32px, 5vw, 80px); align-items: center; }
@@ -513,6 +527,21 @@
       .js .shutter, .js .shutter video, .sw, .sw .cons, .sofa-phones .shot { transition: none; clip-path: none; transform: none; }
     }
 
+    /* ── Language: the picker, and Urdu set right-to-left in Nastaliq ── */
+    .lang { border: 0; cursor: pointer; min-height: 2.75rem; padding: 0 1rem; border-radius: var(--round); background: var(--raised); font-weight: 700; transition: background-color .15s, transform .15s var(--ease); }
+    .lang:hover, .lang:focus-visible { background: #2a3039; transform: translateY(-2px); }
+    @media (max-width: 900px) { .lang { margin-inline-start: auto; } .top .btn { margin-inline-start: 0; } }
+    html[lang="ur"] { --font: 'Pilcrow Rounded', 'Noto Nastaliq Urdu', serif; }
+    html[lang="ur"] body { line-height: 2.1; }
+    html[lang="ur"] :is(.ui, .compare, .steps, .keys, .files) { line-height: 2; }
+    html[lang="ur"] .ui .rec { display: inline-block; }
+    html[lang="ur"] :is(h1, h2, h3, h4, .sentence, .sw p, .tabs strong, .qs summary, .lead, .cons, .st-names, .readout) { letter-spacing: 0; line-height: 1.75; text-transform: none; }
+    html[lang="ur"] .hero .said { white-space: normal; font-size: min(5.6vw, 6rem); line-height: 1.6; }
+    @media (max-width: 900px) { html[lang="ur"] .hero .said { font-size: 9.5vw; } }
+    html[lang="ur"] .sentence { font-size: clamp(2rem, 1rem + 3.4vw, 4.25rem); }
+    html[lang="ur"] .band, html[lang="ur"] .st-bar input, html[lang="ur"] .sw button, html[lang="ur"] .typed input { direction: ltr; }
+    html[lang="ur"] .compare th, html[lang="ur"] .compare td, html[lang="ur"] .tabs button { text-align: right; }
+
     /* ── Entrances: content is visible without script; with it, parts rise in. ── */
     .js .rise { opacity: 0; transform: translateY(24px); transition: opacity .7s var(--ease), transform .7s var(--ease); transition-delay: calc(var(--i, 0) * 75ms); }
     .js .rise.in { opacity: 1; transform: none; }
@@ -535,6 +564,7 @@
       <a href="#android">Android</a>
       <a href="#faq">Questions</a>
     </nav>
+    <button type="button" class="lang" id="lang" lang="ur" aria-label="زبان: اردو میں دیکھیں" data-no-i18n>اردو</button>
     <a class="btn" href="#download">Download</a>
   </header>
 
@@ -586,7 +616,7 @@
     <section id="try" class="chapter wrap try" aria-labelledby="try-h">
       <h2 id="try-h" class="vh">Search a title</h2>
       <label class="vh" for="q">Search films and shows</label>
-      <div class="typed" data-ui><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 3a7 7 0 0 1 5.6 11.2l5 5-1.4 1.4-5-5A7 7 0 1 1 10 3zm0 2a5 5 0 1 0 0 10 5 5 0 0 0 0-10z"/></svg><input id="q" type="text" value="lupin" autocomplete="off" spellcheck="false" /><span class="caret" aria-hidden="true"></span></div>
+      <div class="typed" data-ui><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 3a7 7 0 0 1 5.6 11.2l5 5-1.4 1.4-5-5A7 7 0 1 1 10 3zm0 2a5 5 0 1 0 0 10 5 5 0 0 0 0-10z"/></svg><input id="q" type="text" dir="auto" value="lupin" autocomplete="off" spellcheck="false" /><span class="caret" aria-hidden="true"></span></div>
       <div class="try-row">
       <div class="ui answer" data-ui aria-live="polite">
         <div class="h"><b id="a-title">Lupin · S1 E1</b><span id="a-meta">your 2 sources · 3 releases</span></div>
@@ -715,20 +745,21 @@
       </div>
       <div class="st-bar">
         <input id="st" type="range" min="0" max="3" step="1" value="0" aria-label="Stage" aria-valuetext="Paste" />
-        <ol class="st-names"><li class="on">Paste</li><li>Checked</li><li>Play</li><li>Lands</li></ol>
+        <ol class="st-names"><li class="on"><button type="button">Paste</button></li><li><button type="button">Checked</button></li><li><button type="button">Play</button></li><li><button type="button">Lands</button></li></ol>
       </div>
     </section>
 
     <!-- Inside: what the app offers, each as its real screen, whole. -->
     <section id="inside" class="chapter wrap" aria-labelledby="inside-h">
       <div class="intro">
-        <h2 id="inside-h" class="rise">everything, in one app</h2>
-        <p class="lead rise" style="--i:1">Films, shows and anime with their posters, cast and trailers; free and paid Live TV; downloads; and a player that handles any file. Pick a screen to see it as it is.</p>
+        <h2 id="inside-h" class="rise">every screen, as it is</h2>
+        <p class="lead rise" style="--i:1">Films, shows and anime with their posters, cast and trailers, and a real player for any file. Pick a screen to see it whole.</p>
       </div>
       <div class="inside">
         <ul class="tabs" id="screens">
           <li><button type="button" aria-pressed="true" data-img="app-home.jpg" data-alt="The Rivulet home screen: a large featured film above rows of posters"><strong>Home</strong><span>What's new, what's trending and where you left off, in rows you can scroll with a mouse or a remote.</span></button></li>
           <li><button type="button" aria-pressed="false" data-img="app-detail.jpg" data-alt="A title page for Lupin with Play S1 E1, Download, Releases and Trailer"><strong>Title pages</strong><span>Every film and show gets its own page: backdrop, logo, rating, cast, trailer, and Play or Download in one place.</span></button></li>
+          <li><button type="button" aria-pressed="false" data-img="player.png" data-alt="The Rivulet player mid-film, with subtitles, the seek bar, quality, audio language and subtitle controls"><strong>The player</strong><span>mpv on the desktop and libVLC on Android: MKV, HEVC, AV1, HDR and surround sound play. Pause and it tells you what you're watching.</span></button></li>
           <li><button type="button" aria-pressed="false" data-img="app-season.jpg" data-alt="A season page with its list of episodes and their stills"><strong>Seasons</strong><span>Each episode with its still, synopsis and how much you've watched. Next episode is always one press away.</span></button></li>
           <li><button type="button" aria-pressed="false" data-img="app-search.jpg" data-alt="Search results for a title, with posters in a grid"><strong>Search</strong><span>One box for films, shows and people, with results as you type.</span></button></li>
           <li><button type="button" aria-pressed="false" data-img="app-anime.jpg" data-alt="The anime section with seasonal rows of posters"><strong>Anime</strong><span>A section of its own, with this season's shows and the classics.</span></button></li>
@@ -742,27 +773,19 @@
       </div>
     </section>
 
-    <!-- The player: the whole frame. -->
-    <section id="player" class="chapter wrap" aria-labelledby="player-h">
-      <div class="intro">
-        <h2 id="player-h" class="rise">a real player inside</h2>
-        <p class="lead rise" style="--i:1">Rivulet plays through mpv on the desktop and libVLC on Android, so the files a browser gives up on simply play.</p>
+    <!-- Live TV: one section, the two services behind one switch. -->
+    <section id="live" class="chapter band-field f1 live" aria-labelledby="live-h">
+      <div class="wrap live-head">
+        <h2 id="live-h" class="rise">live tv, free or your own</h2>
+        <div class="seg rise" style="--i:1" role="tablist" aria-label="Live TV service">
+          <button type="button" role="tab" id="tab-free" aria-selected="true" aria-controls="pane-free">Free TV</button>
+          <button type="button" role="tab" id="tab-premium" aria-selected="false" aria-controls="pane-premium">Premium TV</button>
+        </div>
       </div>
-      <figure class="shot rise">
-        <img src="player.png" alt="The Rivulet player mid-film, with subtitles, the seek bar, quality, audio language and subtitle controls" width="1920" height="1080" loading="lazy" />
-      </figure>
-      <div class="facts">
-        <div class="rise"><h3>plays what you have</h3><p>MKV, MP4, HEVC, AV1, HDR and surround sound, at any bitrate your screen can take.</p></div>
-        <div class="rise" style="--i:1"><h3>your language</h3><p>Subtitles searched for you, audio tracks by language, and the quality picker one press away.</p></div>
-        <div class="rise" style="--i:2"><h3>says what's on</h3><p>Pause and the screen tells you what you're watching: the logo, the year, the rating and the story.</p></div>
-      </div>
-    </section>
-
-    <!-- Live TV: the two services. -->
-    <section id="live" class="chapter band-field f1" aria-labelledby="free-h">
+      <div class="live-pane" id="pane-free" role="tabpanel" aria-labelledby="tab-free">
       <div class="wrap svc">
         <div class="t">
-          <h2 id="free-h" class="rise">free tv, checked for you</h2>
+          <h3 class="pane-h">free tv, checked for you</h3>
           <p class="lead rise" style="--i:1">Thousands of free channels from public playlists, sorted by country and category.</p>
           <ul class="bars rise" style="--i:2">
             <li>Each time you open it, every channel is tried, and the dead ones are marked and set aside.</li>
@@ -788,12 +811,11 @@
           <p class="dim" style="margin-top:12px">Set a bell on any programme in the guide. Rivulet tells you a few minutes before, even from another app.</p>
         </div>
       </div>
-    </section>
-
-    <section class="band-field f4" aria-labelledby="premium-h">
+      </div>
+      <div class="live-pane" id="pane-premium" role="tabpanel" aria-labelledby="tab-premium">
       <div class="wrap svc flip">
         <div class="t">
-          <h2 id="premium-h" class="rise">premium tv, your own iptv</h2>
+          <h3 class="pane-h">premium tv, your own iptv</h3>
           <p class="lead rise" style="--i:1">Already pay for an IPTV service? Sign in with its Xtream Codes login or M3U link, and it lives in Rivulet beside everything else.</p>
           <ul class="bars rise" style="--i:2">
             <li>Live channels, Movies and TV shows, each with posters, ratings and its own detail page.</li>
@@ -816,6 +838,7 @@
           <img src="live-shows.jpg" alt="Premium TV shows: a provider's series as a poster grid" width="1600" height="828" loading="lazy" />
           <figcaption><strong>TV shows</strong> by season and episode, picked up where you stopped.</figcaption>
         </figure>
+      </div>
       </div>
     </section>
 
@@ -921,6 +944,73 @@
   </footer>
 
   <script>
+    // Language: English is the page as written; Urdu swaps every text node and
+    // label from one table, turns the page right-to-left, and only then loads
+    // a Nastaliq face. The choice is remembered per visitor, or set with ?lang=ur.
+    var UR = { "2160p · HDR · your cloud": "2160p · HDR · آپ کا کلاؤڈ", "1080p · 4.1 GB · your cloud": "1080p · 4.1 GB · آپ کا کلاؤڈ", "1080p · 412 peers": "1080p · 412 پیئرز", "Try it": "آزمائیں", "Two ways to play": "چلانے کے دو طریقے", "Sources": "سورسز", "Live TV": "لائیو ٹی وی", "Screens": "اسکرینیں", "Android": "اینڈرائیڈ", "Questions": "سوالات", "Download": "ڈاؤن لوڈ", "play it while it lands": "جیسے جیسے آئے، ویسے ویسے چلائیں", "Rivulet is a free media library and player for Windows, Linux, macOS and Android TV. A film starts on its first bytes and finishes landing while you watch.": "Rivulet ونڈوز، لینکس، میک اور اینڈرائیڈ ٹی وی کے لیے ایک مفت میڈیا لائبریری اور پلیئر ہے۔ فلم پہلے ہی حصے سے شروع ہو جاتی ہے اور باقی آپ کے دیکھتے دیکھتے پہنچ جاتی ہے۔", "See it work": "چلتا ہوا دیکھیں", "Free and open source. No account, no ads, no bundled sources.": "مفت اور اوپن سورس۔ نہ اکاؤنٹ، نہ اشتہار، نہ پہلے سے شامل سورسز۔", "drag it: it's still landing": "کھینچ کر دیکھیں: یہ ابھی آ رہی ہے", "watched": "دیکھا", "landed": "پہنچ چکا", "of": "از", "Drag the bar: the tour plays from wherever it has landed.": "پٹی کو کھینچیں: ٹور وہیں سے چلتا ہے جہاں تک پہنچ چکا ہے۔", "All of it has landed: it plays offline now.": "پوری فلم پہنچ گئی: اب یہ آف لائن چلتی ہے۔", "Waiting a moment: that part is still on its way.": "ذرا ٹھہریں: یہ حصہ ابھی راستے میں ہے۔", "Playing what has landed; the rest keeps coming.": "جو پہنچ گیا وہ چل رہا ہے؛ باقی آتا جا رہا ہے۔", "Search a title": "کوئی ٹائٹل تلاش کریں", "Search films and shows": "فلمیں اور شوز تلاش کریں", "your 2 sources · 3 releases": "آپ کے 2 سورسز · 3 ریلیزز", "Type a title": "ٹائٹل لکھیں", "Instant": "فوری", "Play": "چلائیں", "Torrent": "ٹورنٹ", "Downloaded": "ڈاؤن لوڈ شدہ", "Search once and every source you added answers. Instant plays from your cloud; Torrent plays while it downloads.": "ایک بار تلاش کریں اور آپ کا ہر سورس جواب دیتا ہے۔ فوری آپ کے کلاؤڈ سے چلتا ہے؛ ٹورنٹ ڈاؤن لوڈ ہوتے ہوئے چلتا ہے۔", "Try another:": "کوئی اور آزمائیں:", "two ways to press play": "پلے دبانے کے دو طریقے", "Every release your sources return is one of two kinds, and Rivulet labels it before you choose. Either way, Play is one press.": "آپ کے سورسز سے آنے والی ہر ریلیز دو میں سے ایک قسم کی ہوتی ہے، اور Rivulet آپ کے چننے سے پہلے اس پر لیبل لگا دیتا ہے۔ دونوں صورتوں میں پلے ایک ہی بار دبانا ہے۔", "instant from your cloud": "آپ کے کلاؤڈ سے فوری", "When a source answers with a link from a cloud (debrid) service you subscribe to, the film streams straight from it. Nothing is downloaded and nothing waits for peers.": "جب کوئی سورس آپ کی سبسکرائب کی ہوئی کلاؤڈ (ڈیبرڈ) سروس کا لنک دیتا ہے تو فلم سیدھی وہیں سے چلتی ہے۔ نہ کچھ ڈاؤن لوڈ ہوتا ہے، نہ پیئرز کا انتظار۔", "3 releases": "3 ریلیزز", "Starts in about a second, at full quality from the first frame.": "تقریباً ایک سیکنڈ میں شروع، پہلے فریم سے پوری کوالٹی میں۔", "Seek anywhere at once: the whole film is already there.": "کہیں بھی فوراً جائیں: پوری فلم پہلے سے موجود ہے۔", "If the cloud service is down, Rivulet says so in words and offers the torrent instead.": "اگر کلاؤڈ سروس بند ہو تو Rivulet صاف بتاتا ہے اور اس کی جگہ ٹورنٹ پیش کرتا ہے۔", "play while it downloads": "ڈاؤن لوڈ ہوتے ہوئے چلائیں", "A torrent plays through the engine built into the app. It starts on the first pieces and keeps landing while you watch, onto the drive you pick, or into a cache that is gone when you close the player.": "ٹورنٹ ایپ کے اندر بنے انجن سے چلتا ہے۔ یہ پہلے حصوں سے شروع ہوتا ہے اور دیکھتے دیکھتے آپ کی چنی ہوئی ڈرائیو پر، یا ایسے کیش میں آتا رہتا ہے جو پلیئر بند کرتے ہی مٹ جاتا ہے۔", "This source has no cloud service": "اس سورس کے پاس کلاؤڈ سروس نہیں", "Play while downloading": "ڈاؤن لوڈ ہوتے ہوئے چلائیں", "Recommended": "تجویز کردہ", "Starts in seconds and keeps the file.": "سیکنڈوں میں شروع اور فائل محفوظ رہتی ہے۔", "C: 212 GB free": "C: پر 212 GB خالی", "D: 1.4 TB free": "D: پر 1.4 TB خالی", "Stream with a temporary cache": "عارضی کیش کے ساتھ اسٹریم کریں", "Nothing is kept after the player closes.": "پلیئر بند ہونے کے بعد کچھ نہیں رکھا جاتا۔", "Always do this": "ہمیشہ یہی کریں", "The pieces you're about to watch are fetched first.": "جو حصہ آپ دیکھنے والے ہیں وہ پہلے لایا جاتا ہے۔", "Downloads carry on in the background, on Android too.": "ڈاؤن لوڈ پس منظر میں جاری رہتے ہیں، اینڈرائیڈ پر بھی۔", "Once it has landed, it plays offline, with no search and no peers.": "ایک بار پہنچ جائے تو آف لائن چلتی ہے، نہ تلاش نہ پیئرز۔", "how each one is set up": "ہر ایک کیسے سیٹ کریں", "Direct play, through a debrid service": "ڈائریکٹ پلے، ڈیبرڈ سروس کے ذریعے", "Put your debrid key (TorBox, Real-Debrid…) in your Stremio addon's configure page.": "اپنی ڈیبرڈ کی (TorBox، Real-Debrid…) اپنے Stremio ایڈ آن کے کنفیگر صفحے پر ڈالیں۔", "Paste the address it gives you in Settings → Sources.": "جو ایڈریس وہ دے اسے سیٹنگز ← سورسز میں پیسٹ کریں۔", "Press Play: it streams from the service, nothing on your disk.": "پلے دبائیں: یہ سروس سے اسٹریم ہوتا ہے، آپ کی ڈسک پر کچھ نہیں۔", "Play while it downloads, through torrents": "ڈاؤن لوڈ ہوتے ہوئے چلائیں، ٹورنٹ کے ذریعے", "Paste an addon's address with no debrid key.": "ڈیبرڈ کی کے بغیر کسی ایڈ آن کا ایڈریس پیسٹ کریں۔", "Press Play and pick a drive, or a temporary cache.": "پلے دبائیں اور ڈرائیو چنیں، یا عارضی کیش۔", "It starts in seconds; the rest lands in the background.": "سیکنڈوں میں شروع؛ باقی پس منظر میں آتا رہتا ہے۔", "Direct play compared with play while it downloads": "ڈائریکٹ پلے اور ڈاؤن لوڈ ہوتے ہوئے چلانے کا موازنہ", "Direct play": "ڈائریکٹ پلے", "Play while it downloads": "ڈاؤن لوڈ ہوتے ہوئے چلائیں", "Starts": "شروع ہوتا ہے", "In a second or two": "ایک دو سیکنڈ میں", "In seconds": "سیکنڈوں میں", "Disk used": "ڈسک کا استعمال", "None": "کوئی نہیں", "The film's size": "فلم کے سائز جتنا", "Plays offline later": "بعد میں آف لائن چلے", "No": "نہیں", "Yes": "ہاں", "Costs": "قیمت", "A debrid subscription": "ڈیبرڈ سبسکرپشن", "Free": "مفت", "Settings you can switch": "سیٹنگز جو آپ بدل سکتے ہیں", "Download while I watch": "دیکھتے ہوئے ڈاؤن لوڈ کریں", "The film keeps landing on D: and plays offline next time.": "فلم D: پر آتی رہتی ہے اور اگلی بار آف لائن چلتی ہے۔", "Hide channels that don't answer": "جواب نہ دینے والے چینل چھپائیں", "Free TV tried 2,800 channels and set 1,057 aside.": "فری ٹی وی نے 2,800 چینل آزمائے اور 1,057 الگ کر دیے۔", "Remind me before it starts": "شروع ہونے سے پہلے یاد دلائیں", "A note five minutes before, even from another app.": "پانچ منٹ پہلے اطلاع، چاہے آپ کسی اور ایپ میں ہوں۔", "Only download on Wi-Fi": "صرف وائی فائی پر ڈاؤن لوڈ کریں", "On a phone, downloads wait for Wi-Fi and pick up again on their own.": "فون پر ڈاؤن لوڈ وائی فائی کا انتظار کرتے ہیں اور خود ہی دوبارہ شروع ہو جاتے ہیں۔", "Use a colour of my own": "اپنا رنگ استعمال کریں", "The whole theme is rebuilt from the one colour you pick.": "پوری تھیم آپ کے چنے ہوئے ایک رنگ سے دوبارہ بنتی ہے۔", "first, paste the address": "پہلے، ایڈریس پیسٹ کریں", "In Settings → Sources, paste the URL your source gave you. Rivulet ships with none and never suggests one.": "سیٹنگز ← سورسز میں اپنے سورس کا دیا ہوا URL پیسٹ کریں۔ Rivulet میں کوئی سورس شامل نہیں اور یہ کبھی کوئی تجویز نہیں کرتا۔", "then it gets checked": "پھر اس کی جانچ ہوتی ہے", "Rivulet asks the source what it offers and labels it Instant (cloud) or Torrents, so you know how its releases will play.": "Rivulet سورس سے پوچھتا ہے کہ وہ کیا دیتا ہے اور اس پر فوری (کلاؤڈ) یا ٹورنٹس کا لیبل لگاتا ہے، تاکہ آپ جانیں اس کی ریلیزز کیسے چلیں گی۔", "next, press play": "اگلا، پلے دبائیں", "Open any title: every source is searched at once and the best release starts. Download keeps it; Releases lets you pick.": "کوئی بھی ٹائٹل کھولیں: ہر سورس ایک ساتھ تلاش ہوتا ہے اور بہترین ریلیز شروع ہو جاتی ہے۔ ڈاؤن لوڈ اسے محفوظ کرتا ہے؛ ریلیزز سے آپ خود چن سکتے ہیں۔", "last, it lands as you watch": "آخر میں، دیکھتے دیکھتے پہنچ جاتی ہے", "A torrent plays from its first pieces and keeps landing on your drive. Next time it plays offline.": "ٹورنٹ اپنے پہلے حصوں سے چلتا ہے اور آپ کی ڈرائیو پر آتا رہتا ہے۔ اگلی بار آف لائن چلتا ہے۔", "none yet": "ابھی کوئی نہیں", "Paste the address your source gave you": "اپنے سورس کا دیا ہوا ایڈریس پیسٹ کریں", "Add": "شامل کریں", "A link that offers a source opens here and asks you first.": "سورس پیش کرنے والا لنک یہاں کھلتا ہے اور پہلے آپ سے پوچھتا ہے۔", "2 checked": "2 جانچے گئے", "Torrents": "ٹورنٹس", "Your first source · answered in 0.6 s": "آپ کا پہلا سورس · 0.6 سیکنڈ میں جواب", "On": "آن", "Your second source · cloud links": "آپ کا دوسرا سورس · کلاؤڈ لنکس", "Landing · 64% · 18 MB/s": "آ رہی ہے · 64% · 18 MB/s", "Paste": "پیسٹ", "Checked": "جانچ", "Lands": "پہنچ گئی", "Stage": "مرحلہ", "every screen, as it is": "ہر اسکرین، جیسی ہے", "Films, shows and anime with their posters, cast and trailers, and a real player for any file. Pick a screen to see it whole.": "فلمیں، شوز اور اینیمی اپنے پوسٹرز، کاسٹ اور ٹریلرز کے ساتھ، اور ہر فائل کے لیے ایک اصل پلیئر۔ کوئی اسکرین چنیں اور پوری دیکھیں۔", "Home": "ہوم", "What's new, what's trending and where you left off, in rows you can scroll with a mouse or a remote.": "کیا نیا ہے، کیا مقبول ہے اور آپ نے کہاں چھوڑا، قطاروں میں جنہیں ماؤس یا ریموٹ سے اسکرول کریں۔", "Title pages": "ٹائٹل صفحات", "Every film and show gets its own page: backdrop, logo, rating, cast, trailer, and Play or Download in one place.": "ہر فلم اور شو کا اپنا صفحہ: بیک ڈراپ، لوگو، ریٹنگ، کاسٹ، ٹریلر، اور پلے یا ڈاؤن لوڈ ایک ہی جگہ۔", "The player": "پلیئر", "mpv on the desktop and libVLC on Android: MKV, HEVC, AV1, HDR and surround sound play. Pause and it tells you what you're watching.": "ڈیسک ٹاپ پر mpv اور اینڈرائیڈ پر libVLC: MKV، HEVC، AV1، HDR اور سراؤنڈ ساؤنڈ چلتے ہیں۔ روکیں تو یہ بتاتا ہے کہ آپ کیا دیکھ رہے ہیں۔", "Seasons": "سیزنز", "Each episode with its still, synopsis and how much you've watched. Next episode is always one press away.": "ہر قسط اپنی تصویر، خلاصے اور آپ کے دیکھے ہوئے حصے کے ساتھ۔ اگلی قسط ہمیشہ ایک بٹن دور۔", "Search": "تلاش", "One box for films, shows and people, with results as you type.": "فلموں، شوز اور لوگوں کے لیے ایک ہی خانہ، لکھتے لکھتے نتائج۔", "Anime": "اینیمی", "A section of its own, with this season's shows and the classics.": "اپنا الگ حصہ، اس سیزن کے شوز اور پرانے کلاسک کے ساتھ۔", "By service": "سروس کے لحاظ سے", "Browse what each streaming service carries, to know what a title is and where it's from.": "دیکھیں ہر اسٹریمنگ سروس پر کیا ہے، تاکہ معلوم ہو کوئی ٹائٹل کیا ہے اور کہاں کا ہے۔", "Subtitles": "سب ٹائٹلز", "Found in your language and styled the way you read best: size, colour, background and position.": "آپ کی زبان میں ملتے ہیں اور آپ کی پسند کے انداز میں: سائز، رنگ، پس منظر اور جگہ۔", "Themes": "تھیمز", "Twenty-eight themes, a colour of your own, and a backdrop picture behind it all.": "اٹھائیس تھیمز، آپ کا اپنا رنگ، اور سب کے پیچھے ایک پس منظر تصویر۔", "live tv, free or your own": "لائیو ٹی وی، مفت یا آپ کا اپنا", "Free TV": "فری ٹی وی", "Premium TV": "پریمیم ٹی وی", "Live TV service": "لائیو ٹی وی سروس", "free tv, checked for you": "فری ٹی وی، آپ کے لیے جانچا ہوا", "Thousands of free channels from public playlists, sorted by country and category.": "عوامی پلے لسٹس سے ہزاروں مفت چینل، ملک اور زمرے کے لحاظ سے ترتیب میں۔", "Each time you open it, every channel is tried, and the dead ones are marked and set aside.": "جب بھی آپ اسے کھولیں، ہر چینل آزمایا جاتا ہے، اور بند چینل نشان زد کر کے الگ کر دیے جاتے ہیں۔", "A guide from any XMLTV link you add, with reminders before a programme starts.": "آپ کے شامل کیے کسی بھی XMLTV لنک سے گائیڈ، اور پروگرام شروع ہونے سے پہلے یاد دہانی۔", "Type a channel number on the remote; one key goes back to the last channel.": "ریموٹ پر چینل نمبر لکھیں؛ ایک بٹن پچھلے چینل پر واپس لے جاتا ہے۔", "Free TV.": "فری ٹی وی۔", "1,057 channels that didn't answer are hidden; the rest play.": "جواب نہ دینے والے 1,057 چینل چھپے ہیں؛ باقی چلتے ہیں۔", "Checking which channels work…": "جانچ رہے ہیں کون سے چینل چلتے ہیں…", "1,240 of 2,800": "2,800 میں سے 1,240", "Now · Cucine da incubo · 22 min left": "ابھی · Cucine da incubo · 22 منٹ باقی", "Live": "لائیو", "Didn't answer": "جواب نہیں دیا", "Offline": "آف لائن", "Starting in 5 minutes": "5 منٹ میں شروع", "Reminder": "یاد دہانی", "The evening news": "شام کی خبریں", "Today, 22:30": "آج، 22:30", "Watch": "دیکھیں", "Set a bell on any programme in the guide. Rivulet tells you a few minutes before, even from another app.": "گائیڈ میں کسی بھی پروگرام پر گھنٹی لگائیں۔ Rivulet چند منٹ پہلے بتاتا ہے، چاہے آپ کسی اور ایپ میں ہوں۔", "premium tv, your own iptv": "پریمیم ٹی وی، آپ کا اپنا IPTV", "Already pay for an IPTV service? Sign in with its Xtream Codes login or M3U link, and it lives in Rivulet beside everything else.": "پہلے سے کوئی IPTV سروس لی ہوئی ہے؟ اس کے Xtream Codes لاگ اِن یا M3U لنک سے سائن اِن کریں، اور یہ Rivulet میں باقی سب کے ساتھ آ جاتی ہے۔", "Live channels, Movies and TV shows, each with posters, ratings and its own detail page.": "لائیو چینلز، فلمیں اور ٹی وی شوز، ہر ایک پوسٹر، ریٹنگ اور اپنے تفصیلی صفحے کے ساتھ۔", "Catch-up on channels that keep an archive: watch what aired yesterday.": "آرکائیو رکھنے والے چینلز پر کیچ اپ: کل جو نشر ہوا وہ دیکھیں۔", "Keep several accounts and switch between them in one press.": "کئی اکاؤنٹ رکھیں اور ایک بٹن سے بدلیں۔", "Your login is encrypted on this device and never leaves it. Rivulet doesn't sell IPTV.": "آپ کا لاگ اِن اسی ڈیوائس پر انکرپٹ رہتا ہے اور کہیں نہیں جاتا۔ Rivulet آئی پی ٹی وی نہیں بیچتا۔", "Premium TV.": "پریمیم ٹی وی۔", "A provider's 13,849 channels in 246 categories, searchable and numbered.": "ایک پرووائیڈر کے 13,849 چینل 246 زمروں میں، قابلِ تلاش اور نمبر کے ساتھ۔", "Movies": "فلمیں", "from your provider, with their posters and details.": "آپ کے پرووائیڈر سے، پوسٹرز اور تفصیل کے ساتھ۔", "TV shows": "ٹی وی شوز", "by season and episode, picked up where you stopped.": "سیزن اور قسط کے لحاظ سے، وہیں سے جہاں آپ رکے تھے۔", "on the sofa": "صوفے پر", "One APK for phones, tablets and Android TV, with a tile on the TV's launcher.": "فون، ٹیبلیٹ اور اینڈرائیڈ ٹی وی کے لیے ایک ہی APK، ٹی وی کے لانچر پر اپنی ٹائل کے ساتھ۔", "OK": "OK", "Back": "واپس", "Every screen works with those six keys, with a clear ring on whatever has focus.": "ہر اسکرین انہی چھ بٹنوں سے چلتی ہے، اور جو چیز منتخب ہو اس کے گرد واضح دائرہ ہوتا ہے۔", "Touch and swipe on a phone; the same library on both.": "فون پر ٹچ اور سوائپ؛ دونوں پر ایک ہی لائبریری۔", "Downloads keep going while you use another app.": "دوسری ایپ استعمال کرتے ہوئے بھی ڈاؤن لوڈ جاری رہتے ہیں۔", "Your library stays on the device; a backup file moves it.": "آپ کی لائبریری ڈیوائس پر رہتی ہے؛ بیک اپ فائل اسے منتقل کرتی ہے۔", "put rivulet on my": "rivulet انسٹال کریں اپنے", "windows": "ونڈوز پر", "android tv": "اینڈرائیڈ ٹی وی پر", "linux": "لینکس پر", "mac": "میک پر", "download": "ڈاؤن لوڈ", "Download for {os}": "{os} کے لیے ڈاؤن لوڈ کریں", "An installer with mpv and ffmpeg inside, for Windows 10 and 11. It tells you when a new release lands.": "ونڈوز 10 اور 11 کے لیے انسٹالر، mpv اور ffmpeg سمیت۔ نئی ریلیز آنے پر یہ بتا دیتا ہے۔", "One APK for phones, tablets and TVs, with libVLC, remote navigation and downloads that keep going in the background.": "فون، ٹیبلیٹ اور ٹی وی کے لیے ایک APK، libVLC، ریموٹ سے چلانے اور پس منظر میں جاری رہنے والے ڈاؤن لوڈز کے ساتھ۔", "An AppImage that plays through your system mpv, or the .deb and .rpm packages, which bring everything they need.": "ایک AppImage جو آپ کے سسٹم کے mpv سے چلتی ہے، یا .deb اور .rpm پیکجز جو اپنی ہر ضرورت ساتھ لاتے ہیں۔", "A disk image for Apple Silicon with mpv built in. One command, below, lets it open.": "ایپل سلیکان کے لیے ڈسک امیج، mpv سمیت۔ نیچے دی گئی ایک کمانڈ سے یہ کھل جاتی ہے۔", "Every file, version": "ہر فائل، ورژن", "All releases": "تمام ریلیزز", "macOS: the app isn't signed by Apple, so after dragging it to Applications run": "میک: یہ ایپ ایپل سے سائن شدہ نہیں، اس لیے Applications میں ڈالنے کے بعد ایک بار یہ چلائیں", "once.": "۔", "good to know": "جاننے کی باتیں", "Does Rivulet come with any content or sources?": "کیا Rivulet کے ساتھ کوئی مواد یا سورسز آتے ہیں؟", "No. Rivulet hosts nothing, indexes nothing and ships with no sources. It searches only the servers you add yourself, and works as a player and torrent client with none at all.": "نہیں۔ Rivulet نہ کچھ ہوسٹ کرتا ہے، نہ انڈیکس کرتا ہے، اور اس میں کوئی سورس شامل نہیں۔ یہ صرف وہی سرور تلاش کرتا ہے جو آپ خود شامل کریں، اور بغیر کسی سورس کے بھی پلیئر اور ٹورنٹ کلائنٹ کے طور پر کام کرتا ہے۔", "What does \"Instant (cloud)\" mean?": "\"فوری (کلاؤڈ)\" کا کیا مطلب ہے؟", "Some sources answer with direct links from a cloud (debrid) service you subscribe to, rather than torrents. Rivulet tells the two apart when you add the source: cloud links play at once with nothing downloaded, torrents play through the built-in engine.": "کچھ سورسز ٹورنٹ کی بجائے آپ کی سبسکرائب کی ہوئی کلاؤڈ (ڈیبرڈ) سروس کے براہِ راست لنک دیتے ہیں۔ سورس شامل کرتے وقت Rivulet دونوں میں فرق کر لیتا ہے: کلاؤڈ لنکس بغیر ڈاؤن لوڈ فوراً چلتے ہیں، ٹورنٹس اندرونی انجن سے چلتے ہیں۔", "My source has no cloud service. Can I still press Play?": "میرے سورس کے پاس کلاؤڈ سروس نہیں۔ کیا پھر بھی پلے دبا سکتا ہوں؟", "Yes. Play while downloading starts in seconds while the file lands on the drive you choose. If you'd rather keep nothing, stream from a temporary cache that is deleted when you leave the player.": "ہاں۔ ڈاؤن لوڈ ہوتے ہوئے چلانا سیکنڈوں میں شروع ہوتا ہے اور فائل آپ کی چنی ہوئی ڈرائیو پر آتی رہتی ہے۔ اگر کچھ نہیں رکھنا تو عارضی کیش سے اسٹریم کریں جو پلیئر چھوڑتے ہی مٹ جاتا ہے۔", "Do I need an account?": "کیا مجھے اکاؤنٹ چاہیے؟", "No. There's no Rivulet account and no Rivulet server. Your progress, favourites and history stay on your device, and a backup file moves them to another one.": "نہیں۔ نہ Rivulet اکاؤنٹ ہے نہ Rivulet سرور۔ آپ کی پیش رفت، پسندیدہ اور ہسٹری آپ کی ڈیوائس پر رہتی ہے، اور بیک اپ فائل انہیں دوسری ڈیوائس پر لے جاتی ہے۔", "Does it work on Android TV with a remote?": "کیا یہ اینڈرائیڈ ٹی وی پر ریموٹ سے چلتا ہے؟", "Yes. One APK for phones, tablets and TVs. Every screen works with up, down, left, right, OK and back, with clear focus rings and a launcher tile on Android TV.": "ہاں۔ فون، ٹیبلیٹ اور ٹی وی کے لیے ایک APK۔ ہر اسکرین اوپر، نیچے، دائیں، بائیں، OK اور واپس سے چلتی ہے، واضح فوکس دائروں اور اینڈرائیڈ ٹی وی پر لانچر ٹائل کے ساتھ۔", "What is Premium TV?": "پریمیم ٹی وی کیا ہے؟", "A place to connect the IPTV service you already have, with an Xtream Codes login or an M3U playlist link. Rivulet doesn't sell or provide IPTV, and your login stays on your device.": "اپنی پہلے سے موجود IPTV سروس جوڑنے کی جگہ، Xtream Codes لاگ اِن یا M3U پلے لسٹ لنک کے ساتھ۔ Rivulet نہ IPTV بیچتا ہے نہ دیتا ہے، اور آپ کا لاگ اِن آپ کی ڈیوائس پر رہتا ہے۔", "Get it": "حاصل کریں", "Android & TV": "اینڈرائیڈ اور ٹی وی", "Read": "پڑھیں", "Adding a source": "سورس شامل کرنا", "Project": "پروجیکٹ", "Report an issue": "مسئلہ رپورٹ کریں", "MIT License": "MIT لائسنس", "Made by": "بنانے والے", "Hassan Baig and contributors": "حسن بیگ اور ساتھی", "Built with Tauri and Nuxt": "Tauri اور Nuxt سے بنا", "© 2026 Rivulet contributors. This product uses the TMDB API but is not endorsed or certified by TMDB.": "© 2026 Rivulet کے ساتھی۔ یہ پروڈکٹ TMDB API استعمال کرتی ہے لیکن TMDB سے منظور یا تصدیق شدہ نہیں۔", "Back to top": "اوپر جائیں", "Sections": "حصے", "Language": "زبان", "A 77-second tour of the Rivulet app: home, title pages, the player and Live TV": "Rivulet ایپ کا 77 سیکنڈ کا ٹور: ہوم، ٹائٹل صفحات، پلیئر اور لائیو ٹی وی", "Tour position": "ٹور کی جگہ", "A title page's list of releases, the first marked Instant": "ٹائٹل صفحے پر ریلیزز کی فہرست، پہلی پر فوری کا نشان", "The Play dialog for a source with no cloud service": "کلاؤڈ سروس کے بغیر سورس کے لیے پلے ڈائیلاگ", "The Rivulet home screen: a large featured film above rows of posters": "Rivulet کی ہوم اسکرین: پوسٹرز کی قطاروں کے اوپر ایک بڑی نمایاں فلم", "A title page for Lupin with Play S1 E1, Download, Releases and Trailer": "Lupin کا ٹائٹل صفحہ: پلے S1 E1، ڈاؤن لوڈ، ریلیزز اور ٹریلر", "The Rivulet player mid-film, with subtitles, the seek bar, quality, audio language and subtitle controls": "فلم کے دوران Rivulet پلیئر: سب ٹائٹلز، سیک بار، کوالٹی، آڈیو زبان اور سب ٹائٹل کنٹرولز", "A season page with its list of episodes and their stills": "سیزن کا صفحہ، قسطوں اور ان کی تصاویر کے ساتھ", "Search results for a title, with posters in a grid": "ایک ٹائٹل کی تلاش کے نتائج، پوسٹرز کی گرڈ میں", "The anime section with seasonal rows of posters": "اینیمی کا حصہ، سیزن کے لحاظ سے پوسٹرز کی قطاریں", "Browsing titles by streaming service": "اسٹریمنگ سروس کے لحاظ سے ٹائٹلز دیکھنا", "Subtitle settings: language, size, colour and background": "سب ٹائٹل سیٹنگز: زبان، سائز، رنگ اور پس منظر", "Appearance settings with a grid of colour themes": "ظاہری سیٹنگز، رنگین تھیمز کی گرڈ کے ساتھ", "Free TV: all channels by country, with 1,057 offline channels hidden and one marked Offline": "فری ٹی وی: ملک کے لحاظ سے تمام چینل، 1,057 آف لائن چینل چھپے ہوئے اور ایک پر آف لائن کا نشان", "Free TV while it checks its channels": "فری ٹی وی اپنے چینل جانچتے ہوئے", "A programme reminder": "پروگرام کی یاد دہانی", "Premium TV: a provider's All Sports 4K category with numbered channels and Live channels, Movies and TV shows tabs": "پریمیم ٹی وی: ایک پرووائیڈر کا All Sports 4K زمرہ، نمبر والے چینلز اور لائیو چینلز، فلمیں اور ٹی وی شوز کے ٹیب", "Premium TV movies: a provider's films as a poster grid": "پریمیم ٹی وی فلمیں: پرووائیڈر کی فلمیں پوسٹرز کی گرڈ میں", "Premium TV shows: a provider's series as a poster grid": "پریمیم ٹی وی شوز: پرووائیڈر کی سیریز پوسٹرز کی گرڈ میں", "The remote's keys: up, down, left, right, OK and back": "ریموٹ کے بٹن: اوپر، نیچے، بائیں، دائیں، OK اور واپس", "Rivulet on a phone: the home screen": "فون پر Rivulet: ہوم اسکرین", "Rivulet on a phone: search": "فون پر Rivulet: تلاش", "Rivulet on a phone: browsing by streaming service": "فون پر Rivulet: اسٹریمنگ سروس کے لحاظ سے دیکھنا", "Settings, Sources: a field for the source URL with an Add button, how to add a source, and how Play works with Download while watching or Stream only": "سیٹنگز، سورسز: سورس URL کا خانہ اور شامل کریں بٹن", "Play it while it lands": "جیسے جیسے آئے، ویسے ویسے چلائیں" };
+    var lang = 'en';
+    function t(s) { return lang === 'ur' && UR[s] ? UR[s] : s; }
+    function tr(s) {
+      if (lang !== 'ur') return s;
+      return t(s).replace('your cloud', 'آپ کا کلاؤڈ').replace(/(\d[\d,]*) peers/, '$1 پیئرز').replace('on D:', 'D: پر').replace('resume', 'جاری رکھیں');
+    }
+    (function language() {
+      var ATTRS = ['alt', 'aria-label', 'data-alt'];
+      var original = new WeakMap();
+      var btn = document.getElementById('lang');
+      function key(s) { return s.replace(/\s+/g, ' ').trim(); }
+      function walk(to) {
+        var w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+          acceptNode: function (n) {
+            var p = n.parentElement;
+            if (!p || /SCRIPT|STYLE/.test(p.tagName) || p.closest('code, [data-no-i18n]')) return NodeFilter.FILTER_REJECT;
+            return n.textContent.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+          }
+        });
+        var n, list = [];
+        while ((n = w.nextNode())) list.push(n);
+        list.forEach(function (n) {
+          if (!original.has(n)) original.set(n, n.textContent);
+          var en = original.get(n), k = key(en);
+          if (to === 'en') n.textContent = en;
+          else if (UR[k]) n.textContent = en.replace(k, UR[k]);
+        });
+        ATTRS.forEach(function (a) {
+          document.querySelectorAll('[' + a + ']').forEach(function (el) {
+            if (el.closest('[data-no-i18n]')) return;
+            var store = 'data-en-' + a;
+            if (!el.hasAttribute(store)) el.setAttribute(store, el.getAttribute(a));
+            var en = el.getAttribute(store);
+            el.setAttribute(a, to === 'en' ? en : (UR[key(en)] || en));
+          });
+        });
+      }
+      function font() {
+        if (document.getElementById('ur-font')) return;
+        var l = document.createElement('link');
+        l.id = 'ur-font'; l.rel = 'stylesheet';
+        l.href = 'https://fonts.googleapis.com/css2?family=Noto+Nastaliq+Urdu:wght@400;700&display=swap';
+        document.head.appendChild(l);
+      }
+      function set(to, save) {
+        lang = to;
+        var root = document.documentElement;
+        root.lang = to; root.dir = to === 'ur' ? 'rtl' : 'ltr';
+        if (to === 'ur') font();
+        walk(to);
+        document.title = to === 'ur' ? 'Rivulet — ' + UR['play it while it lands'] : 'Rivulet — play it while it lands';
+        btn.textContent = to === 'ur' ? 'English' : 'اردو';
+        btn.lang = to === 'ur' ? 'en' : 'ur';
+        btn.setAttribute('aria-label', to === 'ur' ? 'Language: switch to English' : 'زبان: اردو میں دیکھیں');
+        if (save) { try { localStorage.setItem('rivulet.landing.lang', to); } catch (e) { /* private window */ } }
+        document.dispatchEvent(new Event('langchange'));
+      }
+      btn.addEventListener('click', function () { set(lang === 'ur' ? 'en' : 'ur', true); });
+      var want = null;
+      try { want = new URLSearchParams(location.search).get('lang') || localStorage.getItem('rivulet.landing.lang'); } catch (e) { /* no storage */ }
+      if (want === 'ur') document.addEventListener('DOMContentLoaded', function () { set('ur', false); });
+    })();
+
     // Downloads: the hero button and the sentence's blank follow the
     // visitor's system; the version follows the latest GitHub release.
     (function downloads() {
@@ -942,10 +1032,12 @@
       var select = document.getElementById('dl-os'), go = document.getElementById('dl-go'), aboutEl = document.getElementById('dl-about');
       function apply(choice) {
         go.href = files[choice];
-        aboutEl.textContent = about[choice];
+        aboutEl.textContent = t(about[choice]);
       }
       hero.href = files[os];
-      heroText.textContent = 'Download for ' + names[os];
+      function heroLabel() { heroText.textContent = t('Download for {os}').replace('{os}', names[os]); }
+      heroLabel();
+      document.addEventListener('langchange', function () { heroLabel(); apply(select.value); });
       select.value = os;
       apply(os);
       select.addEventListener('change', function () { apply(select.value); });
@@ -983,9 +1075,9 @@
       }
       function state() {
         var p = (video.currentTime || 0) / total;
-        if (landed >= 0.999) rS.textContent = 'All of it has landed: it plays offline now.';
-        else if (waiting) rS.textContent = 'Waiting a moment: that part is still on its way.';
-        else if (p < landed) rS.textContent = 'Playing what has landed; the rest keeps coming.';
+        if (landed >= 0.999) rS.textContent = t('All of it has landed: it plays offline now.');
+        else if (waiting) rS.textContent = t('Waiting a moment: that part is still on its way.');
+        else if (p < landed) rS.textContent = t('Playing what has landed; the rest keeps coming.');
       }
       video.addEventListener('loadedmetadata', function () { if (video.duration) total = video.duration; paint(); });
       video.addEventListener('timeupdate', function () {
@@ -1030,11 +1122,19 @@
         if (b.getAttribute('aria-pressed') === 'true') return;
         buttons.forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
         img.classList.add('swap');
-        setTimeout(function () { img.src = b.dataset.img; img.alt = b.dataset.alt; }, 180);
+        setTimeout(function () { img.src = b.dataset.img; img.alt = t(b.getAttribute('data-en-data-alt') || b.dataset.alt); }, 180);
       }
       img.addEventListener('load', function () { img.classList.remove('swap'); });
+      // Warm the other screens once the picker is close, not on page load.
+      if ('IntersectionObserver' in window) {
+        var warm = new IntersectionObserver(function (e) {
+          if (!e[0].isIntersecting) return;
+          buttons.forEach(function (b) { new Image().src = b.dataset.img; });
+          warm.disconnect();
+        }, { rootMargin: '400px' });
+        warm.observe(img);
+      }
       buttons.forEach(function (b) {
-        new Image().src = b.dataset.img;
         b.addEventListener('click', function () { pick(b); });
         b.addEventListener('focus', function () { pick(b); });
       });
@@ -1047,7 +1147,7 @@
       var meta = document.getElementById('a-meta'), rows = document.getElementById('a-rows');
       var answer = rows && rows.parentNode;
       if (!q) return;
-      var PLAY = '<span class="play"><svg viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></svg>Play</span>';
+      function PLAY() { return '<span class="play"><svg viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></svg>' + t('Play') + '</span>'; }
       var KNOWN = {
         'lupin': ['Lupin · S1 E1', [['cloud', 'Instant', '2160p · HDR · your cloud'], ['cloud', 'Instant', '1080p · 4.1 GB · your cloud'], ['torrent', 'Torrent', '1080p · 412 peers']]],
         'dune part two': ['Dune: Part Two · 2024', [['cloud', 'Instant', '2160p · Dolby Vision · your cloud'], ['torrent', 'Torrent', '2160p · 236 peers'], ['torrent', 'Torrent', '1080p · 1,180 peers']]],
@@ -1058,16 +1158,17 @@
       function show() {
         var text = q.value.trim().toLowerCase();
         var hit = KNOWN[text];
-        var name = hit ? hit[0] : (text ? text.replace(/\b\w/g, function (c) { return c.toUpperCase(); }) : 'Type a title');
+        var name = hit ? hit[0] : (text ? text.replace(/\b\w/g, function (c) { return c.toUpperCase(); }) : t('Type a title'));
         var list = hit ? hit[1] : [['cloud', 'Instant', '1080p · your cloud'], ['torrent', 'Torrent', '2160p · 140 peers'], ['torrent', 'Torrent', '1080p · 520 peers']];
         title.textContent = name;
-        meta.textContent = text ? 'your 2 sources · 3 releases' : '';
+        meta.textContent = text ? t('your 2 sources · 3 releases') : '';
         rows.innerHTML = text ? list.map(function (r, i) {
-          return '<div class="rel' + (i ? '' : ' first') + '"><span class="tag ' + r[0] + '">' + r[1] + '</span><span>' + esc(r[2]) + '</span>' + (i ? '<span class="dim">Play</span>' : PLAY) + '</div>';
+          return '<div class="rel' + (i ? '' : ' first') + '"><span class="tag ' + r[0] + '">' + t(r[1]) + '</span><span dir="auto">' + esc(tr(r[2])) + '</span>' + (i ? '<span class="dim">' + t('Play') + '</span>' : PLAY()) + '</div>';
         }).join('') : '';
         answer.classList.remove('flash'); void answer.offsetWidth; answer.classList.add('flash');
       }
       q.addEventListener('input', show);
+      document.addEventListener('langchange', show);
       document.querySelectorAll('.examples button').forEach(function (b) {
         b.addEventListener('click', function () { q.value = b.dataset.q; show(); });
       });
@@ -1098,13 +1199,37 @@
       ];
       function go() {
         var i = +r.value;
-        h.textContent = S[i][0]; p.textContent = S[i][1];
+        h.textContent = t(S[i][0]); p.textContent = t(S[i][1]);
         r.setAttribute('aria-valuetext', S[i][2]);
         frags.forEach(function (f) { f.hidden = +f.dataset.stage !== i; });
         names.forEach(function (n, k) { n.classList.toggle('on', k === i); });
       }
       r.addEventListener('input', go);
+      document.addEventListener('langchange', go);
       names.forEach(function (n, k) { n.addEventListener('click', function () { r.value = k; go(); }); });
+    })();
+
+    // Live TV: one switch shows one service; without script both are shown.
+    (function live() {
+      var sec = document.getElementById('live'); if (!sec) return;
+      var tabs = sec.querySelectorAll('[role="tab"]');
+      function pick(t) {
+        tabs.forEach(function (x) {
+          var on = x === t;
+          x.setAttribute('aria-selected', on ? 'true' : 'false');
+          x.tabIndex = on ? 0 : -1;
+          document.getElementById(x.getAttribute('aria-controls')).hidden = !on;
+        });
+        sec.classList.toggle('prem', t.id === 'tab-premium');
+      }
+      tabs.forEach(function (t, i) {
+        t.addEventListener('click', function () { pick(t); });
+        t.addEventListener('keydown', function (e) {
+          var d = { ArrowRight: 1, ArrowLeft: -1 }[e.key]; if (!d) return;
+          var n = tabs[(i + d + tabs.length) % tabs.length]; pick(n); n.focus(); e.preventDefault();
+        });
+      });
+      pick(tabs[0]);
     })();
 
     // Entrances: parts rise in as their section arrives. Without the
