@@ -923,12 +923,12 @@
         <div class="rise" style="--i:1">
           <p>Every file, version <strong data-release-version>v0.6.68</strong>:</p>
           <div class="files">
-            <a href="https://github.com/baigcoder/rivulet/releases/latest/download/Rivulet_Setup.exe">Windows .exe</a>
-            <a href="https://github.com/baigcoder/rivulet/releases/latest/download/Rivulet.apk">Android .apk</a>
-            <a href="https://github.com/baigcoder/rivulet/releases/latest/download/Rivulet.AppImage">AppImage</a>
-            <a href="https://github.com/baigcoder/rivulet/releases/latest/download/Rivulet.deb">.deb</a>
-            <a href="https://github.com/baigcoder/rivulet/releases/latest/download/Rivulet.rpm">.rpm</a>
-            <a href="https://github.com/baigcoder/rivulet/releases/latest/download/Rivulet.dmg">macOS .dmg</a>
+            <a data-asset="Rivulet_Setup.exe" href="https://github.com/baigcoder/rivulet/releases/latest/download/Rivulet_Setup.exe">Windows .exe</a>
+            <a data-asset="Rivulet.apk" href="https://github.com/baigcoder/rivulet/releases/latest/download/Rivulet.apk">Android .apk</a>
+            <a data-asset="Rivulet.AppImage" href="https://github.com/baigcoder/rivulet/releases/latest/download/Rivulet.AppImage">AppImage</a>
+            <a data-asset="Rivulet.deb" href="https://github.com/baigcoder/rivulet/releases/latest/download/Rivulet.deb">.deb</a>
+            <a data-asset="Rivulet.rpm" href="https://github.com/baigcoder/rivulet/releases/latest/download/Rivulet.rpm">.rpm</a>
+            <a data-asset="Rivulet.dmg" href="https://github.com/baigcoder/rivulet/releases/latest/download/Rivulet.dmg">macOS .dmg</a>
             <a href="https://github.com/baigcoder/rivulet/releases">All releases</a>
           </div>
           <p class="note muted" style="margin-top:1rem">macOS: the app isn't signed by Apple, so after dragging it to Applications run <code>xattr -dr com.apple.quarantine /Applications/Rivulet.app</code> once.</p>
@@ -956,10 +956,10 @@
     </div>
     <div class="links">
       <div><h3>Get it</h3><ul>
-        <li><a href="https://github.com/baigcoder/rivulet/releases/latest/download/Rivulet_Setup.exe">Windows</a></li>
-        <li><a href="https://github.com/baigcoder/rivulet/releases/latest/download/Rivulet.apk">Android &amp; TV</a></li>
-        <li><a href="https://github.com/baigcoder/rivulet/releases/latest/download/Rivulet.AppImage">Linux</a></li>
-        <li><a href="https://github.com/baigcoder/rivulet/releases/latest/download/Rivulet.dmg">macOS</a></li>
+        <li><a data-asset="Rivulet_Setup.exe" href="https://github.com/baigcoder/rivulet/releases/latest/download/Rivulet_Setup.exe">Windows</a></li>
+        <li><a data-asset="Rivulet.apk" href="https://github.com/baigcoder/rivulet/releases/latest/download/Rivulet.apk">Android &amp; TV</a></li>
+        <li><a data-asset="Rivulet.AppImage" href="https://github.com/baigcoder/rivulet/releases/latest/download/Rivulet.AppImage">Linux</a></li>
+        <li><a data-asset="Rivulet.dmg" href="https://github.com/baigcoder/rivulet/releases/latest/download/Rivulet.dmg">macOS</a></li>
       </ul></div>
       <div><h3>Read</h3><ul>
         <li><a href="#modes">Two ways to play</a></li>
@@ -1053,10 +1053,23 @@
     })();
 
     // Downloads: the hero button and the sentence's blank follow the
-    // visitor's system; the version follows the latest GitHub release.
+    // visitor's system; the version and every file link follow the latest
+    // published GitHub release (`/releases/latest` skips drafts), read off
+    // its real asset list so a file one build didn't ship is never a 404.
     (function downloads() {
       var DL = 'https://github.com/baigcoder/rivulet/releases/latest/download/';
-      var files = { Windows: DL + 'Rivulet_Setup.exe', Android: DL + 'Rivulet.apk', Linux: DL + 'Rivulet.AppImage', macOS: DL + 'Rivulet.dmg' };
+      var files = { Windows: 'Rivulet_Setup.exe', Android: 'Rivulet.apk', Linux: 'Rivulet.AppImage', macOS: 'Rivulet.dmg' };
+      // The stable name first, then the versioned one beside it. `$` keeps .sig files out.
+      var ASSETS = {
+        'Rivulet_Setup.exe': [/^Rivulet_Setup\.exe$/, /_x64-setup\.exe$/],
+        'Rivulet.apk': [/^Rivulet\.apk$/, /^Rivulet_[\d.]+\.apk$/],
+        'Rivulet.AppImage': [/^Rivulet\.AppImage$/, /\.AppImage$/],
+        'Rivulet.deb': [/^Rivulet\.deb$/, /\.deb$/],
+        'Rivulet.rpm': [/^Rivulet\.rpm$/, /\.rpm$/],
+        'Rivulet.dmg': [/^Rivulet\.dmg$/, /\.dmg$/]
+      };
+      var urls = {};
+      function url(name) { return urls[name] || DL + name; }
       var names = { Windows: 'Windows', Android: 'Android', Linux: 'Linux', macOS: 'macOS' };
       var about = {
         Windows: 'An installer with mpv and ffmpeg inside, for Windows 10 and 11. It tells you when a new release lands.',
@@ -1072,10 +1085,10 @@
       var hero = document.getElementById('hero-dl'), heroText = document.getElementById('hero-dl-text');
       var select = document.getElementById('dl-os'), go = document.getElementById('dl-go'), aboutEl = document.getElementById('dl-about');
       function apply(choice) {
-        go.href = files[choice];
+        go.href = url(files[choice]);
         aboutEl.textContent = t(about[choice]);
       }
-      hero.href = files[os];
+      hero.href = url(files[os]);
       function heroLabel() { heroText.textContent = t('Download for {os}').replace('{os}', names[os]); }
       heroLabel();
       document.addEventListener('langchange', function () { heroLabel(); apply(select.value); });
@@ -1088,6 +1101,19 @@
           if (!rel || !rel.tag_name) return;
           version = rel.tag_name;
           document.querySelectorAll('[data-release-version]').forEach(function (el) { el.textContent = version; });
+          var assets = rel.assets || [];
+          Object.keys(ASSETS).forEach(function (name) {
+            var hit = null;
+            ASSETS[name].some(function (re) {
+              hit = assets.filter(function (a) { return re.test(a.name); })[0] || null;
+              return !!hit;
+            });
+            // Missing from this release: its page, which lists what it does have.
+            urls[name] = hit ? hit.browser_download_url : (rel.html_url || DL + name);
+          });
+          document.querySelectorAll('[data-asset]').forEach(function (a) { a.href = url(a.getAttribute('data-asset')); });
+          hero.href = url(files[os]);
+          apply(select.value);
         })
         .catch(function () { /* keep the version baked into the page */ });
     })();
