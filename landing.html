@@ -380,7 +380,7 @@
 
     /* ── Type a title ── */
     .try { display: grid; gap: 2.25rem; }
-    .try-row { display: grid; grid-template-columns: 5fr 7fr; gap: 2rem clamp(24px, 4vw, 64px); align-items: start; }
+    .try-row { display: grid; grid-template-columns: 7fr 5fr; gap: 2rem clamp(24px, 4vw, 64px); align-items: start; }
     .try-side { display: grid; gap: 1.25rem; align-content: start; }
     @media (max-width: 900px) { .try-row { grid-template-columns: 1fr; } }
     .typed { display: flex; align-items: center; gap: .3em; background: var(--surface); border-radius: var(--round); padding: .12em .5em; font-size: clamp(3rem, 1rem + 6.4vw, 8.25rem); }
@@ -391,7 +391,10 @@
     }
     .typed input:focus-visible { outline: 3px solid var(--accent); outline-offset: 8px; border-radius: 8px; }
     .typed .caret { display: none; }
-    .answer { width: 100%; }
+    .answer { width: 100%; font-size: clamp(15px, 1.25vw, 19px); padding: 1.2em; }
+    .answer .h b { font-size: 1.25em; }
+    .answer .tag { font-size: .9em; }
+    .answer .rel { padding: .8em .9em; }
     .answer.flash { animation: flash .35s var(--ease); }
     @keyframes flash { from { opacity: .3; transform: translateY(8px); } to { opacity: 1; transform: none; } }
     .examples { display: flex; flex-wrap: wrap; gap: .5rem; }
@@ -450,15 +453,20 @@
     .sw button:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
 
     /* ── Sources: two fields, one slider ── */
-    .stages { display: grid; grid-template-columns: 1fr 1fr; min-height: 88svh; }
-    .st-l { padding: clamp(32px, 4vw, 64px) var(--gutter); display: grid; align-content: start; gap: 1.5rem; }
+    .stages { display: grid; grid-template-columns: 1fr 1fr; }
+    .st-l { padding: clamp(48px, 5vw, 88px) var(--gutter); display: grid; align-content: center; gap: 1.5rem; }
+    .st-l p { font-size: var(--step-lead); line-height: 1.35; }
     .st-l h2 { min-height: 2em; }
-    .st-r { background: var(--surface); display: grid; place-items: center; padding: 32px var(--gutter); }
-    .frag { width: min(460px, 100%); animation: flash .25s var(--ease); }
+    .st-r { background: var(--surface); display: grid; place-items: center; padding: clamp(48px, 5vw, 88px) var(--gutter); }
+    .frag { width: min(600px, 100%); font-size: clamp(15px, 1.3vw, 19px); padding: 1.3em; animation: flash .25s var(--ease); }
+    .frag .h b { font-size: 1.2em; }
+    .frag .tag { font-size: .85em; }
     .ui .field { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 10px 10px 10px 14px; border-radius: 10px; background: #171b21; }
     .st-bar { grid-column: 1 / -1; background: var(--raised); padding: 24px var(--gutter) 28px; }
     .st-bar input { width: 100%; accent-color: var(--accent); height: 32px; cursor: pointer; }
-    .st-names { list-style: none; display: grid; grid-template-columns: repeat(4, 1fr); margin-top: .5rem; color: var(--muted); }
+    .st-names { list-style: none; display: grid; grid-template-columns: repeat(4, 1fr); margin-top: .75rem; color: var(--muted); font-size: var(--step-lead); }
+    .st-names li { cursor: pointer; transition: color .15s; }
+    .st-names li:hover { color: var(--ink); }
     .st-names li:nth-child(2), .st-names li:nth-child(3) { text-align: center; }
     .st-names li:last-child { text-align: right; }
     .st-names li.on { color: var(--ink); font-weight: 700; }
@@ -585,7 +593,8 @@
         <div id="a-rows"></div>
       </div>
       <div class="try-side">
-      <p class="try-note">Search once and every source you added answers. Instant plays from your cloud; Torrent plays while it downloads. Try another:</p>
+      <p class="lead try-note">Search once and every source you added answers. Instant plays from your cloud; Torrent plays while it downloads.</p>
+      <p>Try another:</p>
       <div class="examples">
         <button type="button" data-q="dune part two">dune part two</button>
         <button type="button" data-q="bloodline">bloodline</button>
@@ -633,24 +642,6 @@
           </ul>
         </article>
       </div>
-      <div class="also">
-        <div class="rise">
-          <div class="ui small" data-ui aria-label="A downloaded film ready to resume">
-            <span class="tag done">Downloaded</span>
-            <div class="bar" style="width:220px"><b style="width:100%"></b><i style="width:58%"></i></div>
-            <div class="dim" style="margin-top:8px">Resume from 47:12</div>
-          </div>
-          <div><h3>already downloaded? it just plays</h3><p>A film you've kept opens straight from the disk: no lookup, no source and no network.</p></div>
-        </div>
-        <div class="rise" style="--i:1">
-          <div class="ui small" data-ui aria-label="Download progress of a film still landing">
-            <span class="tag torrent">Landing · 64%</span>
-            <div class="bar" style="width:220px"><b style="width:64%"></b><i style="width:21%"></i></div>
-            <div class="dim" style="margin-top:8px">18.4 MB/s · 9 min left</div>
-          </div>
-          <div><h3>downloads, with or without play</h3><p>Press Download to keep a film for later, or paste a magnet link: the engine is a full torrent client.</p></div>
-        </div>
-      </div>
       <div class="setup">
         <h3 class="setup-h rise">how each one is set up</h3>
         <div class="setup-cols">
@@ -690,7 +681,7 @@
       <div class="sw on c2"><p>Download while I watch</p><span class="cons">The film keeps landing on D: and plays offline next time.</span><button type="button" role="switch" aria-checked="true" aria-label="Download while I watch" data-ui><i></i></button></div>
       <div class="sw c1"><p>Hide channels that don't answer</p><span class="cons">Free TV tried 2,800 channels and set 1,057 aside.</span><button type="button" role="switch" aria-checked="false" aria-label="Hide channels that don't answer" data-ui><i></i></button></div>
       <div class="sw on c4"><p>Remind me before it starts</p><span class="cons">A note five minutes before, even from another app.</span><button type="button" role="switch" aria-checked="true" aria-label="Remind me before it starts" data-ui><i></i></button></div>
-      <div class="sw c3"><p>Only download on Wi-Fi</p><span class="cons">On a phone, downloads wait for Wi-Fi and pick up again on their own.</span><button type="button" role="switch" aria-checked="false" aria-label="Only download on Wi-Fi" data-ui><i></i></button></div>
+      <div class="sw on c3"><p>Only download on Wi-Fi</p><span class="cons">On a phone, downloads wait for Wi-Fi and pick up again on their own.</span><button type="button" role="switch" aria-checked="true" aria-label="Only download on Wi-Fi" data-ui><i></i></button></div>
       <div class="sw c2"><p>Use a colour of my own</p><span class="cons">The whole theme is rebuilt from the one colour you pick.</span><button type="button" role="switch" aria-checked="false" aria-label="Use a colour of my own" data-ui><i></i></button></div>
     </section>
 
