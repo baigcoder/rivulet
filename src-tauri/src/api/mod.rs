@@ -63,6 +63,9 @@ pub enum ApiError {
     /// `Internal` because the frontend's answer differs: a 502 is worth
     /// retrying and worth naming the provider in, a 500 is a bug here.
     BadGateway(String),
+    /// 403 — the provider account exists but its subscription is over.
+    /// Not 401: the frontend answers a 401 by re-minting its own token.
+    Expired(String),
     /// 500 — something in the API or the Premium module failed in a
     /// way the frontend can't recover from. The inner string is
     /// safe to log.
@@ -82,6 +85,7 @@ impl From<crate::premium::PremiumError> for ApiError {
             P::AuthFailed => ApiError::Unauthorized("provider rejected credentials".into()),
             P::SessionExpired => ApiError::Unauthorized("provider session expired".into()),
             P::PremiumRequired => ApiError::PremiumRequired,
+            P::SubscriptionExpired => ApiError::Expired(message),
             P::ProviderNotConnected => ApiError::NotFound("no provider connected".into()),
             P::NotFound => ApiError::NotFound("not found".into()),
             P::Cancelled => ApiError::BadRequest("cancelled".into()),
@@ -119,6 +123,7 @@ impl From<ApiError> for crate::premium::errors::PremiumError {
             ApiError::NotFound(_) => crate::premium::errors::PremiumError::NotFound,
             ApiError::BadRequest(_) => crate::premium::errors::PremiumError::Cancelled,
             ApiError::Conflict(_) => crate::premium::errors::PremiumError::AlreadySyncing,
+            ApiError::Expired(_) => crate::premium::errors::PremiumError::SubscriptionExpired,
             ApiError::BadGateway(m) | ApiError::Internal(m) => {
                 crate::premium::errors::PremiumError::ServerError(m)
             }
@@ -138,6 +143,7 @@ impl IntoResponse for ApiError {
             ApiError::NotFound(m) => (StatusCode::NOT_FOUND, "NOT_FOUND", m),
             ApiError::BadRequest(m) => (StatusCode::BAD_REQUEST, "BAD_REQUEST", m),
             ApiError::Conflict(m) => (StatusCode::CONFLICT, "CONFLICT", m),
+            ApiError::Expired(m) => (StatusCode::FORBIDDEN, "SUBSCRIPTION_EXPIRED", m),
             ApiError::BadGateway(m) => (StatusCode::BAD_GATEWAY, "PROVIDER_ERROR", m),
             ApiError::Internal(m) => {
                 eprintln!("[premium-api] internal error: {m}");

@@ -313,8 +313,11 @@ struct XtreamUserInfo {
     auth: Option<i64>,
     #[serde(default)]
     status: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_text")]
     exp_date: Option<String>,
+    /// When the provider opened the account. Unix seconds, like `exp_date`.
+    #[serde(default, deserialize_with = "deserialize_text")]
+    created_at: Option<String>,
     #[serde(default)]
     is_trial: Option<String>,
     #[serde(default)]
@@ -527,6 +530,25 @@ fn parse_epg_time(raw: Option<&str>) -> Option<i64> {
     None
 }
 
+/// A string or a bare number, as text. Panels disagree on which they send
+/// for `exp_date` and `created_at`, and a `String` field fails the whole
+/// sign-in on a number.
+fn deserialize_text<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Text {
+        Str(String),
+        Num(serde_json::Number),
+    }
+    Ok(Option::<Text>::deserialize(deserializer)?.map(|t| match t {
+        Text::Str(s) => s,
+        Text::Num(n) => n.to_string(),
+    }))
+}
+
 fn deserialize_auth<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -562,11 +584,17 @@ impl IPTVProvider for XtreamAdapter {
             .ok_or_else(|| PremiumError::MalformedResponse("missing user_info".into()))?;
         let auth = user.auth.unwrap_or(0) != 0;
         let status = user.status.as_deref().unwrap_or("");
+        // Normalised to Unix seconds so every later reader parses one form.
+        let expires_at = parse_epg_time(user.exp_date.as_deref());
+        let created_at = parse_epg_time(user.created_at.as_deref());
+        // The date is checked as well as the word: plenty of panels keep
+        // saying "Active" for a while after `exp_date` has gone by.
+        if status == "Expired" || expires_at.is_some_and(|at| at <= chrono::Utc::now().timestamp()) {
+            return Err(PremiumError::SubscriptionExpired);
+        }
         if !auth || status == "Disabled" {
             return Err(match status {
                 "Disabled" => PremiumError::ServerError("account disabled".into()),
-                "Expired" => PremiumError::ServerError("subscription expired".into()),
-                "Banned" => PremiumError::AuthFailed,
                 _ => PremiumError::AuthFailed,
             });
         }
@@ -581,13 +609,10 @@ impl IPTVProvider for XtreamAdapter {
             provider_type: "xtream".to_string(),
             server_url: resolved_server,
             username: creds.username.clone(),
-            status: match status {
-                "Active" => "connected".to_string(),
-                "Expired" => "expired".to_string(),
-                _ => "connected".to_string(),
-            },
+            status: "connected".to_string(),
             account_name: Some(creds.username.clone()),
-            expires_at: user.exp_date.clone(),
+            expires_at: expires_at.map(|n| n.to_string()),
+            created_at: created_at.map(|n| n.to_string()),
             is_trial: user.is_trial.as_ref().and_then(|s| s.parse().ok()),
             active_connections: user.active_cons.as_ref().and_then(|s| s.parse().ok()),
             max_connections: user.max_connections.as_ref().and_then(|s| s.parse().ok()),
@@ -600,6 +625,7 @@ impl IPTVProvider for XtreamAdapter {
                 &self.connection_id,
                 account.account_name.as_deref(),
                 account.expires_at.as_deref(),
+                account.created_at.as_deref(),
                 account.is_trial,
                 account.active_connections,
                 account.max_connections,
@@ -1409,6 +1435,27 @@ mod tests {
         let json = r#"{"user_info":{"auth":"1","status":"Active"}}"#;
         let r: XtreamAuthResponse = serde_json::from_str(json).unwrap();
         assert_eq!(r.user_info.unwrap().auth, Some(1));
+    }
+
+    #[test]
+    fn dates_parse_as_string_number_or_null() {
+        let json = r#"{"user_info":{"auth":1,"exp_date":1735689600,"created_at":"1704067200"}}"#;
+        let u = serde_json::from_str::<XtreamAuthResponse>(json).unwrap().user_info.unwrap();
+        assert_eq!(u.exp_date.as_deref(), Some("1735689600"));
+        assert_eq!(u.created_at.as_deref(), Some("1704067200"));
+        let json = r#"{"user_info":{"auth":1,"exp_date":null}}"#;
+        let u = serde_json::from_str::<XtreamAuthResponse>(json).unwrap().user_info.unwrap();
+        assert_eq!(u.exp_date, None);
+    }
+
+    #[test]
+    fn expiry_is_read_off_the_date() {
+        use crate::premium::models::has_expired;
+        assert!(has_expired(Some("100"), 200));
+        assert!(!has_expired(Some("300"), 200));
+        assert!(!has_expired(None, 200), "no end date is not expired");
+        assert!(!has_expired(Some("0"), 200), "0 means unlimited on panels");
+        assert!(!has_expired(Some("soon"), 200));
     }
 
     #[test]

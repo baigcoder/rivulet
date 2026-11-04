@@ -67,7 +67,10 @@ export interface PremiumAccount {
   username: string
   status: string
   accountName?: string | null
+  /** Unix seconds, as text. */
   expiresAt?: string | null
+  /** When the provider opened the account. Unix seconds, as text. */
+  createdAt?: string | null
   isTrial?: boolean | null
   activeConnections?: number | null
   maxConnections?: number | null

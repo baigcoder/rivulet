@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS iptv_premium_connections (
   display_name TEXT NOT NULL,
   account_name TEXT,
   expires_at TEXT,
+  created_at TEXT,
   is_trial INTEGER,
   active_connections INTEGER,
   max_connections INTEGER,
@@ -141,6 +142,7 @@ const ADDED_COLUMNS: &[(&str, &str)] = &[
     ("iptv_premium_channels", "quality TEXT"),
     ("iptv_premium_channels", "is_adult INTEGER NOT NULL DEFAULT 0"),
     ("iptv_premium_channels", "archive_days INTEGER"),
+    ("iptv_premium_connections", "created_at TEXT"),
 ];
 
 fn migrate(conn: &Connection) -> Result<(), PremiumError> {
@@ -298,6 +300,7 @@ pub fn update_account(
     id: &str,
     account_name: Option<&str>,
     expires_at: Option<&str>,
+    created_at: Option<&str>,
     is_trial: Option<bool>,
     active_connections: Option<i64>,
     max_connections: Option<i64>,
@@ -306,6 +309,7 @@ pub fn update_account(
         "UPDATE iptv_premium_connections SET
           account_name = COALESCE(?2, account_name),
           expires_at = COALESCE(?3, expires_at),
+          created_at = COALESCE(?7, created_at),
           is_trial = COALESCE(?4, is_trial),
           active_connections = COALESCE(?5, active_connections),
           max_connections = COALESCE(?6, max_connections)
@@ -317,6 +321,7 @@ pub fn update_account(
             is_trial,
             active_connections,
             max_connections,
+            created_at,
         ],
     )?;
     Ok(())
@@ -371,7 +376,7 @@ pub fn active_connection(conn: &Connection) -> Result<Option<String>, PremiumErr
 pub fn get_connection(conn: &Connection, id: &str) -> Result<Option<ConnectionRow>, PremiumError> {
     let mut stmt = conn.prepare(
         "SELECT provider_type, display_name, account_name, expires_at,
-                is_trial, active_connections, max_connections, status
+                is_trial, active_connections, max_connections, status, created_at
          FROM iptv_premium_connections WHERE id = ?1",
     )?;
     let mut rows = stmt.query([id])?;
@@ -385,6 +390,7 @@ pub fn get_connection(conn: &Connection, id: &str) -> Result<Option<ConnectionRo
             active_connections: row.get(5)?,
             max_connections: row.get(6)?,
             status: row.get(7)?,
+            created_at: row.get(8)?,
         }))
     }
     else {
@@ -507,6 +513,7 @@ pub struct ConnectionRow {
     pub active_connections: Option<i64>,
     pub max_connections: Option<i64>,
     pub status: String,
+    pub created_at: Option<String>,
 }
 
 // ── Channel / category helpers ────────────────────────────────────

@@ -105,6 +105,7 @@ pub async fn connect(
             connection_id,
             account.account_name.as_deref(),
             account.expires_at.as_deref(),
+            account.created_at.as_deref(),
             account.is_trial,
             account.active_connections,
             account.max_connections,

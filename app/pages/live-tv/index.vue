@@ -55,7 +55,7 @@ const tiles = computed(() => [
           premium.catalog?.channels ? $t('{count} channels', { count: premium.catalog.channels.toLocaleString() }) : '',
         ].filter(Boolean).join(' · ')
       : '',
-    status: premium.connected ? $t('Active') : $t('Not signed in'),
+    status: premium.connected ? $t('Active') : premium.expired ? $t('Expired') : $t('Not signed in'),
     ready: premium.connected,
     tint: 'from-tertiary/30',
   },

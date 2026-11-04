@@ -52,7 +52,19 @@ onMounted(() => {
       <v-progress-circular indeterminate color="primary" size="36" />
     </div>
 
-    <div v-else class="mx-auto w-full max-w-3xl">
+    <div v-else class="mx-auto flex w-full max-w-3xl flex-col gap-4">
+      <v-alert
+        v-if="premium.expired"
+        type="error"
+        variant="tonal"
+        :text="$t('Your subscription has expired. Please renew with your provider.')"
+      >
+        <template #append>
+          <v-btn variant="text" size="small" :to="localePath('/settings/premium-tv')">
+            {{ $t('Account') }}
+          </v-btn>
+        </template>
+      </v-alert>
       <premium-tv-premium-connect-form />
     </div>
   </div>
