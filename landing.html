@@ -352,6 +352,133 @@
       .links { grid-template-columns: 1fr 1fr; }
     }
 
+    .vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+    /* ── Hero: the sentence, with the film standing in for "it" ── */
+    .hero { padding-top: clamp(32px, 5vw, 80px); display: grid; gap: clamp(28px, 3vw, 48px); padding-bottom: clamp(28px, 3vw, 48px); }
+    .hero .said { font-size: min(11vw, 12rem); line-height: .95; letter-spacing: -0.05em; white-space: nowrap; }
+    .hero-foot { display: grid; grid-template-columns: 5fr 7fr; gap: 1.5rem clamp(24px, 4vw, 64px); align-items: end; }
+    .hero-foot .lead { max-width: 40ch; }
+    .hero .actions { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; justify-content: flex-end; }
+    .hero .actions small { font-size: var(--step-small); color: var(--muted); width: 100%; text-align: right; }
+    @media (max-width: 900px) {
+      .hero { min-height: 0; }
+      .hero .said { font-size: 16vw; white-space: normal; }
+      .hero-foot { grid-template-columns: 1fr; }
+      .hero .actions { justify-content: flex-start; }
+      .hero .actions small { text-align: left; }
+    }
+
+    /* The window opens to the whole film. */
+    .tour-s .shot video { width: 100%; aspect-ratio: 16 / 9; border-radius: 11px; background: #000; }
+    .shutter { overflow: hidden; }
+    .js .shutter { clip-path: inset(0 22% 0 22% round 18px); transition: clip-path 1.1s var(--ease); }
+    .js .shutter video { transform: scale(1.12); transition: transform 1.4s var(--ease); }
+    .js .shutter.in { clip-path: inset(0 0 0 0 round 18px); }
+    .js .shutter.in video { transform: none; }
+    .readout-h { font-size: var(--step-lead); letter-spacing: -0.02em; line-height: 1.2; width: 100%; color: var(--ink); }
+
+    /* ── Type a title ── */
+    .try { display: grid; gap: 2.25rem; }
+    .try-row { display: grid; grid-template-columns: 5fr 7fr; gap: 2rem clamp(24px, 4vw, 64px); align-items: start; }
+    .try-side { display: grid; gap: 1.25rem; align-content: start; }
+    @media (max-width: 900px) { .try-row { grid-template-columns: 1fr; } }
+    .typed { display: flex; align-items: center; gap: .3em; background: var(--surface); border-radius: var(--round); padding: .12em .5em; font-size: clamp(3rem, 1rem + 6.4vw, 8.25rem); }
+    .typed svg { width: .55em; height: .55em; flex: none; fill: var(--muted); }
+    .typed input {
+      all: unset; flex: 1; width: 100%; min-width: 0; font: 700 1em/1.1 var(--font); letter-spacing: -0.05em;
+      color: var(--ink); text-transform: lowercase;
+    }
+    .typed input:focus-visible { outline: 3px solid var(--accent); outline-offset: 8px; border-radius: 8px; }
+    .typed .caret { display: none; }
+    .answer { width: 100%; }
+    .answer.flash { animation: flash .35s var(--ease); }
+    @keyframes flash { from { opacity: .3; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+    .examples { display: flex; flex-wrap: wrap; gap: .5rem; }
+    .examples button { border: 0; cursor: pointer; padding: .7rem 1.2rem; border-radius: var(--round); background: var(--surface); transition: background-color .15s, transform .15s var(--ease); }
+    .examples button:hover, .examples button:focus-visible { background: var(--raised); transform: translateY(-2px); }
+    .try-note { color: var(--muted); }
+
+    /* ── Two ways: two whole fields of colour ── */
+    .mode.f1 { background: var(--accent); color: var(--accent-ink); }
+    .mode.f2 { background: var(--landed); color: var(--landed-ink); }
+    .mode .bars li::before, .mode.dl .bars li::before { background: currentColor; border-right-color: transparent; border-right-width: 0; }
+    .mode .ui { color: var(--ink); }
+
+    /* ── Switches: each band fills with colour when it's on ── */
+    .switches { display: grid; }
+    .sw { min-height: max(132px, 20vh); display: grid; grid-template-columns: auto 1fr 1fr; gap: .5rem 2rem; align-items: center; padding: 1.5rem var(--gutter); transition: background-color .35s var(--ease); }
+    .sw p { font-size: clamp(1.5rem, 1rem + 1.6vw, 2.25rem); font-weight: 700; letter-spacing: -0.03em; line-height: 1.1; color: var(--muted); max-width: none; transition: color .3s; }
+    .sw .cons { font-size: var(--step-lead); line-height: 1.3; max-width: 30ch; opacity: 0; transform: translateX(-12px); transition: opacity .3s, transform .4s var(--ease); }
+    .sw.on p { color: var(--ink); }
+    .sw.on .cons { opacity: 1; transform: none; }
+    @media (max-width: 900px) { .sw { grid-template-columns: auto 1fr; } .sw .cons { grid-column: 2; font-size: var(--step-body); } }
+    .sw.on.c1 { background: var(--field-1); }
+    .sw.on.c2 { background: var(--field-2); }
+    .sw.on.c3 { background: var(--field-3); }
+    .sw.on.c4 { background: var(--field-4); }
+    .sw button { all: unset; order: -1; cursor: pointer; width: 4.6rem; height: 2.5rem; border-radius: var(--round); background: var(--coming); position: relative; transition: background-color .25s; }
+    .sw button i { position: absolute; top: .3rem; left: .3rem; width: 1.9rem; height: 1.9rem; border-radius: 50%; background: var(--ink); transition: transform .25s var(--ease); }
+    .sw button[aria-checked="true"] { background: var(--accent); }
+    .sw button[aria-checked="true"] i { transform: translateX(2.1rem); background: var(--accent-ink); }
+    .sw button:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+
+    /* ── Sources: two fields, one slider ── */
+    .stages { display: grid; grid-template-columns: 1fr 1fr; min-height: 88svh; }
+    .st-l { padding: clamp(32px, 4vw, 64px) var(--gutter); display: grid; align-content: start; gap: 1.5rem; }
+    .st-l h2 { min-height: 2em; }
+    .st-r { background: var(--surface); display: grid; place-items: center; padding: 32px var(--gutter); }
+    .frag { width: min(460px, 100%); animation: flash .25s var(--ease); }
+    .ui .field { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 10px 10px 10px 14px; border-radius: 10px; background: #171b21; }
+    .st-bar { grid-column: 1 / -1; background: var(--raised); padding: 24px var(--gutter) 28px; }
+    .st-bar input { width: 100%; accent-color: var(--accent); height: 32px; cursor: pointer; }
+    .st-names { list-style: none; display: grid; grid-template-columns: repeat(4, 1fr); margin-top: .5rem; color: var(--muted); }
+    .st-names li:nth-child(2), .st-names li:nth-child(3) { text-align: center; }
+    .st-names li:last-child { text-align: right; }
+    .st-names li.on { color: var(--ink); font-weight: 700; }
+    @media (max-width: 900px) {
+      .stages { grid-template-columns: 1fr; }
+      .st-r { order: -1; min-height: 46svh; }
+      .st-bar { order: 0; }
+    }
+
+    /* ── Android: phone screens dropped on the headline ── */
+    .prints { position: relative; min-height: 100svh; display: grid; place-items: center; overflow: hidden; padding: 64px var(--gutter); }
+    .prints h2 { display: grid; text-align: center; font-size: clamp(5rem, 1rem + 11vw, 12rem); line-height: .85; letter-spacing: -0.06em; }
+    .print { position: absolute; width: min(18vw, 260px); border-radius: 22px; background: var(--bg); padding: 8px; transition: transform .25s var(--ease); }
+    .print.p1 { left: 5%; top: 14%; transform: rotate(-8deg); }
+    .print.p2 { right: 4%; top: 8%; transform: rotate(5deg); }
+    .print.p3 { right: 19%; top: 52%; width: min(13vw, 190px); transform: rotate(-4deg); }
+    .print:hover { transform: rotate(0) scale(1.03); z-index: 2; }
+    .print-note { position: absolute; left: var(--gutter); bottom: 32px; max-width: 46ch; }
+    @media (max-width: 900px) {
+      .prints { min-height: 0; display: block; }
+      .prints h2 { font-size: 30vw; }
+      .print { position: static; display: inline-block; width: 44%; margin: 24px 2% 0; }
+      .print.p1 { transform: rotate(-6deg); }
+      .print.p2 { transform: rotate(5deg); }
+      .print.p3 { display: none; }
+      .print-note { position: static; margin-top: 24px; }
+    }
+
+    /* ── Questions: a wide heading, the questions indented under it ── */
+    .faq2 h2 { font-size: var(--step-head); }
+    .qs { margin-top: 64px; margin-inline-start: 33.3%; display: grid; gap: 12px; }
+    .qs details { border-radius: 18px; padding: 18px 24px; transition: background-color .2s; }
+    .qs details[open] { background: var(--surface); }
+    .qs summary { cursor: pointer; font-size: var(--step-lead); font-weight: 500; line-height: 1.3; list-style: none; display: flex; justify-content: space-between; gap: 1rem; }
+    .qs summary::-webkit-details-marker { display: none; }
+    .qs summary::after { content: '+'; color: var(--accent); font-weight: 700; transition: transform .2s; }
+    .qs details[open] summary::after { transform: rotate(45deg); }
+    .qs summary:hover { color: var(--accent); }
+    .qs p { margin-top: .75rem; max-width: 52ch; }
+    @media (max-width: 900px) { .qs { margin-inline-start: 0; } }
+
+    @media (prefers-reduced-motion: reduce) {
+      .js .shutter, .js .shutter video, .sw, .sw p span { transition: none; clip-path: none; transform: none; }
+      .print { transition: none; }
+    }
+
     /* ── Entrances: content is visible without script; with it, parts rise in. ── */
     .js .rise { opacity: 0; transform: translateY(24px); transition: opacity .7s var(--ease), transform .7s var(--ease); transition-delay: calc(var(--i, 0) * 75ms); }
     .js .rise.in { opacity: 1; transform: none; }
@@ -366,10 +493,11 @@
   <header class="top wrap">
     <a href="#top" class="mark"><img src="logo.svg" alt="" width="30" height="30" /><span>rivulet</span></a>
     <nav aria-label="Sections">
-      <a href="#inside">The app</a>
+      <a href="#try">Try it</a>
       <a href="#modes">Two ways to play</a>
       <a href="#sources">Sources</a>
       <a href="#live">Live TV</a>
+      <a href="#inside">Screens</a>
       <a href="#android">Android</a>
       <a href="#faq">Questions</a>
     </nav>
@@ -377,33 +505,35 @@
   </header>
 
   <main id="top">
-    <!-- Hero: what it is, the footage, and the bar you can drag. -->
-    <section class="hero">
-      <div class="wrap hero-grid">
-        <div>
-          <h1 class="rise">play it while it lands</h1>
-          <p class="lead rise" style="--i:1">Rivulet is a free media library and player for Windows, Linux, macOS and Android TV. A film starts on its first bytes and finishes landing while you watch.</p>
-          <div class="actions rise" style="--i:2">
-            <a class="btn" id="hero-dl" href="https://github.com/baigcoder/rivulet/releases/latest">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4h2v9.2l3.6-3.6 1.4 1.4-6 6-6-6 1.4-1.4 3.6 3.6zM5 18h14v2H5z"/></svg>
-              <span id="hero-dl-text">Download for your system</span>
-            </a>
-            <a class="btn quiet" href="#modes">How it plays</a>
-            <small>Free and open source. No account, no ads, no bundled sources.</small>
-          </div>
+    <!-- Hero: the sentence, then the film itself, whole, with its bar. -->
+    <section class="hero wrap">
+      <h1 class="said">play it while it lands</h1>
+      <div class="hero-foot">
+        <p class="lead rise">Rivulet is a free media library and player for Windows, Linux, macOS and Android TV. A film starts on its first bytes and finishes landing while you watch.</p>
+        <div class="actions rise" style="--i:1">
+          <a class="btn" id="hero-dl" href="https://github.com/baigcoder/rivulet/releases/latest">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4h2v9.2l3.6-3.6 1.4 1.4-6 6-6-6 1.4-1.4 3.6 3.6zM5 18h14v2H5z"/></svg>
+            <span id="hero-dl-text">Download for your system</span>
+          </a>
+          <a class="btn quiet" href="#try">See it work</a>
+          <small>Free and open source. No account, no ads, no bundled sources.</small>
         </div>
-        <div class="screen rise" style="--i:1">
+      </div>
+    </section>
+
+    <!-- The window opens: the same film at full width, and the bar you can drag. -->
+    <section id="tour-s" class="tour-s" style="margin-top:0" aria-labelledby="tour-h">
+      <div class="wrap">
+        <figure class="shutter shot">
           <video id="tour" autoplay muted loop playsinline preload="metadata" poster="hero-poster.jpg" aria-label="A 77-second tour of the Rivulet app: home, title pages, the player and Live TV">
             <source src="hero.webm" type='video/webm; codecs="av01.0.08M.08"' />
             <source src="hero.mp4" type="video/mp4" />
           </video>
-        </div>
+        </figure>
       </div>
-
-      <!-- The live thing: the tour above is the film. Drag the head; the
-           amber is what has landed, and it keeps landing. -->
       <div class="landing">
         <div class="readout" aria-live="polite">
+          <h2 id="tour-h" class="readout-h">drag it: it's still landing</h2>
           <span class="key k-watched"><span>watched <strong id="r-watched">0:06</strong></span></span>
           <span class="key k-landed"><span>landed <strong id="r-landed">0:23</strong> of <strong id="r-total">1:17</strong></span></span>
           <span class="state" id="r-state">Drag the bar: the tour plays from wherever it has landed.</span>
@@ -418,26 +548,24 @@
       </div>
     </section>
 
-    <!-- Inside: what the app offers, each as its real screen, whole. -->
-    <section id="inside" class="chapter wrap" aria-labelledby="inside-h">
-      <div class="intro">
-        <h2 id="inside-h" class="rise">everything, in one app</h2>
-        <p class="lead rise" style="--i:1">Films, shows and anime with their posters, cast and trailers; free and paid Live TV; downloads; and a player that handles any file. Pick a screen to see it as it is.</p>
+    <!-- Type a title: what every source answers, labelled the way the app labels it. -->
+    <section id="try" class="chapter wrap try" aria-labelledby="try-h">
+      <h2 id="try-h" class="vh">Search a title</h2>
+      <label class="vh" for="q">Search films and shows</label>
+      <div class="typed" data-ui><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 3a7 7 0 0 1 5.6 11.2l5 5-1.4 1.4-5-5A7 7 0 1 1 10 3zm0 2a5 5 0 1 0 0 10 5 5 0 0 0 0-10z"/></svg><input id="q" type="text" value="lupin" autocomplete="off" spellcheck="false" /><span class="caret" aria-hidden="true"></span></div>
+      <div class="try-row">
+      <div class="ui answer" data-ui aria-live="polite">
+        <div class="h"><b id="a-title">Lupin · S1 E1</b><span id="a-meta">your 2 sources · 3 releases</span></div>
+        <div id="a-rows"></div>
       </div>
-      <div class="inside">
-        <ul class="tabs" id="screens">
-          <li><button type="button" aria-pressed="true" data-img="app-home.jpg" data-alt="The Rivulet home screen: a large featured film above rows of posters"><strong>Home</strong><span>What's new, what's trending and where you left off, in rows you can scroll with a mouse or a remote.</span></button></li>
-          <li><button type="button" aria-pressed="false" data-img="app-detail.jpg" data-alt="A title page for Lupin with Play S1 E1, Download, Releases and Trailer"><strong>Title pages</strong><span>Every film and show gets its own page: backdrop, logo, rating, cast, trailer, and Play or Download in one place.</span></button></li>
-          <li><button type="button" aria-pressed="false" data-img="app-season.jpg" data-alt="A season page with its list of episodes and their stills"><strong>Seasons</strong><span>Each episode with its still, synopsis and how much you've watched. Next episode is always one press away.</span></button></li>
-          <li><button type="button" aria-pressed="false" data-img="app-search.jpg" data-alt="Search results for a title, with posters in a grid"><strong>Search</strong><span>One box for films, shows and people, with results as you type.</span></button></li>
-          <li><button type="button" aria-pressed="false" data-img="app-anime.jpg" data-alt="The anime section with seasonal rows of posters"><strong>Anime</strong><span>A section of its own, with this season's shows and the classics.</span></button></li>
-          <li><button type="button" aria-pressed="false" data-img="app-streaming.jpg" data-alt="Browsing titles by streaming service"><strong>By service</strong><span>Browse what each streaming service carries, to know what a title is and where it's from.</span></button></li>
-          <li><button type="button" aria-pressed="false" data-img="app-subtitles.jpg" data-alt="Subtitle settings: language, size, colour and background"><strong>Subtitles</strong><span>Found in your language and styled the way you read best: size, colour, background and position.</span></button></li>
-          <li><button type="button" aria-pressed="false" data-img="app-appearance.jpg" data-alt="Appearance settings with a grid of colour themes"><strong>Themes</strong><span>Twenty-eight themes, a colour of your own, and a backdrop picture behind it all.</span></button></li>
-        </ul>
-        <figure class="shot viewer rise" style="--i:1">
-          <img id="stage-img" src="app-home.jpg" alt="The Rivulet home screen: a large featured film above rows of posters" width="1600" height="900" />
-        </figure>
+      <div class="try-side">
+      <p class="try-note">Search once and every source you added answers. Instant plays from your cloud; Torrent plays while it downloads. Try another:</p>
+      <div class="examples">
+        <button type="button" data-q="dune part two">dune part two</button>
+        <button type="button" data-q="bloodline">bloodline</button>
+        <button type="button" data-q="the bear">the bear</button>
+      </div>
+      </div>
       </div>
     </section>
 
@@ -449,7 +577,7 @@
       </div>
       <div class="modes">
         <article class="mode f1 rise">
-          <h3><span class="k">instant</span> from your cloud</h3>
+          <h3>instant from your cloud</h3>
           <p>When a source answers with a link from a cloud (debrid) service you subscribe to, the film streams straight from it. Nothing is downloaded and nothing waits for peers.</p>
           <div class="ui" data-ui aria-label="A title page's list of releases, the first marked Instant">
             <div class="h"><b>Lupin · S1 E1</b><span>3 releases</span></div>
@@ -464,7 +592,7 @@
           </ul>
         </article>
         <article class="mode dl f2 rise" style="--i:1">
-          <h3><span class="k">play</span> while it downloads</h3>
+          <h3>play while it downloads</h3>
           <p>A torrent plays through the engine built into the app. It starts on the first pieces and keeps landing while you watch, onto the drive you pick, or into a cache that is gone when you close the player.</p>
           <div class="ui" data-ui aria-label="The Play dialog for a source with no cloud service">
             <div class="h"><b>This source has no cloud service</b></div>
@@ -499,28 +627,70 @@
       </div>
     </section>
 
-    <!-- Sources: how a user adds one, on the real screens. -->
-    <section id="sources" class="chapter band-field f3" aria-labelledby="sources-h">
-      <div class="wrap src">
-        <div class="l">
-          <h2 id="sources-h" class="rise">add a source, press play</h2>
-          <ol class="steps">
-            <li class="rise" style="--i:1"><div><h3>Paste the address you were given</h3><p>In Settings → Sources, paste the source's URL and press Add. Rivulet never suggests one.</p></div></li>
-            <li class="rise" style="--i:2"><div><h3>Rivulet checks it and labels it</h3><p>It asks the source what it offers and marks it Instant (cloud) or Torrents, so you know how its releases will play.</p></div></li>
-            <li class="rise" style="--i:3"><div><h3>Open any title and press Play</h3><p>Every source you added is searched at once, and the best release starts. Releases lists them all if you'd rather choose.</p></div></li>
-          </ol>
-          <p class="rule rise" style="--i:4">Rivulet ships with no sources and links to none. A link that offers to add one always asks you first.</p>
+    <!-- Settings as sentences: each band is a real switch from the app. -->
+    <section id="switches" class="chapter switches" aria-labelledby="sw-h">
+      <h2 id="sw-h" class="vh">Settings you can switch</h2>
+      <div class="sw on c2"><p>Download while I watch</p><span class="cons">The film keeps landing on D: and plays offline next time.</span><button type="button" role="switch" aria-checked="true" aria-label="Download while I watch" data-ui><i></i></button></div>
+      <div class="sw c1"><p>Hide channels that don't answer</p><span class="cons">Free TV tried 2,800 channels and set 1,057 aside.</span><button type="button" role="switch" aria-checked="false" aria-label="Hide channels that don't answer" data-ui><i></i></button></div>
+      <div class="sw on c4"><p>Remind me before it starts</p><span class="cons">A note five minutes before, even from another app.</span><button type="button" role="switch" aria-checked="true" aria-label="Remind me before it starts" data-ui><i></i></button></div>
+      <div class="sw c3"><p>Only download on Wi-Fi</p><span class="cons">On a phone, downloads wait for Wi-Fi and pick up again on their own.</span><button type="button" role="switch" aria-checked="false" aria-label="Only download on Wi-Fi" data-ui><i></i></button></div>
+      <div class="sw c2"><p>Use a colour of my own</p><span class="cons">The whole theme is rebuilt from the one colour you pick.</span><button type="button" role="switch" aria-checked="false" aria-label="Use a colour of my own" data-ui><i></i></button></div>
+    </section>
+
+    <!-- Sources: drag through the four stages, from pasting to watching. -->
+    <section id="sources" class="chapter stages" aria-labelledby="st-h">
+      <div class="st-l f1">
+        <h2 id="st-h" aria-live="polite">first, paste the address</h2>
+        <p id="st-p">In Settings → Sources, paste the URL your source gave you. Rivulet ships with none and never suggests one.</p>
+      </div>
+      <div class="st-r">
+        <div class="ui frag" data-ui data-stage="0">
+          <div class="h"><b>Sources</b><span>none yet</span></div>
+          <div class="field"><span class="dim">Paste the address your source gave you</span><span class="play">Add</span></div>
+          <p class="dim" style="margin-top:12px">A link that offers a source opens here and asks you first.</p>
         </div>
-        <div class="r">
-          <figure class="shot rise">
-            <img src="app-sources.jpg" alt="Settings, Sources: a field for the source URL with an Add button, how to add a source, and how Play works with Download while watching or Stream only" width="1600" height="900" loading="lazy" />
-            <figcaption><strong>Settings → Sources.</strong> Add a source, and choose whether Play keeps the file or only streams it.</figcaption>
-          </figure>
-          <figure class="shot rise" style="--i:1">
-            <img src="app-detail.jpg" alt="The Lupin title page with Play S1 E1, Download, Releases and Trailer" width="1600" height="900" loading="lazy" />
-            <figcaption><strong>A title page.</strong> Play, Download to keep, or open Releases to pick one yourself.</figcaption>
-          </figure>
+        <div class="ui frag" data-ui data-stage="1" hidden>
+          <div class="h"><b>Sources</b><span>2 checked</span></div>
+          <div class="rel first"><span class="tag torrent">Torrents</span><span>Your first source · answered in 0.6 s</span><span class="tag done">On</span></div>
+          <div class="rel"><span class="tag cloud">Instant</span><span>Your second source · cloud links</span><span class="tag done">On</span></div>
         </div>
+        <div class="ui frag" data-ui data-stage="2" hidden>
+          <div class="h"><b>Lupin · S1 E1</b><span>3 releases</span></div>
+          <div class="rel first"><span class="tag cloud">Instant</span><span>2160p · HDR · your cloud</span><span class="play"><svg viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></svg>Play</span></div>
+          <div class="rel"><span class="tag torrent">Torrent</span><span>1080p · 412 peers</span><span class="dim">Download</span></div>
+        </div>
+        <div class="ui frag" data-ui data-stage="3" hidden>
+          <div class="h"><b>Bloodline · S1 E1</b><span>D: 1.4 TB free</span></div>
+          <div class="bar" style="height:10px"><b style="width:64%"></b><i style="width:16%"></i></div>
+          <div class="h" style="margin:10px 0 0"><span>9:15 / 56:28</span><span class="tag torrent">Landing · 64% · 18 MB/s</span></div>
+        </div>
+      </div>
+      <div class="st-bar">
+        <input id="st" type="range" min="0" max="3" step="1" value="0" aria-label="Stage" aria-valuetext="Paste" />
+        <ol class="st-names"><li class="on">Paste</li><li>Checked</li><li>Play</li><li>Lands</li></ol>
+      </div>
+    </section>
+
+    <!-- Inside: what the app offers, each as its real screen, whole. -->
+    <section id="inside" class="chapter wrap" aria-labelledby="inside-h">
+      <div class="intro">
+        <h2 id="inside-h" class="rise">everything, in one app</h2>
+        <p class="lead rise" style="--i:1">Films, shows and anime with their posters, cast and trailers; free and paid Live TV; downloads; and a player that handles any file. Pick a screen to see it as it is.</p>
+      </div>
+      <div class="inside">
+        <ul class="tabs" id="screens">
+          <li><button type="button" aria-pressed="true" data-img="app-home.jpg" data-alt="The Rivulet home screen: a large featured film above rows of posters"><strong>Home</strong><span>What's new, what's trending and where you left off, in rows you can scroll with a mouse or a remote.</span></button></li>
+          <li><button type="button" aria-pressed="false" data-img="app-detail.jpg" data-alt="A title page for Lupin with Play S1 E1, Download, Releases and Trailer"><strong>Title pages</strong><span>Every film and show gets its own page: backdrop, logo, rating, cast, trailer, and Play or Download in one place.</span></button></li>
+          <li><button type="button" aria-pressed="false" data-img="app-season.jpg" data-alt="A season page with its list of episodes and their stills"><strong>Seasons</strong><span>Each episode with its still, synopsis and how much you've watched. Next episode is always one press away.</span></button></li>
+          <li><button type="button" aria-pressed="false" data-img="app-search.jpg" data-alt="Search results for a title, with posters in a grid"><strong>Search</strong><span>One box for films, shows and people, with results as you type.</span></button></li>
+          <li><button type="button" aria-pressed="false" data-img="app-anime.jpg" data-alt="The anime section with seasonal rows of posters"><strong>Anime</strong><span>A section of its own, with this season's shows and the classics.</span></button></li>
+          <li><button type="button" aria-pressed="false" data-img="app-streaming.jpg" data-alt="Browsing titles by streaming service"><strong>By service</strong><span>Browse what each streaming service carries, to know what a title is and where it's from.</span></button></li>
+          <li><button type="button" aria-pressed="false" data-img="app-subtitles.jpg" data-alt="Subtitle settings: language, size, colour and background"><strong>Subtitles</strong><span>Found in your language and styled the way you read best: size, colour, background and position.</span></button></li>
+          <li><button type="button" aria-pressed="false" data-img="app-appearance.jpg" data-alt="Appearance settings with a grid of colour themes"><strong>Themes</strong><span>Twenty-eight themes, a colour of your own, and a backdrop picture behind it all.</span></button></li>
+        </ul>
+        <figure class="shot viewer rise" style="--i:1">
+          <img id="stage-img" src="app-home.jpg" alt="The Rivulet home screen: a large featured film above rows of posters" width="1600" height="900" />
+        </figure>
       </div>
     </section>
 
@@ -601,23 +771,13 @@
       </div>
     </section>
 
-    <!-- Android: three phone screens, whole. -->
-    <section id="android" class="chapter wrap phones" aria-labelledby="android-h">
-      <div>
-        <h2 id="android-h" class="rise">on a phone, on the sofa</h2>
-        <p class="lead rise" style="--i:1">One APK for phones, tablets and Android TV.</p>
-        <ul class="bars rise" style="--i:2">
-          <li>Every screen works with up, down, left, right, OK and back.</li>
-          <li>A tile on the Android TV launcher, and touch on a phone.</li>
-          <li>Downloads keep going while you use another app.</li>
-          <li>Your library stays on the device; a backup file moves it.</li>
-        </ul>
-      </div>
-      <div class="row">
-        <figure class="shot rise"><img src="phone-home.jpg" alt="Rivulet on a phone: the home screen" width="824" height="1830" loading="lazy" /></figure>
-        <figure class="shot rise" style="--i:1"><img src="phone-search.jpg" alt="Rivulet on a phone: search" width="824" height="1830" loading="lazy" /></figure>
-        <figure class="shot rise" style="--i:2"><img src="phone-streaming.jpg" alt="Rivulet on a phone: browsing by streaming service" width="824" height="1830" loading="lazy" /></figure>
-      </div>
+    <!-- Android: the phone screens laid round the headline like prints. -->
+    <section id="android" class="chapter prints f2" aria-labelledby="android-h">
+      <h2 id="android-h"><span>on the</span><span>sofa</span></h2>
+      <img class="print p1" src="phone-home.jpg" alt="Rivulet on a phone: the home screen" width="824" height="1830" loading="lazy" />
+      <img class="print p2" src="phone-search.jpg" alt="Rivulet on a phone: search" width="824" height="1830" loading="lazy" />
+      <img class="print p3" src="phone-streaming.jpg" alt="Rivulet on a phone: browsing by streaming service" width="824" height="1830" loading="lazy" />
+      <p class="print-note">One APK for phones, tablets and Android TV. Every screen works with the remote's arrows, OK and back, and downloads keep going while you use another app.</p>
     </section>
 
     <section id="download" class="chapter wrap">
@@ -649,16 +809,16 @@
       </div>
     </section>
 
-    <!-- Questions: tabbed cards. -->
-    <section id="faq" class="chapter faq">
-      <h2 class="rise">good to know</h2>
-      <div class="cards" id="cards">
-        <div class="qcard open"><span class="tab" style="left:0">Sources</span><div class="body"><button type="button" aria-expanded="true" aria-controls="a1">Does Rivulet come with any content or sources?</button><p class="a" id="a1">No. Rivulet hosts nothing, indexes nothing and ships with no sources. It searches only the servers you add yourself, and works as a player and torrent client with none at all.</p></div></div>
-        <div class="qcard"><span class="tab" style="left:min(150px, 12vw)">Cloud</span><div class="body"><button type="button" aria-expanded="false" aria-controls="a2">What does "Instant (cloud)" mean?</button><p class="a" id="a2">Some sources answer with direct links from a cloud (debrid) service you subscribe to, rather than torrents. Rivulet tells the two apart when you add the source: cloud links play at once with nothing downloaded, torrents play through the built-in engine.</p></div></div>
-        <div class="qcard"><span class="tab" style="left:min(300px, 24vw)">Torrents</span><div class="body"><button type="button" aria-expanded="false" aria-controls="a3">My source has no cloud service. Can I still press Play?</button><p class="a" id="a3">Yes. Play while downloading starts in seconds while the file lands on the drive you choose. If you'd rather keep nothing, stream from a temporary cache that is deleted when you leave the player.</p></div></div>
-        <div class="qcard"><span class="tab" style="left:min(450px, 36vw)">Account</span><div class="body"><button type="button" aria-expanded="false" aria-controls="a4">Do I need an account?</button><p class="a" id="a4">No. There's no Rivulet account and no Rivulet server. Your progress, favourites and history stay on your device, and a backup file moves them to another one.</p></div></div>
-        <div class="qcard"><span class="tab" style="left:min(600px, 48vw)">Remote</span><div class="body"><button type="button" aria-expanded="false" aria-controls="a5">Does it work on Android TV with a remote?</button><p class="a" id="a5">Yes. One APK for phones, tablets and TVs. Every screen works with up, down, left, right, OK and back, with clear focus rings and a launcher tile on Android TV.</p></div></div>
-        <div class="qcard"><span class="tab" style="left:min(750px, 60vw)">Premium TV</span><div class="body"><button type="button" aria-expanded="false" aria-controls="a6">What is Premium TV?</button><p class="a" id="a6">A place to connect the IPTV service you already have, with an Xtream Codes login or an M3U playlist link. Rivulet doesn't sell or provide IPTV, and your login stays on your device.</p></div></div>
+    <!-- Questions: a wide heading, the questions indented under it. -->
+    <section id="faq" class="chapter wrap faq2" aria-labelledby="faq-h">
+      <h2 id="faq-h">good to know</h2>
+      <div class="qs">
+        <details open><summary>Does Rivulet come with any content or sources?</summary><p>No. Rivulet hosts nothing, indexes nothing and ships with no sources. It searches only the servers you add yourself, and works as a player and torrent client with none at all.</p></details>
+        <details><summary>What does "Instant (cloud)" mean?</summary><p>Some sources answer with direct links from a cloud (debrid) service you subscribe to, rather than torrents. Rivulet tells the two apart when you add the source: cloud links play at once with nothing downloaded, torrents play through the built-in engine.</p></details>
+        <details><summary>My source has no cloud service. Can I still press Play?</summary><p>Yes. Play while downloading starts in seconds while the file lands on the drive you choose. If you'd rather keep nothing, stream from a temporary cache that is deleted when you leave the player.</p></details>
+        <details><summary>Do I need an account?</summary><p>No. There's no Rivulet account and no Rivulet server. Your progress, favourites and history stay on your device, and a backup file moves them to another one.</p></details>
+        <details><summary>Does it work on Android TV with a remote?</summary><p>Yes. One APK for phones, tablets and TVs. Every screen works with up, down, left, right, OK and back, with clear focus rings and a launcher tile on Android TV.</p></details>
+        <details><summary>What is Premium TV?</summary><p>A place to connect the IPTV service you already have, with an Xtream Codes login or an M3U playlist link. Rivulet doesn't sell or provide IPTV, and your login stays on your device.</p></details>
       </div>
     </section>
   </main>
@@ -817,25 +977,77 @@
       });
     })();
 
-    // Questions: one card open at a time.
-    (function cards() {
-      var all = document.querySelectorAll('.qcard');
-      all.forEach(function (card) {
-        var btn = card.querySelector('button');
-        btn.addEventListener('click', function () {
-          all.forEach(function (c) {
-            var open = c === card;
-            c.classList.toggle('open', open);
-            c.querySelector('button').setAttribute('aria-expanded', open ? 'true' : 'false');
-          });
+    // Type a title: the answer follows the line. The releases are a sample of
+    // how the app labels them; no source is named or searched.
+    (function tryIt() {
+      var q = document.getElementById('q'), title = document.getElementById('a-title');
+      var meta = document.getElementById('a-meta'), rows = document.getElementById('a-rows');
+      var answer = rows && rows.parentNode;
+      if (!q) return;
+      var PLAY = '<span class="play"><svg viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></svg>Play</span>';
+      var KNOWN = {
+        'lupin': ['Lupin · S1 E1', [['cloud', 'Instant', '2160p · HDR · your cloud'], ['cloud', 'Instant', '1080p · 4.1 GB · your cloud'], ['torrent', 'Torrent', '1080p · 412 peers']]],
+        'dune part two': ['Dune: Part Two · 2024', [['cloud', 'Instant', '2160p · Dolby Vision · your cloud'], ['torrent', 'Torrent', '2160p · 236 peers'], ['torrent', 'Torrent', '1080p · 1,180 peers']]],
+        'bloodline': ['Bloodline · S1 E1', [['done', 'Downloaded', '1080p · on D: · resume 9:15'], ['torrent', 'Torrent', '1080p · 88 peers'], ['torrent', 'Torrent', '720p · 140 peers']]],
+        'the bear': ['The Bear · S1 E1', [['cloud', 'Instant', '1080p · your cloud'], ['torrent', 'Torrent', '2160p · 97 peers'], ['torrent', 'Torrent', '1080p · 655 peers']]]
+      };
+      function esc(s) { return s.replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+      function show() {
+        var text = q.value.trim().toLowerCase();
+        var hit = KNOWN[text];
+        var name = hit ? hit[0] : (text ? text.replace(/\b\w/g, function (c) { return c.toUpperCase(); }) : 'Type a title');
+        var list = hit ? hit[1] : [['cloud', 'Instant', '1080p · your cloud'], ['torrent', 'Torrent', '2160p · 140 peers'], ['torrent', 'Torrent', '1080p · 520 peers']];
+        title.textContent = name;
+        meta.textContent = text ? 'your 2 sources · 3 releases' : '';
+        rows.innerHTML = text ? list.map(function (r, i) {
+          return '<div class="rel' + (i ? '' : ' first') + '"><span class="tag ' + r[0] + '">' + r[1] + '</span><span>' + esc(r[2]) + '</span>' + (i ? '<span class="dim">Play</span>' : PLAY) + '</div>';
+        }).join('') : '';
+        answer.classList.remove('flash'); void answer.offsetWidth; answer.classList.add('flash');
+      }
+      q.addEventListener('input', show);
+      document.querySelectorAll('.examples button').forEach(function (b) {
+        b.addEventListener('click', function () { q.value = b.dataset.q; show(); });
+      });
+      show();
+    })();
+
+    // Switches: a band fills with its colour when it's on.
+    (function switches() {
+      document.querySelectorAll('.sw button').forEach(function (b) {
+        b.addEventListener('click', function () {
+          var on = b.getAttribute('aria-checked') !== 'true';
+          b.setAttribute('aria-checked', on ? 'true' : 'false');
+          b.parentNode.classList.toggle('on', on);
         });
       });
+    })();
+
+    // Sources: one slider drives the clause and the fragment.
+    (function stages() {
+      var r = document.getElementById('st'), h = document.getElementById('st-h'), p = document.getElementById('st-p');
+      if (!r) return;
+      var frags = document.querySelectorAll('.frag'), names = document.querySelectorAll('.st-names li');
+      var S = [
+        ['first, paste the address', 'In Settings → Sources, paste the URL your source gave you. Rivulet ships with none and never suggests one.', 'Paste'],
+        ['then it gets checked', 'Rivulet asks the source what it offers and labels it Instant (cloud) or Torrents, so you know how its releases will play.', 'Checked'],
+        ['next, press play', 'Open any title: every source is searched at once and the best release starts. Download keeps it; Releases lets you pick.', 'Play'],
+        ['last, it lands as you watch', 'A torrent plays from its first pieces and keeps landing on your drive. Next time it plays offline.', 'Lands']
+      ];
+      function go() {
+        var i = +r.value;
+        h.textContent = S[i][0]; p.textContent = S[i][1];
+        r.setAttribute('aria-valuetext', S[i][2]);
+        frags.forEach(function (f) { f.hidden = +f.dataset.stage !== i; });
+        names.forEach(function (n, k) { n.classList.toggle('on', k === i); });
+      }
+      r.addEventListener('input', go);
+      names.forEach(function (n, k) { n.addEventListener('click', function () { r.value = k; go(); }); });
     })();
 
     // Entrances: parts rise in as their section arrives. Without the
     // observer everything is simply shown.
     (function rise() {
-      var items = document.querySelectorAll('.rise');
+      var items = document.querySelectorAll('.rise, .shutter');
       if (!('IntersectionObserver' in window)) { items.forEach(function (el) { el.classList.add('in'); }); return; }
       var io = new IntersectionObserver(function (entries) {
         entries.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
