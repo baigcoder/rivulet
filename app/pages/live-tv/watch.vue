@@ -642,15 +642,21 @@ async function onRetry() {
 }
 
 function onKey(e: KeyboardEvent) {
+  // The overlay already took this key (Back closing its drawer, a digit).
+  if (e.defaultPrevented)
+    return
+  // Inside a panel the arrows walk its list — zapping there changed channel on
+  // every press and left the list unreachable from a remote.
+  const inPanel = !!(e.target as Element | null)?.closest?.('[data-live-panel]')
   if (e.key === 'Escape' || e.key === 'Backspace' || e.key === 'GoBack') {
     e.preventDefault()
     goBack()
   }
-  else if ((e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === 'ChannelUp') && hasNext.value) {
+  else if ((e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === 'ChannelUp') && hasNext.value && !inPanel) {
     e.preventDefault()
     zap(1)
   }
-  else if ((e.key === 'ArrowLeft' || e.key === 'ArrowUp' || e.key === 'PageUp' || e.key === 'ChannelDown') && hasPrev.value) {
+  else if ((e.key === 'ArrowLeft' || e.key === 'ArrowUp' || e.key === 'PageUp' || e.key === 'ChannelDown') && hasPrev.value && !inPanel) {
     e.preventDefault()
     zap(-1)
   }

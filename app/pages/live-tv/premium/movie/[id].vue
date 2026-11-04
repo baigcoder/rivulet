@@ -34,6 +34,16 @@ const fallbackRating = computed(() => {
   return Number.isFinite(n) && n > 0 ? n : 0
 })
 
+/** The same film listed at its other qualities — the provider's real choice. */
+const versions = computed(() => vodVersions(premium.vodMovies, rawTitle.value).map(({ item, label }) => ({
+  label: label || $t('Standard'),
+  current: item.id === movieId.value,
+  to: {
+    path: localePath(`/live-tv/premium/movie/${item.id}`),
+    query: { ...route.query, ext: item.containerExtension || 'mkv', title: item.name, poster: item.posterUrl || undefined },
+  },
+})))
+
 onMounted(() => {
   void premium.ensureLoaded().then(() => {
     movie.value = premium.vodMovies.find(m => m.id === movieId.value) ?? null
@@ -83,6 +93,7 @@ function play(): void {
     :fallback-year="fallbackYear"
     :fallback-rating="fallbackRating"
     :provider-quality="labelled.quality"
+    :versions="versions"
     @play="play"
   />
 </template>

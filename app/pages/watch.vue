@@ -11,6 +11,7 @@ import {
   mdiPowerPlugOutline,
   mdiReload,
 } from '@mdi/js'
+import { asTier, tierLabel, tierOf } from '~/utils/quality'
 import { useTitleImages } from '~/utils/titleImages'
 import { findReleasesFast, NoDiskSpace, NoServerStream, releaseKey, releaseLangs, releaseQuality, serverCandidates } from '~/utils/torrents'
 
@@ -37,6 +38,8 @@ watch(
 const magnet = computed(() => String(route.query.magnet ?? picked.value?.magnet ?? ''))
 /** A release the picker resolved to a plain link — played as-is, no engine. */
 const link = computed(() => String(route.query.url ?? picked.value?.url ?? ''))
+/** The quality chosen on the title page (`?q=1080`) — see `utils/quality`. */
+const wantTier = computed(() => asTier(route.query.q))
 
 /** What this playback is remembered as — no id (a bare magnet) means nothing. */
 const key = computed(() => id.value ? progressKey(type.value, id.value, season.value, episode.value) : '')
@@ -295,6 +298,7 @@ async function start() {
       // Race the sources: first healthy answer plays, slower ones join the
       // candidate list as they land (see below).
       fast: true,
+      quality: wantTier.value,
       onAlternativesLate: late => {
         if (mine !== generation)
           return
@@ -552,22 +556,9 @@ function hostOf(via: string) {
   }
 }
 
-const RESOLUTION = /\b(2160p|1440p|4k|2k|1080p|720p|480p)\b/i
-
+/** "4K", "1080p" — what the Quality menu and the player's pill read. */
 function qualityLabel(r: Release) {
-  const q = releaseQuality(r)
-  const m = (q.match(RESOLUTION) ?? r.name.match(RESOLUTION))?.[1]?.toLowerCase() ?? ''
-  if (m === '2160p' || m === '4k')
-    return '4K'
-  if (m === '1440p' || m === '2k')
-    return '2K'
-  if (m === '1080p')
-    return '1080P'
-  if (m === '720p')
-    return '720P'
-  if (m === '480p')
-    return '480P'
-  return (q || '').toUpperCase() || $t('Unknown')
+  return tierLabel(tierOf(r)) || releaseQuality(r).toUpperCase() || $t('Unknown')
 }
 
 /** One server row — quality and size, not the same hostname five times. */

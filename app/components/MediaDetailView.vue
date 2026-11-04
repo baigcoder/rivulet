@@ -4,7 +4,9 @@
  * Play is a torrent watch link unless `providerPlay` is set, in which
  * case it stays on the caller's stream.
  */
+import type { RouteLocationRaw } from 'vue-router'
 import type { Media, MediaType, Person } from '~/utils/tmdb'
+import type { Release } from '~/utils/torrents'
 import {
   mdiAlertCircleOutline,
   mdiBookmark,
@@ -24,7 +26,9 @@ import {
   mdiVolumeOff,
   mdiYoutube,
 } from '@mdi/js'
+import { tierLabel, tiersIn } from '~/utils/quality'
 import { useTitleImages } from '~/utils/titleImages'
+import { ranked } from '~/utils/torrents'
 
 const props = defineProps<{
   type: MediaType
@@ -39,6 +43,8 @@ const props = defineProps<{
   fallbackRating?: number
   /** The provider's quality stamp (`4K`, `FHD`), shown in the Premium badge row. */
   providerQuality?: string
+  /** Premium: this title's listings at other qualities, as links — see `vodVersions`. */
+  versions?: { label: string, to: RouteLocationRaw, current: boolean }[]
 }>()
 
 const emit = defineEmits<{
@@ -555,10 +561,14 @@ const target = computed(() => {
 
 const targetText = computed(() => target.value ? `S${target.value.season} E${target.value.episode}` : '')
 
+/** The quality Play asks for — `auto` leaves it to `pickPlay`. */
+const playTier = ref('auto')
+
 const handoff = computed(() => ({
   imdb: media.value?.imdbId ?? undefined,
   title: cover.value?.title,
   year: cover.value?.year,
+  q: playTier.value === 'auto' ? undefined : playTier.value,
 }))
 
 const downloadsStore = useDownloadsStore()
@@ -597,6 +607,30 @@ const showPlay = computed(() => props.providerPlay || props.type === 'movie' || 
 const startedFraction = computed(() => started.value?.duration ? Math.min(1, started.value.position / started.value.duration) : 0)
 
 const playKey = computed(() => progressKey(props.type, props.id, target.value?.season, target.value?.episode))
+
+/** What the sources found for Play's target — reported by `<title-status>`. */
+const found = ref<Release[]>([])
+watch(playKey, () => {
+  found.value = []
+})
+
+/**
+ * The qualities Play could actually start: the pool it would draw from (links
+ * with the engine off, unless there are none and it falls back to streaming a
+ * torrent), after the seeder and disk rules — so a tier on offer is never one
+ * whose only copy is dead or too big. A copy on the disk plays as it is.
+ */
+const playTiers = computed(() => {
+  if (props.providerPlay || downloadsStore.cachedFor(playKey.value))
+    return []
+  const links = found.value.filter(t => t.url)
+  const torrents = settings.allowTorrents || !links.length
+  return tiersIn(ranked(torrents ? found.value : links, Math.min(downloadsStore.budget, downloadsStore.fileLimit), false, torrents))
+})
+watch(playTiers, tiers => {
+  if (playTier.value !== 'auto' && !tiers.includes(playTier.value as typeof tiers[number]))
+    playTier.value = 'auto'
+})
 
 // The page's lower half (where it streams, videos, keywords, studios, reviews)
 // in one request, started with the rows that show it rather than with the title.
@@ -873,6 +907,7 @@ watch(() => props.id, () => {
               :season="target?.season"
               :episode="target?.episode"
               class="mt-1"
+              @found="found = $event"
             />
 
             <div class="flex flex-wrap items-center gap-3 pt-1">
@@ -976,6 +1011,38 @@ watch(() => props.id, () => {
                 <v-icon :icon="library.isFavourite(cover) ? mdiHeart : mdiHeartOutline" :color="library.isFavourite(cover) ? 'primary' : undefined" />
                 <v-tooltip activator="parent" :text="library.isFavourite(cover) ? $t('Remove from favourites') : $t('Favourite')" />
               </v-btn>
+            </div>
+
+            <!-- A panel's other listings of this title are its only other
+                 qualities. Links, so each is its own page with its own Play;
+                 `replace`, so Back leaves the title rather than the version. -->
+            <div v-if="providerPlay && (versions?.length ?? 0) > 1" class="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <span class="text-label-large opacity-70">{{ $t('Quality') }}</span>
+              <div class="flex flex-wrap gap-2">
+                <v-chip
+                  v-for="v in versions"
+                  :key="v.label"
+                  :to="v.to"
+                  replace
+                  :variant="v.current ? 'flat' : 'tonal'"
+                  :color="v.current ? 'primary' : undefined"
+                  :aria-current="v.current ? 'page' : undefined"
+                  :text="v.label"
+                />
+              </div>
+            </div>
+
+            <!-- After Play in the DOM, so a remote still lands on Play first. Only
+                 tiers the sources really returned; one tier is no choice at all. -->
+            <div v-if="playTiers.length > 1" class="flex flex-wrap items-center gap-x-3">
+              <span class="text-label-large opacity-70">{{ $t('Play in') }}</span>
+              <v-chip-group v-model="playTier" mandatory selected-class="bg-primary text-on-primary font-medium">
+                <v-chip value="auto" :text="$t('Auto')" />
+                <v-chip v-for="t in playTiers" :key="t" :value="t" :text="tierLabel(t)" />
+              </v-chip-group>
+              <span v-if="playTier !== 'auto' && settings.allowTorrents" class="basis-full text-body-small opacity-60">
+                {{ $t('The {quality} copy is the one downloaded while it plays.', { quality: tierLabel(playTier as typeof playTiers[number]) }) }}
+              </span>
             </div>
           </div>
 

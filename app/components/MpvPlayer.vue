@@ -832,8 +832,26 @@ const { width: boxWidth, height: boxHeight } = useElementSize(boxEl)
 /** The track/speed panel, measured because the subtitles have to clear it. */
 const menuEl = ref<HTMLElement | null>(null)
 const { height: menuHeight } = useElementSize(menuEl)
+/**
+ * The bottom bar, measured: it wraps to a second row of controls on a narrow
+ * window, a phone and a TV's scaled viewport, and a menu parked at a fixed
+ * 106px then sat on top of the very pills that opened it.
+ */
+const barEl = ref<HTMLElement | null>(null)
+const { height: barHeight } = useElementSize(barEl, undefined, { box: 'border-box' })
 /** Its own gap from the bottom of the frame — the bottom bar plus a little. */
-const menuBottom = computed(() => touch.value ? 112 : 106)
+// Kept through a `v-show` hide, which measures 0 — the menu stays put while the chrome fades.
+const lastBar = ref(0)
+watch(barHeight, h => {
+  if (h > 0)
+    lastBar.value = h
+})
+const menuBottom = computed(() => Math.max(touch.value ? 112 : 106, Math.round(lastBar.value) + 10))
+/** Never taller than the room above the bar, so a short window can't push its header off the top. */
+const menuMaxHeight = computed(() => {
+  const room = boxHeight.value - menuBottom.value - 16
+  return room > 0 ? `min(44vh, ${Math.round(room)}px)` : '44vh'
+})
 /**
  * Where the subtitle line goes. The bottom bar covers the bottom of the picture
  * and mpv draws underneath it, so while the chrome is up the subtitles move
@@ -1682,6 +1700,17 @@ const audioPill = computed(() => {
     return t.lang.slice(0, 2).toUpperCase()
   return activeServer.value?.langs?.[0]?.toUpperCase() ?? ''
 })
+
+/**
+ * A tier is a choice of resolution, not of copy: the second 1080p server
+ * playing is still "1080p", so picking 1080p again closes the menu instead of
+ * restarting the film on the first one.
+ */
+function pickQuality(q: { index: number, label: string }) {
+  menu.value = ''
+  if (q.label !== activeQuality.value?.label)
+    emit('useCandidate', q.index)
+}
 
 /**
  * When the parent says so, the Quality menu introduces itself the first time
@@ -4446,9 +4475,9 @@ const endsAt = computed(() => {
         v-if="menu"
         ref="menuEl"
         data-cut
-        class="absolute right-4 z-30 max-h-[44vh] w-75 flex flex-col overflow-hidden border rounded-xl"
+        class="absolute right-4 z-30 max-w-[calc(100%-2rem)] w-75 flex flex-col overflow-hidden border rounded-xl"
         :class="SURFACE"
-        :style="{ bottom: `${menuBottom}px` }"
+        :style="{ bottom: `${menuBottom}px`, maxHeight: menuMaxHeight }"
         @pointerenter="hovering = true"
         @pointerleave="onChildPointerLeave"
       >
@@ -4544,14 +4573,14 @@ const endsAt = computed(() => {
             <button
               v-for="q in props.candidates?.qualities ?? []"
               :key="q.index"
-              :class="[MENU_ROW, q.index === activeCandidate && 'text-primary']"
-              @click="emit('useCandidate', q.index); menu = ''"
+              :class="[MENU_ROW, q.label === activeQuality?.label && 'text-primary']"
+              @click="pickQuality(q)"
             >
               <span class="min-w-0 flex-1">
                 <span class="block truncate font-medium">{{ q.label }}</span>
                 <span v-if="q.detail" class="block truncate text-label-small opacity-50">{{ q.detail }}</span>
               </span>
-              <v-icon v-if="q.index === activeCandidate" :icon="mdiCheck" size="16" />
+              <v-icon v-if="q.label === activeQuality?.label" :icon="mdiCheck" size="16" />
             </button>
             <p v-if="(props.candidates?.qualities?.length ?? 0) < 2" :class="NOTE">
               {{ $t('Your sources offer one quality for this title.') }}
@@ -4890,6 +4919,7 @@ const endsAt = computed(() => {
            black control sheet halfway down the Android player. -->
       <footer
         v-show="ui && !isLive"
+        ref="barEl"
         :data-cut="overlay ? '' : undefined"
         class="absolute inset-x-0 bottom-0 z-30 border-t px-5 pb-3 pt-5.5"
         :class="[

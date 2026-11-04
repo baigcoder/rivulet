@@ -19,6 +19,11 @@ const props = defineProps<{
   episode?: number
 }>()
 
+const emit = defineEmits<{
+  /** Every release the search found — the title page builds its quality choice from it. */
+  found: [list: Release[]]
+}>()
+
 const settings = useSettingsStore()
 const downloads = useDownloadsStore()
 
@@ -66,6 +71,8 @@ watch(() => `${props.imdbId}|${props.season ?? 0}|${props.episode ?? 0}|${settin
   found.value = list
   waiting.value = false
 }, { immediate: true })
+
+watch(found, list => emit('found', list ?? []))
 
 /**
  * What a source said when it had nothing — "TorBox is currently unavailable!"

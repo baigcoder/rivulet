@@ -34,7 +34,6 @@ import {
   mdiFormatListBulleted,
   mdiFullscreen,
   mdiFullscreenExit,
-  mdiMagnify,
   mdiMonitor,
   mdiPause,
   mdiPlay,
@@ -50,7 +49,7 @@ import {
 } from '@mdi/js'
 import { invoke } from '@tauri-apps/api/core'
 import { useNow } from '@vueuse/core'
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { appendDigit, channelDigitKey, channelIndexFor, DIGIT_COMMIT_MS } from '~/utils/channelDigits'
 import { isAndroid, isTv } from '~/utils/platform'
 import { fmtHudTime, friendlyPlaybackError, isProviderConnectionLimit } from '~/utils/playbackError'
@@ -523,6 +522,31 @@ function handleZapSelect(originalIndex: number) {
   showQuickZap.value = false
 }
 
+const drawerEl = ref<HTMLElement | null>(null)
+const zapButton = ref<HTMLElement | null>(null)
+
+// A remote has no pointer to reach into the drawer with: opening it puts focus
+// on the channel that is playing, scrolled into view, and closing it gives focus
+// back to the button that opened it rather than dropping it on the page.
+watch(showQuickZap, open => nextTick(() => {
+  if (open) {
+    const current = drawerEl.value?.querySelector<HTMLElement>('[aria-current="true"]')
+      ?? drawerEl.value?.querySelector<HTMLElement>('button[data-channel]')
+    current?.focus({ preventScroll: true })
+    current?.scrollIntoView({ block: 'center' })
+    return
+  }
+  drawerSearch.value = ''
+  if (!document.activeElement || document.activeElement === document.body)
+    zapButton.value?.focus({ preventScroll: true })
+}))
+
+function openQualityPicker() {
+  // One panel at a time: the picker card and the drawer share the right edge.
+  showQuickZap.value = false
+  emit('showQualityPicker')
+}
+
 // ── Volume Helpers ───────────────────────────────────────────────────
 function volumeIcon() {
   if (props.muted || props.volume === 0)
@@ -543,7 +567,17 @@ function onVolumeInput(e: Event) {
 // Escape/Backspace and the channel arrows belong to the page (`watch.vue`), so
 // all this owns is the lineup drawer.
 function onKeyDown(e: KeyboardEvent) {
-  if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName))
+  const typing = ['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)
+  // Back closes the drawer and nothing else. This listener runs in the capture
+  // phase so it is first: the page's own Back used to see the same key and
+  // leave the player, and `__tvBack` reads the preventDefault as "handled".
+  if (showQuickZap.value && (e.key === 'Escape' || e.key === 'GoBack' || (e.key === 'Backspace' && !typing))) {
+    e.preventDefault()
+    e.stopPropagation()
+    showQuickZap.value = false
+    return
+  }
+  if (typing)
     return
 
   show()
@@ -563,7 +597,7 @@ function onKeyDown(e: KeyboardEvent) {
 
 onMounted(() => {
   show()
-  window.addEventListener('keydown', onKeyDown)
+  window.addEventListener('keydown', onKeyDown, true)
   window.addEventListener('mousemove', onWindowMouseMove)
   window.addEventListener('touchstart', onWindowTouchStart, { passive: true })
   window.addEventListener('pointermove', onWindowPointerMove, { passive: true })
@@ -584,7 +618,7 @@ onUnmounted(() => {
     clearInterval(pointerPollHandle)
   pointerPollHandle = null
   lastPointerKey = null
-  window.removeEventListener('keydown', onKeyDown)
+  window.removeEventListener('keydown', onKeyDown, true)
   window.removeEventListener('mousemove', onWindowMouseMove)
   window.removeEventListener('touchstart', onWindowTouchStart)
   window.removeEventListener('pointermove', onWindowPointerMove)
@@ -787,7 +821,9 @@ defineExpose({ show, hide, visible })
     >
       <div
         v-if="showQuickZap"
+        ref="drawerEl"
         data-cut
+        data-live-panel
         class="pointer-events-auto absolute inset-y-0 right-0 z-40 w-80 max-w-[85vw] flex flex-col border-l border-white/10 shadow-2xl p-4"
         :class="overlay ? 'bg-[#0F1117]' : 'bg-[#0F1117]/92 backdrop-blur-2xl'"
       >
@@ -801,16 +837,9 @@ defineExpose({ show, hide, visible })
           </button>
         </div>
 
-        <!-- Search Bar -->
-        <div class="relative my-3">
-          <v-icon :icon="mdiMagnify" size="16" class="absolute left-3 top-2.5 text-gray-400" />
-          <input
-            v-model="drawerSearch"
-            type="text"
-            :placeholder="$t('Search channels')"
-            class="w-full pl-9 pr-3 py-1.5 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-primary transition-colors"
-          >
-        </div>
+        <!-- A field a remote can walk past: a bare input here put the TV's
+             keyboard over the screen on the way from Close to the list. -->
+        <search-field v-model="drawerSearch" :placeholder="$t('Search channels')" class="my-3" />
 
         <!-- Channel Scroll List -->
         <div class="flex-1 overflow-y-auto space-y-1.5 pr-1">
@@ -818,6 +847,8 @@ defineExpose({ show, hide, visible })
             v-for="ch in filteredChannels"
             :key="ch.id"
             type="button"
+            data-channel
+            :aria-current="ch.originalIndex === channelIndex ? 'true' : undefined"
             class="w-full flex items-center gap-3 p-2.5 rounded-xl border text-left transition-colors group hover:bg-white/10 focus-visible:bg-white/10"
             :class="ch.originalIndex === channelIndex
               ? 'bg-primary/15 border-primary/40 text-white'
@@ -1017,6 +1048,7 @@ defineExpose({ show, hide, visible })
           <span class="mx-1 hidden h-5 w-px bg-white/12 sm:block" aria-hidden="true" />
 
           <button
+            ref="zapButton"
             type="button"
             class="glass-icon-btn"
             :class="{ 'border-primary/50 bg-primary/25 text-white': showQuickZap }"
@@ -1033,7 +1065,7 @@ defineExpose({ show, hide, visible })
             class="glass-icon-btn"
             :title="$t('Quality')"
             :aria-label="$t('Quality')"
-            @click.stop="emit('showQualityPicker')"
+            @click.stop="openQualityPicker"
           >
             <v-icon :icon="mdiMonitor" size="20" />
           </button>
